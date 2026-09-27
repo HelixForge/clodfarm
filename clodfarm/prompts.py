@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import time
 
+from . import awsapps
+
 FARM_GUIDE = """\
 # You are one Claude on a clodfarm farm
 
@@ -72,11 +74,16 @@ farm, spend money, create accounts, or post anything publicly unless the person 
 """
 
 
+def farm_guide() -> str:
+    """The guide every Claude on this farm reads: FARM_GUIDE plus the sections for the features this farm has on."""
+    return FARM_GUIDE + awsapps.guide_section()
+
+
 def task_system_prompt(cfg, task: dict, cwd: str, branch: str | None, name: str = "") -> str:
     where = f"Your worktree is {cwd} on branch {branch}." if branch else f"Your working directory is {cwd}."
     reach = (f" Other Claudes reach you with `clodfarm msg {task['id']}`" +
              (f" or with SendMessage to the session '{name}'." if name else "."))
-    return (FARM_GUIDE + f"\n## This run\nYou are a sub-agent of {task.get('owner') or cfg.name}: sub-agent "
+    return (farm_guide() + f"\n## This run\nYou are a sub-agent of {task.get('owner') or cfg.name}: sub-agent "
             f"{task['id']} (depth {task.get('depth', 0)}, max depth {cfg.max_depth}). FARM_TASK_ID={task['id']}. {where}"
             f"{reach}\n")
 

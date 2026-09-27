@@ -25,7 +25,7 @@ import sys
 import threading
 import time
 
-from . import gitops, notify, prompts
+from . import awsapps, gitops, notify, prompts
 from .auth import (accept_remote_control, auth_status, banner, claude_name, install_guide, install_hooks,
                    install_messaging, install_model, seat_id, trust_directory)
 from .config import primary_name_file
@@ -70,6 +70,14 @@ class Farm:
             if self.cfg.remote_control:
                 accept_remote_control()
             install_guide()
+            try:  # the optional apps role (deploy/aws/apps-role.yaml): `aws --profile apps` for the Claudes
+                if awsapps.install_profile():
+                    apps = awsapps.settings()
+                    print(f"aws: profile '{awsapps.PROFILE}' " + (f"-> {apps['role']}" if apps else "removed"), flush=True)
+            except (OSError, ValueError) as e:
+                print(f"aws: apps profile not written: {e}", flush=True)
+            if awsapps.settings():  # the CLI the Claudes deploy with; in the background so startup isn't held up
+                threading.Thread(target=self._ensure_aws_cli, name="aws-cli", daemon=True).start()
             install_hooks()
             install_messaging()
             install_model(self.cfg.model)
@@ -193,6 +201,14 @@ class Farm:
         d = decide(self.store.get_snapshot(self.seat), self.cfg.policy, now(), self.store.spent_today(self.seat))
         counts = {s: self.store.count(s) for s in ("queued", "running", "waiting")}
         print(json.dumps({"at": iso(), "status": counts, "budget": d.to_dict()}), flush=True)
+
+    def _ensure_aws_cli(self):
+        try:
+            v = awsapps.ensure_cli()
+            if v:
+                print(f"aws: installed {v} for the apps role", flush=True)
+        except Exception as e:  # never take the farm down for this; the Claudes can install it themselves
+            print(f"aws: CLI not installed ({e}); the apps role still works from boto3", flush=True)
 
     # ------------------------------------------------------- remote control
     def remote_control_loop(self):

@@ -9,7 +9,13 @@
 #   deploy/aws/deploy.sh shell      # a shell inside the container
 #   deploy/aws/deploy.sh down       # delete the stack (the DynamoDB table is kept)
 #
+# Optional, so the farm can build and run its own apps on AWS (apps-role.yaml; docs/deploy-aws.md):
+#   deploy/aws/deploy.sh apps-role --email you@example.com [--budget 50] [--domain apps.example.com]
+#                                  [--regions us-east-1,eu-central-1] [--prefix farm-app]
+#   deploy/aws/deploy.sh apps-down  # switch it off again and delete the apps role stack
+#
 # Env: STACK (default clodfarm), STACK_TAGS (extra "Key=Value ..." tags), AWS_REGION / AWS_PROFILE as usual.
+#      APPS_STACK (default <STACK>-apps); APPS_PROFILE puts the apps role in another AWS account (a profile for it).
 set -euo pipefail
 STACK=${STACK:-clodfarm}
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -22,6 +28,20 @@ on_box() {  # run a command in an interactive SSM session on the instance
   aws ssm start-session --region "$REGION" --target "$(out InstanceId)" \
     --document-name AWS-StartInteractiveCommand --parameters "command=$1"
 }
+box_run() {  # run a shell script on the instance, non-interactively as root, and print its output
+  local id cid b64; id=$(out InstanceId); b64=$(printf '%s' "$1" | base64 | tr -d '\n')
+  cid=$(aws ssm send-command --region "$REGION" --instance-ids "$id" --document-name AWS-RunShellScript \
+        --parameters "commands=[\"echo $b64 | base64 -d | bash\"]" --query Command.CommandId --output text)
+  aws ssm wait command-executed --region "$REGION" --command-id "$cid" --instance-id "$id" || true
+  aws ssm get-command-invocation --region "$REGION" --command-id "$cid" --instance-id "$id" \
+    --query '[Status,StandardOutputContent,StandardErrorContent]' --output text
+}
+apps_aws() {  # the account the apps role lives in: APPS_PROFILE if set, else the farm's own
+  if [[ -n "${APPS_PROFILE:-}" ]]; then AWS_PROFILE="$APPS_PROFILE" aws --region "$REGION" "$@"; else aws --region "$REGION" "$@"; fi
+}
+farm_role() { aws cloudformation describe-stack-resource --region "$REGION" --stack-name "$STACK" --logical-resource-id Role \
+                --query StackResourceDetail.PhysicalResourceId --output text; }
+APPS_STACK=${APPS_STACK:-$STACK-apps}
 wait_ready() {
   local id; id=$(out InstanceId)
   echo "waiting for $id to finish setup (usually 2-4 minutes)..."
@@ -67,6 +87,57 @@ Next: log in to your Claude subscription. It prints a URL; open it anywhere, app
   $0 login
 EOF
     ;;
+  apps-role)
+    params=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --email) params+=("AlertEmail=$2"); shift 2 ;;
+        --budget) params+=("MonthlyBudgetUsd=$2"); shift 2 ;;
+        --domain) params+=("AppsDomain=$2"); shift 2 ;;
+        --regions) params+=("AllowedRegions=$2"); shift 2 ;;
+        --prefix) params+=("RolePrefix=$2"); shift 2 ;;
+        *) echo "unknown option $1" >&2; exit 2 ;;
+      esac
+    done
+    if ! apps_aws cloudformation describe-stacks --stack-name "$APPS_STACK" >/dev/null 2>&1 \
+       && [[ " ${params[*]-} " != *" AlertEmail="* ]]; then
+      echo "the first apps-role deploy needs --email (budget alerts go there)" >&2; exit 2
+    fi
+    role=$(farm_role); role_arn=$(aws iam get-role --role-name "$role" --query Role.Arn --output text)
+    # 1. the apps role stack: deployer role, permissions boundary, budget lock, optional apps zone
+    apps_aws cloudformation deploy --stack-name "$APPS_STACK" --template-file "$HERE/apps-role.yaml" \
+      --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset --tags app=clodfarm ${STACK_TAGS:-} \
+      --parameter-overrides FarmRoleArn="$role_arn" ${params[@]+"${params[@]}"}
+    aout() { apps_aws cloudformation describe-stacks --stack-name "$APPS_STACK" \
+               --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text | sed 's/^None$//'; }
+    deployer=$(aout DeployerArn); domain=$(aout AppsDomain); ns=$(aout AppsZoneNameServers)
+    # 2. the farm box's role may assume the deployer (an inline policy; the farm stack itself is untouched)
+    aws iam put-role-policy --role-name "$role" --policy-name clodfarm-apps-role --policy-document \
+      "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"sts:AssumeRole\",\"Resource\":\"$deployer\"}]}"
+    # 3. switch it on in the farm: FARM_AWS_APPS_* in /opt/clodfarm/.env, then recreate the container (volumes stay)
+    box_run "set -e; cd /opt/clodfarm; touch .env; sed -i '/^FARM_AWS_APPS_/d' .env
+cat >> .env <<'EOF'
+FARM_AWS_APPS_ROLE=$deployer
+FARM_AWS_APPS_BOUNDARY=$(aout BoundaryArn)
+FARM_AWS_APPS_PREFIX=$(aout RolePrefix)
+FARM_AWS_APPS_BUDGET=$(aout MonthlyBudgetUsd)
+FARM_AWS_APPS_DOMAIN=$domain
+FARM_AWS_APPS_ZONE_ID=$(aout AppsZoneId)
+EOF
+docker compose up -d && echo 'farm restarted with the apps role'"
+    cat <<EOF
+
+The farm can now build its own apps: its Claudes run \`aws --profile apps ...\` as $deployer
+(budget $(aout MonthlyBudgetUsd) USD/month; the role locks itself at 100%).
+EOF
+    [[ -n "$ns" ]] && echo "Delegate $domain: add an NS record for it at its parent with these servers: $ns"
+    ;;
+  apps-down)
+    box_run "set -e; cd /opt/clodfarm; sed -i '/^FARM_AWS_APPS_/d' .env; docker compose up -d && echo 'farm restarted without the apps role'"
+    aws iam delete-role-policy --role-name "$(farm_role)" --policy-name clodfarm-apps-role 2>/dev/null || true
+    apps_aws cloudformation delete-stack --stack-name "$APPS_STACK"
+    apps_aws cloudformation wait stack-delete-complete --stack-name "$APPS_STACK"
+    echo "apps role removed. Apps the farm deployed are separate stacks: they keep running until you delete them." ;;
   login)  on_box "sudo docker exec -it clodfarm clodfarm login" ;;
   status) on_box "sudo docker exec -it clodfarm clodfarm status" ;;
   logs)   on_box "sudo docker logs -f --tail 100 clodfarm" ;;
@@ -75,5 +146,5 @@ EOF
     aws cloudformation delete-stack --region "$REGION" --stack-name "$STACK"
     aws cloudformation wait stack-delete-complete --region "$REGION" --stack-name "$STACK"
     echo "stack deleted. The DynamoDB table is retained; delete it by hand if you no longer need the history." ;;
-  *) sed -n '2,13p' "$0" ;;
+  *) sed -n '2,18p' "$0" ;;
 esac
