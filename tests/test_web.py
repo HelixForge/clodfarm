@@ -226,3 +226,16 @@ def test_sessions_and_conversations_in_the_ui(ui):
     s = call(base + "/api/sessions/s1")[1]
     assert [t["text"] for t in s["conversation"]] == ["review it", "done"]
     assert call(base + "/api/sessions/nope")[0] == 404
+
+
+def test_slack_setup_endpoints(ui):
+    base, _ = ui
+    call = client()
+    assert call(base + "/api/slack")[0] == 401
+    login(call, base)
+    code, body, _ = call(base + "/api/slack")
+    assert code == 200 and body["configured"] is False and body["manifest_url"].startswith("https://api.slack.com/apps?new_app=1")
+    code, body, _ = call(base + "/api/slack", {"bot_token": "nope", "app_token": "xapp-1"})
+    assert code == 400 and "xoxb-" in body["error"]
+    code, body, _ = call(base + "/api/state")
+    assert body["slack"]["state"] == "off"

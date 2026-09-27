@@ -41,6 +41,7 @@
       <b>TALK TO YOUR CLAUDE</b>
       <span>Open the <strong>Claude app</strong> → <strong>Code</strong> → <strong id="talk-name">clodfarm</strong> and ask it anything. It starts sub-agents (you see them here), asks the other Claudes for help and schedules work.</span>
     </a>
+    <button type="button" class="tool wide-tool slack-tool" data-act="slack" id="slack-tool" title="Give the farm work from Slack (S)"><img alt="" data-icon="chat"><span>SLACK</span></button>
     <button type="button" class="tool wide-tool" data-act="hatch" title="Add a new Claude (C)"><img alt="" data-icon="egg"><span>+ NEW CLAUDE</span></button>
   </div>
 
@@ -74,6 +75,12 @@
 <dialog id="dlg-hatch" class="panel dlg" aria-labelledby="hatch-h">
   <h2 id="hatch-h">NEW CLAUDE</h2>
   <div id="hatch-body"></div>
+  <button class="x" type="button" data-close aria-label="Close">✕</button>
+</dialog>
+
+<dialog id="dlg-slack" class="panel dlg" aria-labelledby="slack-h">
+  <h2 id="slack-h">SLACK</h2>
+  <div id="slack-body"></div>
   <button class="x" type="button" data-close aria-label="Close">✕</button>
 </dialog>
 

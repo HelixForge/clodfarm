@@ -13,6 +13,7 @@
     clodfarm events [-n 30] [-f]      the farm's event log
     clodfarm pause [REASON] | resume  stop or restart new sub-agents on every box
     clodfarm ui | ui-passwd           serve the farm UI on its own | set its password
+    clodfarm slack                    Slack: connected or not, and how to connect it (the UI's SLACK button is easier)
     clodfarm init                     create the DynamoDB table
     clodfarm doctor                   check claude, login, the store, git and the workspace
 
@@ -433,6 +434,22 @@ def cmd_schedule(cfg, a):
     return 1
 
 
+def cmd_slack(cfg, a):
+    from .slack import load_settings, manifest_url
+    s = load_settings(cfg)
+    info, ok = s.get("info") or {}, bool(s.get("bot_token") and s.get("app_token"))
+    _out({"configured": ok, "team": info.get("team"), "bot": info.get("bot_name"), "allow": s.get("allow") or [],
+          "manifest_url": manifest_url(cfg.farm)}, a.json,
+         (f"Slack: connected to {info.get('team') or '?'} as @{info.get('bot_name') or '?'}"
+          + (f"; only {', '.join(s['allow'])} can give it work" if s.get("allow") else "") if ok else
+          "Slack: not connected. Easiest: the SLACK button in the farm UI. By hand:\n"
+          f"  1. open this, then Create an App > From a manifest (it's filled in) > Next > Create:\n     {manifest_url(cfg.farm)}\n"
+          "  2. Install to Workspace; copy the Bot User OAuth Token (xoxb-...)\n"
+          "  3. Basic Information > App-Level Tokens > Generate with connections:write (xapp-...)\n"
+          "  4. set FARM_SLACK_BOT_TOKEN and FARM_SLACK_APP_TOKEN (optional FARM_SLACK_ALLOW) and restart the farm"))
+    return 0
+
+
 def cmd_events(cfg, a):
     store = _store(cfg)
     since = now() - 86400 * 7
@@ -598,6 +615,7 @@ def main(argv=None):
     scs.add_parser("remove").add_argument("id")
     for q in scs.choices.values():
         q.add_argument("--json", action="store_true")
+    add("slack", cmd_slack, "give the farm work from Slack: status, or how to connect it")
     e = add("events", cmd_events, "the event log")
     e.add_argument("-n", type=int, default=30)
     e.add_argument("-f", "--follow", action="store_true")

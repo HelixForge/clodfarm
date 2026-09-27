@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Give the farm work from Slack.** DM the farm's app or @mention it in a channel: a sub-agent does the job and
+  answers in the thread (👀 while it works, ✅ or ❌ when done). Follow-ups in the thread carry the conversation so
+  far; `status` shows the Claudes and their usage; `gil: …` runs it on gil's account. Connect it from the farm UI's
+  new **SLACK** button in about two minutes: a prefilled Slack app manifest, then two tokens pasted back. It uses
+  Socket Mode, so there's no public URL or open port, and the client is standard library only. Only full members of
+  the workspace can use it (never guests or people from other organisations), optionally narrowed to an allow list.
+  `clodfarm slack` prints the steps for a setup without the UI. See [docs/slack.md](docs/slack.md).
+
 ## 0.4.4 (2026-09-27)
 
 - **Always the newest Claude Code.** The image ships the `latest` release instead of `stable`, and the farm updates
