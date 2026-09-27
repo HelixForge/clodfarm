@@ -35,6 +35,7 @@ import urllib.request
 from .store import Store, now
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+API_URL = os.environ.get("FARM_SLACK_API_URL", "https://slack.com/api")  # a stand-in Slack in the end-to-end test
 FINAL = ("done", "failed", "cancelled")
 BOT_SCOPES = ["app_mentions:read", "chat:write", "im:history", "im:read", "im:write", "reactions:write", "users:read",
               "users:read.email", "channels:history", "groups:history", "mpim:history"]
@@ -142,7 +143,7 @@ def api(method: str, token: str, **params) -> dict:
     body = urllib.parse.urlencode({k: json.dumps(v) if isinstance(v, (list, dict)) else v
                                    for k, v in params.items() if v is not None}).encode()
     for attempt in range(3):
-        req = urllib.request.Request(f"https://slack.com/api/{method}", data=body, method="POST", headers={
+        req = urllib.request.Request(f"{API_URL}/{method}", data=body, method="POST", headers={
             "Authorization": f"Bearer {token}", "Content-Type": "application/x-www-form-urlencoded",
             "User-Agent": "clodfarm"})
         try:
@@ -446,7 +447,7 @@ class SlackBridge:
         self.store.event("slack.received", f"{asker} in Slack: {text[:160]}", task=t["id"], by=f"slack:{asker}")
         self._react(token, channel, ts, "eyes")
         link = s.get("ui_url")
-        say(f"🌱 On it: sub-agent `{t['id'][:8]}` on {to or me}'s account{why}. I'll answer here when it's done."
+        say(f"🌱 On it: sub-agent `{t['id']}` on {to or me}'s account{why}. I'll answer here when it's done."
             + (f" <{link}|Watch it on the farm>" if link else ""))
         return t
 
@@ -519,7 +520,7 @@ class SlackBridge:
         return (f"*{self.cfg.farm}*" + (f" (paused: {ctl.get('reason') or 'by hand'})" if ctl.get("paused") else "")
                 + "\n```" + ("\n".join(_claude_line(c).strip() for c in rows) or "no Claude is up") + "```\n"
                 + (f"{len(busy)} sub-agent{'s' if len(busy) != 1 else ''} running or waiting:\n"
-                   + "\n".join(f"• `{t['id'][:8]}` {t['status']}: {t['title'][:70]}" for t in busy[:10])
+                   + "\n".join(f"• `{t['id']}` {t['status']}: {t['title'][:70]}" for t in busy[:10])
                    if busy else "No sub-agents running."))
 
     # ------------------------------------------------------- answers
