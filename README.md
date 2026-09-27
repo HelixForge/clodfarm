@@ -40,28 +40,25 @@ is a lump of soil, and this is where your agents grow.
 <a name="why-clodfarm"></a>
 <h2><img src="assets/readme/why.png" height="44" alt="Why clodfarm"></h2>
 
-A `while true; claude -p` loop gets you an agent that forgets what it did, can't split work, can't be reached from
-your phone, and runs until it hits the wall and locks you out of your own Claude. clodfarm is the missing
-operations layer:
+A `while true; claude -p` loop forgets what it did, can't split work, can't be reached from your phone, and burns
+through your limits. clodfarm is the operations layer it's missing:
 
 | | |
 |---|---|
-| <img src="assets/icons/moon.svg" width="18" height="18" align="top" alt=""> **Always on** | Claudes restart, leases expire, crashed sub-agents are retried, and timed-out ones continue in their own session. |
-| <img src="assets/icons/claude.svg" width="18" height="18" align="top" alt=""> **Talk to it from your phone** | Every Claude keeps `claude remote-control` up, so it is a session in its person's Claude app and at claude.ai/code. |
-| <img src="assets/icons/git-branch.svg" width="18" height="18" align="top" alt=""> **Sub-agents you can see** | `clodfarm spawn` starts one: a mini Claude on the farm, in its own git worktree. A sub-agent's own sub-agents are its children, and it is resumed *in its own session* to merge their work. |
-| <img src="assets/icons/gauge.svg" width="18" height="18" align="top" alt=""> **Paced on real usage** | Every run reports the account's actual 5-hour and weekly utilization (`rate_limit_event`). The governor paces the week, leaves you 20% by default, sleeps through rejections, and never touches paid overage. |
-| <img src="assets/icons/server.svg" width="18" height="18" align="top" alt=""> **Many boxes, many seats** | Point containers on several accounts at one table: one farm, one repo, a separate budget per account. |
-| <img src="assets/icons/cloud.svg" width="18" height="18" align="top" alt=""> **Builds its own apps on AWS (optional)** | `deploy.sh apps-role` lets the Claudes create and run serverless apps as a fenced role: a permissions boundary on every role they make, no IAM users or keys, and a budget that locks the role at 100% ([details](#let-the-farm-build-apps-on-aws-optional)). |
-| <img src="assets/icons/shield-check.svg" width="18" height="18" align="top" alt=""> **Nothing lands untested** | `FARM_VERIFY_CMD` runs your tests on the rebased branch, and a failing check sends the agent back to fix it. |
-| <img src="assets/icons/users.svg" width="18" height="18" align="top" alt=""> **Claudes that work together** | `clodfarm agents` shows every Claude and how much of its usage it has used. A sub-agent without `--on` runs on whichever account has room, `--on gil` picks one, and messages reach a Claude or a running sub-agent in seconds: at its next tool call, or it wakes up for them. |
-| <img src="assets/icons/clock.svg" width="18" height="18" align="top" alt=""> **Schedules** | "Every weekday at 9, summarize the open PRs": `clodfarm schedule add ... --cron "0 9 * * 1-5" --tz Asia/Jerusalem`, or `--every 2h`, or `--at "in 3h"`. |
-| <img src="assets/icons/chart-column.svg" width="18" height="18" align="top" alt=""> **Dashboards** | "Keep a dashboard of the test suite": the Claudes build pages at `/dashboards/<name>` (stats with their trend, charts, bar lists, tables, progress, notes). Live ones run code from the repo on a schedule and push what it prints; a broken one tells its Claude to fix it ([docs/dashboards.md](docs/dashboards.md)). |
-| <img src="assets/icons/slack.svg" width="18" height="18" align="top" alt=""> **Slack** | DM the farm's app or @mention it: a sub-agent does the job and answers in the thread. Connect it from the farm UI in about two minutes, with no public URL ([docs/slack.md](docs/slack.md)). |
-| <img src="assets/icons/bell.svg" width="18" height="18" align="top" alt=""> **Tells you when it matters** | Notifications to ntfy, Slack or Discord for failures, a tripped circuit breaker and usage limits. |
-| <img src="assets/icons/activity.svg" width="18" height="18" align="top" alt=""> **Usage in real time** | A new Claude's usage is measured the moment it logs in; every run reports it live, and an idle Claude is re-measured every 5 minutes (`FARM_USAGE_REFRESH`). |
-| <img src="assets/icons/modelcontextprotocol.svg" width="18" height="18" align="top" alt=""> **Claude Code on your laptop, connected** | The farm is a remote MCP server: `claude mcp add --transport http farm <url>/mcp`, sign in once, and your local Claude sees the farm, hands it work and messages its Claudes. OAuth 2.1 + PKCE, no password in Claude Code. |
-| <img src="assets/icons/monitor-play.svg" width="18" height="18" align="top" alt=""> **A farm you can watch** | Open `http://localhost:8080`: one pixel Claude per account, its sub-agents around its plot, napping when its budget says so. Tap a Claude for its budget, its sub-agents, its tools and a link to talk to it in the Claude app (or the chat button for how to talk to yours); hatch new Claudes (each its own login) from the browser. |
-| <img src="assets/icons/wrench.svg" width="18" height="18" align="top" alt=""> **Each Claude's tools** | A Claude's card lists what it can use, as Claude Code reported it on its last run: model and version, MCP servers (connected, needs sign-in or failed), built-in and MCP tools, skills, plugins and sub-agent types. |
+| <img src="assets/icons/moon.svg" width="18" height="18" align="top" alt=""> **Always on** | Crashes, restarts and timeouts don't lose work. Claudes come back and pick up where they left off. |
+| <img src="assets/icons/claude.svg" width="18" height="18" align="top" alt=""> **Talk to it from your phone** | Every Claude is a session in your Claude app. Ask for work from anywhere. |
+| <img src="assets/icons/git-branch.svg" width="18" height="18" align="top" alt=""> **Sub-agents you can see** | Big jobs split into sub-agents, each on its own branch, and you watch them work. |
+| <img src="assets/icons/gauge.svg" width="18" height="18" align="top" alt=""> **Never eats your week** | Paced on your real 5-hour and weekly usage. It leaves you 20% and never pays overage. |
+| <img src="assets/icons/users.svg" width="18" height="18" align="top" alt=""> **Claudes that work together** | Teammates' Claudes message each other and run work on whoever has budget left. |
+| <img src="assets/icons/shield-check.svg" width="18" height="18" align="top" alt=""> **Nothing lands untested** | Work reaches main only when your tests pass. |
+| <img src="assets/icons/clock.svg" width="18" height="18" align="top" alt=""> **Schedules** | "Every weekday at 9, triage new issues." Cron, intervals or one-offs. |
+| <img src="assets/icons/chart-column.svg" width="18" height="18" align="top" alt=""> **Dashboards** | The Claudes keep live pages that show what is improving ([docs](docs/dashboards.md)). |
+| <img src="assets/icons/slack.svg" width="18" height="18" align="top" alt=""> **Slack** | DM or @mention the farm and a sub-agent answers in the thread. Two-minute setup ([docs](docs/slack.md)). |
+| <img src="assets/icons/modelcontextprotocol.svg" width="18" height="18" align="top" alt=""> **Claude Code on your laptop** | Connect over MCP and hand the farm work without leaving your editor. |
+| <img src="assets/icons/aws.svg" width="18" height="18" align="top" alt=""> **Builds apps on AWS (optional)** | The Claudes ship their own serverless apps inside a fenced role with a hard budget cap ([details](#let-the-farm-build-apps-on-aws-optional)). |
+| <img src="assets/icons/server.svg" width="18" height="18" align="top" alt=""> **Many boxes, many seats** | One farm and one repo across machines and accounts, each on its own budget. |
+| <img src="assets/icons/bell.svg" width="18" height="18" align="top" alt=""> **Tells you when it matters** | Failures and usage limits go to ntfy, Slack or Discord. |
+| <img src="assets/icons/monitor-play.svg" width="18" height="18" align="top" alt=""> **A farm you can watch** | Every Claude, its sub-agents, usage and tools at a glance, in your browser. |
 
 You talk to your Claude in the Claude app; the farm UI shows who is working on what; the Claudes and you use the
 same CLI.
