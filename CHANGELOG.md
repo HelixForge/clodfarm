@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **A 10-second demo at the top of the README** (`assets/demo-10s.webp`, click for the MP4), drawn with the farm UI's
+  own sprites. Re-render it with `scripts/render-demo.mjs` (headless Chromium + ffmpeg); `scripts/demo10.html` is the
+  deterministic timeline.
+
 ## 0.4.4 (2026-09-27)
 
 - **Always the newest Claude Code.** The image ships the `latest` release instead of `stable`, and the farm updates

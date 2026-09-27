@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/farm.png" alt="The clodfarm UI: a pixel-art farm where every Claude Code agent is a little Claude character. Some work at terminals beside crop plots, mini Claudes help as sub-agents, finished work blooms, and a Claude naps by the barn while its budget governor paces it" width="100%">
+  <a href="assets/demo-10s.mp4"><img src="assets/demo-10s.webp" alt="clodfarm in 10 seconds, on the farm UI's pixel art: 1, ask your Claude from the Claude app on your phone; 2, it splits the work into sub-agents, each on its own git branch; 3, Claudes team up: matan's Claude asks gil's Claude to take the tests and a sub-agent runs on gil's account; 4, it stays in budget: noa's Claude pauses at 80% of its weekly limit; 5, it ships tested code: merged to main only when the tests pass" width="100%"></a>
 </p>
 
 <p align="center">
@@ -41,6 +41,10 @@ is a lump of soil, and this is where your agents grow.
 <td width="25%" valign="top"><b>04 · Watch it grow</b><br>Sub-agents, messages between Claudes and schedules, all on the farm, paced on real usage.</td>
 </tr>
 </table>
+
+<p align="center">
+  <img src="assets/farm.png" alt="The clodfarm UI: a pixel-art farm where every Claude Code agent is a little Claude character. Some work at terminals beside crop plots, mini Claudes help as sub-agents, finished work blooms, and a Claude naps by the barn while its budget governor paces it" width="100%">
+</p>
 
 ## Why clodfarm
 
