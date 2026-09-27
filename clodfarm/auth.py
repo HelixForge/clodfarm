@@ -75,7 +75,12 @@ def seat_id(status: dict) -> str:
     if "API" in (status.get("via") or ""):
         key = os.environ.get("ANTHROPIC_API_KEY", "")
         return "api-" + hashlib.sha256(key.encode()).hexdigest()[:6]
-    who = status.get("email") or status.get("orgId") or ""
+    return seat_for(status.get("email") or status.get("orgId") or "")
+
+
+def seat_for(who: str) -> str:
+    """The seat id of an account email (``gil@x.io`` -> ``gil-3f2a``): how the farm matches a person to their Claude
+    (e.g. a Slack sender) without storing anyone's email."""
     if not who:
         return "default"
     local = re.sub(r"[^a-z0-9]", "", who.split("@")[0].lower())[:16] or "seat"

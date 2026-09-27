@@ -11,8 +11,11 @@ you     @clodfarm-jestr and make the delimiter configurable      (a follow-up: i
 ```
 
 - `status`: the Claudes on the farm, their usage and what's running. It answers at once and starts nothing.
-- `gil: review the open PRs`: runs it on gil's account. Any Claude on the farm works; without a name, the farm's own
-  Claude owns it.
+- **Who runs it:** your own Claude, if you have one on the farm (your Slack email is the email of that Claude
+  account). If you don't, a random Claude that has room for a sub-agent right now, or any Claude that is up when none
+  has room. The reply says which one and why. The match compares seat ids (`gil-3f2a`, a short hash of the email),
+  so the farm still never stores anyone's email.
+- `gil: review the open PRs`: runs it on gil's account, whoever asks. Any Claude on the farm works.
 - `help`: what it understands.
 
 Each request is an ordinary sub-agent. You see it on the farm next to its Claude, it's paced by the budget governor,

@@ -121,3 +121,30 @@ def test_connect_rejects_the_wrong_tokens(bridge):
         b.connect("xapp-2", "xapp-2")
     with pytest.raises(ValueError, match="xapp-"):
         b.connect("xoxb-2", "xoxb-2")
+
+
+def test_who_runs_it_the_senders_own_claude_else_a_random_one_with_room(bridge, monkeypatch):
+    from clodfarm.auth import seat_for
+    b, store, calls = bridge
+    for name, email in (("gil", "gil@jestr.ai"), ("noa", "noa@jestr.ai")):  # two Claudes up, each its own account
+        store.heartbeat(f"{name}@box", "w0", "idle", seat=seat_for(email))
+    t = b.handle(mention("fix the build", ts="4.0"))  # from Gil (gil@jestr.ai): Gil's own Claude
+    assert t["to"] == "gil" and t["owner"] == "gil" and "(yours" in posts(calls)[-1]
+
+    MEMBER_NO_CLAUDE = {**MEMBER, "profile": {"email": "dana@jestr.ai"}}
+    monkeypatch.setattr(b, "_user", lambda uid, token: MEMBER_NO_CLAUDE)
+    monkeypatch.setattr(slack.random, "choice", lambda pool: pool[-1])
+    t = b.handle(mention("write the docs", ts="4.1"))  # Dana has no Claude here: a random one
+    assert t["to"] == "noa" and "picked at random" in posts(calls)[-1]
+
+    t = b.handle(mention("gil: review the PRs", ts="4.2"))  # a name picks that Claude, whoever asks
+    assert t["to"] == "gil" and t["prompt"].count("review the PRs") == 1 and "gil:" not in t["title"]
+
+
+def test_pick_prefers_claudes_with_room():
+    rows = [{"name": "a", "seat": "a-1", "can_start": 0, "reason": "5h at 90%"},
+            {"name": "b", "seat": "b-1", "can_start": 2, "reason": ""}]
+    nobody = {"profile": {"email": "x@y.io"}}
+    assert all(SlackBridge._pick(nobody, rows)[0] == "b" for _ in range(20))
+    assert SlackBridge._pick(nobody, [rows[0]])[0] == "a"  # nobody has room: any Claude that is up
+    assert SlackBridge._pick(nobody, []) == (None, "")  # none up: the first to come up takes it

@@ -20,6 +20,7 @@ import base64
 import hashlib
 import json
 import os
+import random
 import re
 import select
 import socket
@@ -236,6 +237,7 @@ def save_settings(cfg, d: dict):
 HELP = ("I'm this farm's Claude. Ask me for anything, like you would in the Claude app: a sub-agent does it and "
         "answers in this thread.\n"
         "• `status`: the Claudes on the farm, their usage and what's running\n"
+        "• it runs on your own Claude if you have one on the farm, else on a random Claude with room\n"
         "• `gil: review the open PRs`: run it on gil's account (any Claude on the farm)\n"
         "• reply in the thread to follow up (in a channel, @mention me there)")
 
@@ -419,13 +421,14 @@ class SlackBridge:
         if cmd == "status":
             say(self._status())
             return None
-        from .cli import _names
+        from .cli import _claudes
         from .config import _claude_name
-        me = _claude_name(self.cfg.farm, self.cfg.workspace)
-        to = None
+        me, rows = _claude_name(self.cfg.farm, self.cfg.workspace), _claudes(self.cfg, self.store)
         m = re.match(r"^@?([a-z0-9._-]+)\s*[:,]\s*(.+)$", text, re.S)
-        if m and m.group(1).lower() in _names(self.cfg, self.store):
-            to, text = (m.group(1).lower() if m.group(1).lower() != me else None), m.group(2).strip()
+        if m and m.group(1).lower() in {c["name"] for c in rows}:
+            to, why, text = m.group(1).lower(), "", m.group(2).strip()  # "gil: ..." picks gil
+        else:
+            to, why = self._pick(user, rows)
         context = self._thread(channel, thread, ts, token, bot) if thread != ts else ""
         where = "in a direct message" if ev.get("channel_type") == "im" else f"in the Slack channel <#{channel}>"
         prompt = (f"{asker} asked you this in Slack ({where}):\n\n{text}\n\n"
@@ -443,9 +446,24 @@ class SlackBridge:
         self.store.event("slack.received", f"{asker} in Slack: {text[:160]}", task=t["id"], by=f"slack:{asker}")
         self._react(token, channel, ts, "eyes")
         link = s.get("ui_url")
-        say(f"🌱 On it: sub-agent `{t['id'][:8]}` on {to or me}'s account. I'll answer here when it's done."
+        say(f"🌱 On it: sub-agent `{t['id'][:8]}` on {to or me}'s account{why}. I'll answer here when it's done."
             + (f" <{link}|Watch it on the farm>" if link else ""))
         return t
+
+    @staticmethod
+    def _pick(user: dict, rows: list[dict]) -> tuple[str | None, str]:
+        """Which Claude runs a Slack request: the sender's own (their Slack email is the account's email), else a
+        random Claude with room for a sub-agent now (or any Claude that is up). Returns (name, why) for the reply."""
+        from .auth import seat_for
+        email = ((user.get("profile") or {}).get("email") or "").strip()
+        own = [c for c in rows if email and c.get("seat") == seat_for(email)]
+        if own:
+            c = own[0]
+            return c["name"], " (yours)" + ("" if c["can_start"] else f": it's resting ({c['reason']}), it starts when it has room")
+        pool = [c for c in rows if c["can_start"]] or rows
+        if not pool:
+            return None, ""  # no Claude is up: the first one that comes up takes it
+        return random.choice(pool)["name"], " (picked at random: you have no Claude on this farm)"
 
     def _react(self, token, channel, ts, name, remove=False):
         try:
