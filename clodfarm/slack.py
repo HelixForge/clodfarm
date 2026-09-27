@@ -147,7 +147,7 @@ def api(method: str, token: str, **params) -> dict:
             "Authorization": f"Bearer {token}", "Content-Type": "application/x-www-form-urlencoded",
             "User-Agent": "clodfarm"})
         try:
-            with urllib.request.urlopen(req, timeout=15) as r:
+            with urllib.request.urlopen(req, timeout=15, context=ssl.create_default_context()) as r:
                 out = json.loads(r.read() or b"{}")
         except urllib.error.HTTPError as e:
             if e.code == 429 and attempt < 2:

@@ -31,6 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 from . import __version__
+from . import mcp
 from .agents import AgentManager
 from .slack import SlackBridge
 from .store import Store, now
@@ -156,6 +157,7 @@ class FarmUI:
         self.manager = manager or AgentManager(cfg)
         self.auth = Auth(os.path.join(cfg.workspace, ".farm", "ui-auth.json"))
         self.slack = SlackBridge(cfg, self.store)
+        self.oauth = mcp.OAuthStore(mcp.oauth_path(cfg.workspace))
         self._state_cache: tuple[float, dict] | None = None
         self._lock = threading.Lock()
 
@@ -278,12 +280,13 @@ def make_handler(ui: FarmUI):
                 return None  # redirected to BASE/ by the caller, so relative URLs resolve
             return path[len(BASE):] if path.startswith(BASE + "/") else ""
 
-        def _headers(self, status: int, ctype: str, extra: dict | None = None, length: int | None = None):
+        def _headers(self, status: int, ctype: str, extra: dict | None = None, length: int | None = None,
+                     csp: str = CSP):
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             if length is not None:
                 self.send_header("Content-Length", str(length))
-            self.send_header("Content-Security-Policy", CSP)
+            self.send_header("Content-Security-Policy", csp)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("X-Frame-Options", "DENY")
@@ -334,10 +337,167 @@ def make_handler(ui: FarmUI):
             self._headers(200, ctype, {"Cache-Control": cache}, len(data))
             self.wfile.write(data)
 
+
+        # ------------------------------------------------------ MCP + OAuth
+        def _pub(self) -> str:
+            return mcp.public_url(self, BASE)
+
+        def _form(self) -> dict:
+            n = int(self.headers.get("Content-Length") or 0)
+            if n > MAX_BODY:
+                raise ValueError("request too large")
+            raw = self.rfile.read(n).decode() if n else ""
+            if (self.headers.get("Content-Type") or "").startswith("application/json"):
+                d = json.loads(raw or "{}")
+                return d if isinstance(d, dict) else {}
+            return {k: v[-1] for k, v in parse_qs(raw, keep_blank_values=True).items()}
+
+        def _html(self, status: int, page: str, csp: str):
+            body = page.encode()
+            self._headers(status, "text/html; charset=utf-8", {"Cache-Control": "no-store"}, len(body), csp=csp)
+            self.wfile.write(body)
+
+        def _page_csp(self, nonce: str, redirect: str = "") -> str:
+            u = urlsplit(redirect) if redirect else None
+            to = f" {u.scheme}://{u.netloc}" if u and u.scheme and u.netloc else ""
+            return (f"default-src 'none'; style-src 'nonce-{nonce}'; font-src 'self'; img-src 'self' data:; "
+                    f"form-action 'self'{to}; frame-ancestors 'none'; base-uri 'none'")
+
+        def _oauth_get(self, raw: str) -> bool:
+            """Discovery documents (also at the root, path-inserted as RFC 8414 and 9728 say) and the consent page."""
+            prm, asm = mcp.metadata(self._pub())
+            rel = raw[len(BASE):] if BASE and raw.startswith(BASE + "/") else raw if not BASE else None
+            if raw in (f"/.well-known/oauth-protected-resource{BASE}/mcp", f"/.well-known/oauth-protected-resource{BASE}") \
+                    or rel in ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"):
+                self._json(prm)
+                return True
+            if raw == f"/.well-known/oauth-authorization-server{BASE}" or rel == "/.well-known/oauth-authorization-server":
+                self._json(asm)
+                return True
+            if rel == "/mcp":
+                self._headers(405, "application/json", {"Allow": "POST"}, 2)
+                self.wfile.write(b"{}")
+                return True
+            if rel == "/oauth/authorize":
+                q = {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()}
+                self._consent(q)
+                return True
+            return False
+
+        def _consent(self, q: dict, error: str = ""):
+            nonce = secrets.token_urlsafe(12)
+            p, err, can_redirect = mcp.check_authorize(ui.oauth, q, self._pub())
+            if err and not can_redirect:
+                return self._html(400, mcp.error_page(err, nonce, BASE), self._page_csp(nonce))
+            if err:
+                return self._redirect(mcp.redirect_with(p["redirect_uri"], error=err, state=p["state"], iss=self._pub()))
+            c = ui.oauth.client(p["client_id"])
+            page = mcp.consent_page(p, c, bool(self._user()), ui.oauth.form_token(p),
+                                    q.get("name") or mcp.slug(f"{ui.cfg.name}-laptop"), nonce, BASE, error)
+            self._html(200 if not error else 400, page, self._page_csp(nonce, p["redirect_uri"]))
+
+        def _redirect(self, url: str):
+            self.send_response(302)
+            self.send_header("Location", url)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def _farm_names(self) -> set[str]:
+            from .cli import _claudes
+            return {c["name"] for c in _claudes(ui.cfg, ui.store)} | {a["id"] for a in ui.manager.all()} | \
+                {a.get("name") or "" for a in ui.manager.all()} | {ui.cfg.name}
+
+        def _oauth_post(self, path: str):
+            oa, pub = ui.oauth, self._pub()
+            nostore = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+            try:
+                if path == "/oauth/register":
+                    try:
+                        return self._json(oa.register(self._form()), 201, nostore)
+                    except ValueError as e:
+                        return self._json({"error": "invalid_client_metadata", "error_description": str(e)}, 400)
+                if path == "/oauth/token":
+                    status, out = mcp.token_response(oa, self._form(), pub)
+                    return self._json(out, status, nostore)
+                if path == "/oauth/revoke":
+                    oa.revoke_token(self._form().get("token", ""))
+                    return self._json({}, 200, nostore)
+                if path == "/oauth/authorize":
+                    return self._authorize_post(self._form())
+                return self._mcp()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except ValueError as e:
+                return self._json({"error": "invalid_request", "error_description": str(e)[:200]}, 400)
+
+        def _authorize_post(self, f: dict):
+            p, err, can_redirect = mcp.check_authorize(ui.oauth, f, self._pub())
+            nonce = secrets.token_urlsafe(12)
+            if err and not can_redirect:
+                return self._html(400, mcp.error_page(err, nonce, BASE), self._page_csp(nonce))
+            if err or not ui.oauth.form_ok(f.get("form", ""), p):
+                return self._html(400, mcp.error_page(err or "this page expired: start the connection again from "
+                                                      "your MCP client", nonce, BASE), self._page_csp(nonce))
+            if f.get("decision") != "allow":
+                return self._redirect(mcp.redirect_with(p["redirect_uri"], error="access_denied", state=p["state"],
+                                                        iss=self._pub()))
+            if not self._user():
+                if ui.auth.locked_out(self._ip()):
+                    return self._consent({**p, "name": f.get("name", "")}, "too many tries: wait five minutes")
+                if not ui.auth.check(str(f.get("password", ""))[:1000], self._ip()):
+                    return self._consent({**p, "name": f.get("name", "")}, "wrong password")
+            name = str(f.get("name", "")).strip().lower()
+            if not mcp.NAME_RE.match(name):
+                return self._consent({**p, "name": name}, "a name is lowercase letters, digits, . _ or -")
+            if name in self._farm_names():
+                return self._consent({**p, "name": name}, f"'{name}' is a Claude on the farm: pick another name")
+            scope = "farm:read" if f.get("access") == "read" else p["scope"]
+            code = ui.oauth.new_code(client_id=p["client_id"], redirect_uri=p["redirect_uri"],
+                                     challenge=p["code_challenge"], scope=scope, name=name)
+            ui.store.event("mcp.connected", f"{name} connected over MCP ({ui.oauth.client(p['client_id'])['client_name']},"
+                           f" {scope})", by="ui")
+            return self._redirect(mcp.redirect_with(p["redirect_uri"], code=code, state=p["state"], iss=self._pub()))
+
+        def _mcp(self):
+            pub = self._pub()
+            origin = self.headers.get("Origin")
+            po = urlsplit(pub)
+            if origin and origin.rstrip("/") != f"{po.scheme}://{po.netloc}":
+                return self._json({"error": "origin not allowed"}, 403)  # DNS rebinding / cross-site browsers
+            auth = self.headers.get("Authorization") or ""
+            token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+            grant = ui.oauth.check(token) if token else None
+            if not grant or grant.get("resource") != pub + "/mcp":
+                www = f'Bearer resource_metadata="{pub}/.well-known/oauth-protected-resource", scope="{" ".join(mcp.SCOPES)}"'
+                if token:
+                    www += ', error="invalid_token"'
+                return self._json({"error": "sign in: connect this MCP client to the farm"}, 401,
+                                  {"WWW-Authenticate": www})
+            try:
+                msg = self._body()
+            except ValueError:
+                return self._json({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}, 400)
+            if not msg.get("method"):
+                self._headers(202, "application/json", None, 0)  # a response or notification from the client
+                return
+            ui._state_cache = None
+            out = mcp.rpc(ui, grant, msg)
+            if out is None:
+                self._headers(202, "application/json", None, 0)
+                return
+            self._json(out)
+
+        def do_DELETE(self):
+            self._headers(405, "application/json", {"Allow": "POST"}, 2)
+            self.wfile.write(b"{}")
+
         # ----------------------------------------------------------- GET
         def do_GET(self):
             if self.path.split("?", 1)[0] == "/healthz":  # the container health check, with or without a prefix
                 return self._json({"ok": True, "version": __version__})
+            if self._oauth_get(self.path.split("?", 1)[0]):
+                return
             path = self._path()
             if path is None:
                 self.send_response(308)
@@ -390,6 +550,8 @@ def make_handler(ui: FarmUI):
         def do_POST(self):
             path = self._path() or ""
             try:
+                if path in ("/mcp", "/oauth/register", "/oauth/token", "/oauth/revoke", "/oauth/authorize"):
+                    return self._oauth_post(path)  # bearer tokens and OAuth forms: no cookie, no X-Clodfarm
                 if self.headers.get("X-Clodfarm") != "1" or \
                         not (self.headers.get("Content-Type") or "").startswith("application/json"):
                     return self._err(403, "missing X-Clodfarm header or JSON body")
