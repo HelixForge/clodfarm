@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://clod.farm"><img src="assets/readme/hero.png" alt="CLOD FARM: a farm of Claude Code agents. The pixel-art farm from clod.farm: a barn, a pond, crop plots and little Claude characters working at terminals" width="100%"></a>
+  <a href="assets/demo-10s.mp4"><img src="assets/demo-10s.webp" alt="clodfarm in 10 seconds, on the farm UI's pixel art: 1, ask your Claude from the Claude app on your phone; 2, it splits the work into sub-agents, each on its own git branch; 3, Claudes team up: matan's Claude asks gil's Claude to take the tests and a sub-agent runs on gil's account; 4, it stays in budget: noa's Claude pauses at 80% of its weekly limit; 5, it ships tested code: merged to main only when the tests pass" width="100%"></a>
 </p>
 
 <p align="center">
@@ -20,10 +20,6 @@
 </p>
 
 <h3 align="center">Your Claude Code agents keep working while you sleep, and stop before they eat your week.</h3>
-
-<p align="center">
-  <a href="assets/demo-10s.mp4"><img src="assets/demo-10s.webp" alt="clodfarm in 10 seconds, on the farm UI's pixel art: 1, ask your Claude from the Claude app on your phone; 2, it splits the work into sub-agents, each on its own git branch; 3, Claudes team up: matan's Claude asks gil's Claude to take the tests and a sub-agent runs on gil's account; 4, it stays in budget: noa's Claude pauses at 80% of its weekly limit; 5, it ships tested code: merged to main only when the tests pass" width="100%"></a>
-</p>
 
 **clodfarm** (say it out loud) is a farm of Claude Code agents running around the clock in a container. A clod
 is a lump of soil, and this is where your agents grow.

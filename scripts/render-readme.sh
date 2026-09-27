@@ -1,7 +1,6 @@
 #!/bin/sh
 # Render the README's farm-themed images with headless Chrome: the section signs and the four steps
 # (scripts/readme/*.html, in the site's fonts and colors) into assets/readme/. Needs Python with Pillow (to crop).
-# The hero is a still of clod.farm's own scene: see scripts/readme/README.md.
 set -e
 cd "$(dirname "$0")/.."
 CHROME=${CHROME:-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}
