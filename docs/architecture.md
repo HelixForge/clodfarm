@@ -13,8 +13,10 @@ container (user "farm", tini as PID 1)
 └── clodfarm run                       supervisor.py
     ├── remote-control keeper          `claude remote-control --name $FARM_NAME --spawn worktree`, restarted with back-off
     ├── worker w0..wN-1                one thread each, never more than FARM_MAX_WORKERS
-    │     └── claude -p --output-format stream-json --verbose --append-system-prompt <farm guide> ...
-    └── housekeeping                   re-queues tasks whose lease expired, prints a status line every 10 min
+    │     └── claude -p --input-format stream-json --output-format stream-json --verbose --append-system-prompt ...
+    ├── mail                           watches this Claude's doorbell: flags new mail, interrupts for --urgent
+    └── housekeeping                   re-queues tasks whose lease expired, wakes someone for unread --wake mail,
+                                       prints a status line every 10 min
 ```
 
 ## Modules
@@ -41,7 +43,10 @@ container (user "farm", tini as PID 1)
 | `SLOT` | `<seat>#000..` | Per-seat concurrency slots with leases, shared by every box on that seat. |
 | `SPEND` | `<seat>#<day>` | API-mode list-price spend per seat and day. |
 | `CONTROL` | `GLOBAL` / `HEALTH` | The pause switch; the circuit breaker's failure count. |
-| `MSG#<claude>` | `<ts>#<rand>` | A message to one Claude (its inbox; TTL 30 days). |
+| `MSG#<address>` | `<ts>#<rand>` | A message to a Claude (its name) or to one sub-agent (its task id): id, sender, reply address, hops, read by whom (TTL 30 days). |
+| `BELL` | `<claude>` | A counter every message for that Claude (or a sub-agent running on its boxes) bumps; its boxes' mail loop watches it. |
+| `WAKEQ` | `<due>#<rand>` | A `--wake` message; when due and still unread, one box starts someone to handle it. |
+| `WAKES` | `<address>#<hour>` | Wakes per recipient and hour (the loop cap). |
 | `SESSION` | `<session id>` | Every Claude Code session: its Claude, kind (conversation / sub-agent / usage), task, title, turn count, transcript offset. |
 | `TURN#<session id>` | `<n>` | One turn of that session's conversation, copied from its transcript by `clodfarm hook`. |
 | `SCHEDULE` | `<id>` | A scheduled task (cron + time zone, every N seconds, or once at a time) and its next run. |

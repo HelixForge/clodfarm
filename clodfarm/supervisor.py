@@ -8,7 +8,10 @@ Threads:
   * runner 0..N-1          take a budget slot, take the next sub-agent this account may run, run it headless
   * usage keeper           measures the account's real usage right after login and whenever no run has for a while
   * updater                keeps Claude Code on its newest release (FARM_CLAUDE_UPDATE; the farm's own Claude only)
-  * main loop              starts scheduled sub-agents, reaps dead leases, prints a status line
+  * mail                   watches this Claude's doorbell: flags new messages for its conversations and sub-agents
+                           (their hooks deliver them) and hands --urgent ones to a running sub-agent at once
+  * main loop              starts scheduled sub-agents, wakes someone for unread --wake messages, reaps dead leases,
+                           prints a status line
 """
 
 from __future__ import annotations
@@ -23,12 +26,12 @@ import threading
 import time
 
 from . import gitops, notify, prompts
-from .auth import (accept_remote_control, auth_status, banner, claude_name, install_guide, install_hooks, install_model,
-                   seat_id, trust_directory)
+from .auth import (accept_remote_control, auth_status, banner, claude_name, install_guide, install_hooks,
+                   install_messaging, install_model, seat_id, trust_directory)
 from .config import primary_name_file
 from .config import Config, load
 from .governor import Snapshot, decide
-from .runner import build_cmd, run_agent, session_name
+from .runner import Live, build_cmd, run_agent, session_name
 from .store import Store, iso, now
 
 
@@ -43,6 +46,7 @@ class Farm:
         store.echo = True
         self.stop = threading.Event()
         self.procs: dict[str, subprocess.Popen] = {}
+        self.running: dict[str, Live | None] = {}  # the sub-agents running on this box (their stdin, when live)
         self.ui = None
         self.rc_version = ""  # the Claude Code version Remote Control is running
         self.rc_updating = False  # Remote Control was stopped to restart on a new version
@@ -67,9 +71,13 @@ class Farm:
                 accept_remote_control()
             install_guide()
             install_hooks()
+            install_messaging()
             install_model(self.cfg.model)
             trust_directory(self.cfg.repo_dir)
             trust_directory(self.cfg.workspace)
+        # this Claude's conversations (Remote Control and every session opened from it) inherit their mail flag
+        os.makedirs(self.cfg.mail_dir, exist_ok=True)
+        os.environ["FARM_MAIL_FLAG"] = os.path.join(self.cfg.mail_dir, self.cfg.name)
         self.store.event("farm.started", f"{self.cfg.farm_id}: {self.cfg.policy.max_workers} workers, "
                          f"model {self.cfg.model}, remote control {'on' if self.cfg.remote_control else 'off'}, "
                          f"billing {'API key' if self.cfg.policy.api_mode else 'subscription'}")
@@ -81,6 +89,7 @@ class Farm:
             threads.append(threading.Thread(target=self.remote_control_loop, name="remote-control", daemon=True))
         if self.cfg.usage_refresh > 0:
             threads.append(threading.Thread(target=self.usage_loop, name="usage", daemon=True))
+        threads.append(threading.Thread(target=self.mail_loop, name="mail", daemon=True))
         for i in range(self.cfg.policy.max_workers):
             threads.append(threading.Thread(target=self.worker_loop, args=(i,), name=f"w{i}", daemon=True))
         for t in threads:
@@ -91,6 +100,8 @@ class Farm:
                 self.store.reap_expired()
                 for t in self.store.fire_due(self.cfg.max_depth, self.cfg.max_attempts):
                     print(f"schedule: queued {t['id']} {t['title'][:80]}", flush=True)
+                for tid in self.store.dispatch_wakes(self.cfg.mail_max_hops, self.cfg.mail_wakes_per_hour):
+                    print(f"mail: {tid} started for an unread --wake message", flush=True)
                 if now() - last_status > 600:
                     self.print_status()
                     last_status = now()
@@ -312,6 +323,36 @@ class Farm:
         self.store.event("usage.measured", f"{self.cfg.name}: 5h {pct(sn.five_hour)} used, 7d {pct(sn.seven_day)} used")
         return True
 
+    # ------------------------------------------------------------------ mail
+    def mail_loop(self):
+        """Every message for this Claude, or for a sub-agent running on this box, rings this Claude's doorbell in the
+        store. Look at it every ``mail_poll`` seconds (and at every address every 30 s, in case a ring was missed):
+        an --urgent message interrupts its running sub-agent now; for any other, touch the address's flag file, and
+        the hooks of its sessions deliver it (after the next batch of tool calls, before the turn ends, or by waking an
+        idle conversation)."""
+        seen, swept = -1, 0.0
+        while not self.stop.wait(self.cfg.mail_poll):
+            try:
+                n = self.store.bell(self.cfg.name)
+                if n == seen and now() - swept < 30:
+                    continue
+                seen, swept = n, now()
+                self.deliver_mail()
+            except Exception as e:  # noqa: BLE001 - the mail must never take the farm down
+                print(f"mail: {e!r}", flush=True)
+
+    def deliver_mail(self):
+        store = self.store
+        for tid, live in list(self.running.items()):
+            if live and store.unread(tid, urgent_only=True):
+                msgs = store.claim(tid, f"urgent:{self.cfg.name}", urgent_only=True)
+                if msgs and not live.interrupt(prompts.urgent_text(msgs)):
+                    store.unclaim(msgs)  # it just finished: its next run (or a hook) gets them
+        for addr in [self.cfg.name, *self.running]:
+            if store.unread(addr):
+                with open(os.path.join(self.cfg.mail_dir, addr), "a"):
+                    pass
+
     # --------------------------------------------------------------- workers
     def worker_loop(self, i: int):
         wid = f"w{i}"
@@ -361,6 +402,19 @@ class Farm:
         cfg, store = self.cfg, self.store
         tid = task["id"]
         store.heartbeat(cfg.farm_id, wid, "running", tid, seat=self.seat)
+        resume = bool(task.get("resume"))
+        session = task.get("session_id") if resume else None
+        # messages left for it (a "mail" sub-agent: for its Claude) come with its prompt; they are kept on the task, so
+        # a run that starts over (a retry, a lost session) sees them all again
+        kind, addr = task.get("kind"), task.get("to") if task.get("kind") == "mail" else tid
+        new = store.claim(addr, f"prompt:{tid}")
+        mail = (task.get("mail") or []) + [{k: m.get(k) for k in ("id", "from", "reply", "text", "at", "hops")}
+                                           for m in new]
+        if new:
+            store.update_task(tid, mail=mail)
+        if kind == "mail" and not mail:
+            store.finish(tid, holder, True, "no messages were left to handle", cfg.max_resumes)
+            return
         use_git = gitops.is_repo(cfg.repo_dir)
         branch = None
         parent_branch = f"farm/{task['parent']}" if task.get("parent") else None
@@ -372,33 +426,40 @@ class Farm:
         if cfg.manage_claude_config:
             trust_directory(cwd)
 
-        resume = bool(task.get("resume"))
-        session = task.get("session_id") if resume else None
+        note = None  # what a resumed run is told
         if resume:
             reason = task.get("resume_reason")
             if reason == "verify":
-                prompt = prompts.verify_prompt(cfg.verify_cmd, task.get("resume_note") or "")
+                note = prompts.verify_prompt(cfg.verify_cmd, task.get("resume_note") or "")
             elif reason == "timeout":
-                prompt = prompts.timeout_prompt(cfg.task_timeout)
+                note = prompts.timeout_prompt(cfg.task_timeout)
             elif reason == "restart":
-                prompt = prompts.restart_prompt()
+                note = prompts.restart_prompt()
+            elif reason == "message":
+                note = prompts.message_prompt()
             else:
                 children = [store.get_task(c) for c in task.get("children", [])]
                 for c in children:  # a child may have run on another box: get its branch from origin
                     if c and use_git:
                         gitops.fetch_branch(cfg.repo_dir, f"farm/{c['id']}")
-                prompt = prompts.resume_prompt([c for c in children if c])
-            if not session:
-                prompt = task["prompt"] + "\n\n---\n" + prompt
-        else:
-            prompt = task["prompt"]
-        if resume:
+                note = prompts.resume_prompt([c for c in children if c])
             store.mark_resumed(tid)
 
+        def compose(fresh: bool) -> str:
+            """A fresh session gets the whole task and every message; the same session only what is new."""
+            parts = ([prompts.mail_task_prompt(addr) if kind == "mail" else task["prompt"]] if fresh else []) + \
+                ([note] if note else [])
+            shown = mail if fresh else new
+            return "\n\n---\n".join(parts + ([prompts.mail_text(shown)] if shown else []))
+
         env = {**os.environ, "FARM_TASK_ID": tid, "FARM_WORKER_ID": f"{cfg.farm_id}/{wid}",
-               "FARM_OWNER": task.get("owner") or cfg.name}  # its own sub-agents and messages speak for its Claude
-        sysprompt = prompts.task_system_prompt(cfg, task, cwd, branch)
-        name = f"[clodfarm] {task.get('owner') or cfg.name} · {task['title'][:60]}"
+               "FARM_OWNER": task.get("owner") or cfg.name,  # its own sub-agents and messages speak for its Claude
+               "FARM_MAIL_FLAG": os.path.join(cfg.mail_dir, tid),
+               # a message it sends counts one more message-triggered run (the wake loop guard)
+               "FARM_MAIL_HOPS": str(max([int(m.get("hops") or 0) + 1 for m in mail], default=0))}
+        # its session name carries its id, so other Claudes find it in ListAgents and message it with SendMessage
+        name = f"[clodfarm] {task.get('owner') or cfg.name} · {task['title'][:50]} · {tid}"
+        sysprompt = prompts.task_system_prompt(cfg, task, cwd, branch, name)
 
         keep = threading.Event()
 
@@ -412,16 +473,26 @@ class Farm:
         before = store.get_snapshot(self.seat)
         on_snap = lambda sn: store.put_snapshot(sn, self.seat)  # noqa: E731
         started = now()
+
+        def run(resume_session, text):
+            live = Live() if cfg.live_stdin else None
+            self.running[tid] = live
+            return run_agent(build_cmd(cfg, sysprompt, resume_session, name, live=bool(live)), text, cwd, env,
+                             cfg.task_timeout, on_snapshot=on_snap, on_start=lambda p: self.procs.__setitem__(tid, p),
+                             live=live)
         try:
-            res = run_agent(build_cmd(cfg, sysprompt, session, name), prompt, cwd, env, cfg.task_timeout,
-                            on_snapshot=on_snap, on_start=lambda p: self.procs.__setitem__(tid, p))
+            res = run(session, compose(fresh=not session))
             if session and not res.ok and res.num_turns == 0 and "conversation" in res.text.lower():
                 # session file gone (e.g. new container): start fresh with full context
-                res = run_agent(build_cmd(cfg, sysprompt, name=name), task["prompt"] + "\n\n---\n" + prompt, cwd, env,
-                                cfg.task_timeout, on_snapshot=on_snap, on_start=lambda p: self.procs.__setitem__(tid, p))
+                res = run(None, compose(fresh=True))
         finally:
             keep.set()
             self.procs.pop(tid, None)
+            self.running.pop(tid, None)
+            try:
+                os.remove(os.path.join(cfg.mail_dir, tid))
+            except OSError:
+                pass
         if self.stop.is_set():
             return  # stopping: shutdown() hands this task back to the queue
 

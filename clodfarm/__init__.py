@@ -1,3 +1,3 @@
 """clodfarm: always-on Claude Code agents on your Claude subscription."""
 
-__version__ = "0.4.4"
+__version__ = "0.5.0"

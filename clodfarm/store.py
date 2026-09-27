@@ -12,7 +12,10 @@ Items (PK / SK):
     SPEND              / <seat>#<day>      API-mode list-price spend per seat and day
     WORKER             / <farm>/<worker>   heartbeat
     SCHEDULE           / <id>              a scheduled sub-agent: started again every time it is due
-    MSG#<claude>       / <ts>#<rand>       a message to one Claude on the farm (its inbox)
+    MSG#<address>      / <ts>#<rand>       a message to a Claude (its name) or to one sub-agent (its task id)
+    BELL               / <claude>          bumped by every message for that Claude's boxes: their mail loop looks
+    WAKEQ              / <ts>#<rand>       a --wake message: if nobody has read it when due, the farm starts someone
+    WAKES              / <address>#<hour>  wakes per recipient and hour (the cap that stops message loops)
     SESSION            / <session id>      a Claude Code session: which Claude, what kind, its task, title, turns
     TURN#<session id>  / <n>               one turn of its conversation (see sessions.py)
     CONTROL            / GLOBAL | HEALTH
@@ -24,6 +27,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import secrets
 import time
 
@@ -46,6 +50,9 @@ def iso(ts: float | None = None) -> str:
 
 def new_id() -> str:
     return time.strftime("%y%m%d%H%M%S", time.gmtime()) + secrets.token_hex(3)  # sortable: time prefix + randomness
+
+
+TASK_ID = re.compile(r"\d{12}[0-9a-f]{6}")  # what new_id() makes: a message to one is for that sub-agent
 
 
 def _prio_key(priority: int, created: float, tid: str) -> str:
@@ -313,21 +320,118 @@ class Store:
         return n
 
     # -------------------------------------------------------------- messages
-    def send_message(self, frm: str, to: str, text: str) -> dict:
+    def send_message(self, frm: str, to: str, text: str, reply: str | None = None, urgent: bool = False,
+                     wake: bool = False, hops: int = 0, wake_after: float = 120) -> dict:
+        """Leave a message for ``to``: a Claude (its name; its conversations read it) or one sub-agent (its task id).
+        ``reply`` is where an answer goes (the sender's task id inside a sub-agent). ``urgent`` interrupts a running
+        sub-agent. ``wake`` makes sure someone handles it: if it is still unread after ``wake_after`` seconds, the
+        farm starts a sub-agent for that Claude, or resumes that finished sub-agent (see ``dispatch_wakes``).
+        ``hops`` counts how many message-triggered runs led to this one."""
         t = now()
-        item = {"PK": f"MSG#{to}", "SK": f"{t:017.6f}#{secrets.token_hex(2)}", "ver": 1, "from": frm, "to": to,
-                "text": text[:4000], "at": t, "read": False, "expires_at": int(t + EVENT_TTL)}
+        item = {"PK": f"MSG#{to}", "SK": f"{t:017.6f}#{secrets.token_hex(2)}", "ver": 1, "id": new_id(), "from": frm,
+                "to": to, "reply": reply or frm, "text": text[:4000], "at": t, "read": False, "hops": int(hops),
+                "expires_at": int(t + EVENT_TTL)}
+        if urgent:
+            item["urgent"] = True
+        if wake:
+            item["wake"] = True
         self.b.put(item)
-        self.event("msg.sent", f"{frm} -> {to}: {text[:200]}", by=frm)
+        self.ring(to)
+        if wake:
+            self.b.put({"PK": "WAKEQ", "SK": f"{t + wake_after:017.6f}#{secrets.token_hex(2)}", "ver": 1,
+                        "msg_pk": item["PK"], "msg_sk": item["SK"], "to": to, "due": t + wake_after,
+                        "expires_at": int(t + EVENT_TTL)})
+        flags = " (urgent)" if urgent else " (wake)" if wake else ""
+        self.event("msg.sent", f"{frm} -> {to}: {text[:200]}{flags}", by=frm)
         return item
 
-    def inbox(self, name: str, unread_only: bool = True, mark_read: bool = True) -> list[dict]:
-        out = [m for m in self.b.query(f"MSG#{name}") if not (unread_only and m.get("read"))]
-        if mark_read:
-            for m in out:
-                if not m.get("read"):
-                    self._update(m["PK"], m["SK"], lambda x: {**x, "read": True})
+    def ring(self, to: str):
+        """Tell the boxes of whoever should read a message for ``to`` to look now: that Claude's, or the box running
+        that sub-agent. A sub-agent that isn't running gets it in its prompt when it next starts."""
+        name = to
+        if TASK_ID.fullmatch(to):
+            task = self.get_task(to) or {}
+            if task.get("status") != "running" or "@" not in str(task.get("worker", "")):
+                return
+            name = task["worker"].split("@")[0]
+        self._update("BELL", name, lambda x: {**x, "n": int(x.get("n", 0)) + 1, "at": now()}, create=True)
+
+    def bell(self, name: str) -> int:
+        it = self.b.get("BELL", name)
+        return int(it.get("n", 0)) if it else 0
+
+    def unread(self, addr: str, urgent_only: bool = False) -> list[dict]:
+        return [m for m in self.b.query(f"MSG#{addr}") if not m.get("read") and (m.get("urgent") or not urgent_only)]
+
+    def claim(self, addr: str, by: str, urgent_only: bool = False) -> list[dict]:
+        """Take the unread messages for ``addr`` exactly once: when two readers race (two hooks, two boxes), each
+        message goes to one of them. Returns the ones this call won."""
+        out = []
+        for m in self.unread(addr, urgent_only):
+            won = self._update(m["PK"], m["SK"], lambda x: None if x.get("read") else
+                               {**x, "read": True, "read_by": by, "read_at": now()})
+            if won:
+                out.append(won)
+        if out:
+            self.event("msg.delivered", f"{len(out)} message(s) for {addr} via {by}", by=by)
         return out
+
+    def unclaim(self, msgs: list[dict]):
+        """Give claimed messages back (they could not be handed over)."""
+        for m in msgs:
+            self._update(m["PK"], m["SK"], lambda x: {**{k: v for k, v in x.items() if k not in ("read_by", "read_at")},
+                                                      "read": False})
+
+    def inbox(self, name: str, unread_only: bool = True, mark_read: bool = True) -> list[dict]:
+        if unread_only and mark_read:
+            return self.claim(name, "inbox")
+        return [m for m in self.b.query(f"MSG#{name}") if not (unread_only and m.get("read"))]
+
+    def dispatch_wakes(self, max_hops: int = 3, per_hour: int = 6, max_task_wakes: int = 3) -> list[str]:
+        """Handle every --wake message nobody read in time, on any box (each is taken atomically). A message for a
+        Claude starts one "mail" sub-agent on its account (one at a time: a queued one picks up all its mail); one for
+        a finished sub-agent resumes it in its own session. Never past ``max_hops`` message-triggered runs in a row or
+        ``per_hour`` wakes per recipient: two Claudes can't keep each other busy. Returns what was started."""
+        out = []
+        for w in self.b.query("WAKEQ"):
+            if float(w.get("due", 0)) > now() or not self.b.delete("WAKEQ", w["SK"], expect_ver=int(w.get("ver", 0))):
+                continue
+            m = self.b.get(w["msg_pk"], w["msg_sk"])
+            if not m or m.get("read"):
+                continue
+            to = m["to"]
+            if int(m.get("hops", 0)) >= max_hops:
+                self.event("msg.nowake", f"{to}: not woken, {m.get('hops')} message-triggered runs in a row")
+                continue
+            if TASK_ID.fullmatch(to):
+                task = self.get_task(to) or {}
+                if task.get("status") not in ("done", "failed") or not task.get("session_id"):
+                    continue  # queued, running or waiting: it reads the message when it runs
+                if not self._count_wake(to, per_hour):
+                    continue
+                if self._set_status(to, "queued", when=lambda x: x.get("status") in ("done", "failed")
+                                    and int(x.get("message_resumes", 0)) < max_task_wakes,
+                                    extra={"resume": True, "resume_reason": "message", "attempts": 0,
+                                           "message_resumes": int(task.get("message_resumes", 0)) + 1}):
+                    self.event("task.message", f"{to}: resuming to read a message from {m['from']}", task=to)
+                    out.append(to)
+                continue
+            if any(t.get("kind") == "mail" and t.get("to") == to for t in self.list_tasks("queued", 100)):
+                continue  # one is already waiting to start: it takes this message too
+            if not self._count_wake(to, per_hour):
+                continue
+            t = self.add_task(f"Messages for {to}", "", kind="mail", to=to, owner=to, priority=6,
+                              created_by=f"msg:{m['from']}")
+            out.append(t["id"])
+        return out
+
+    def _count_wake(self, to: str, per_hour: int) -> bool:
+        hour = time.strftime("%Y%m%d%H", time.gmtime())
+        ok = self._update("WAKES", f"{to}#{hour}", lambda x: None if int(x.get("n", 0)) >= per_hour else
+                          {**x, "n": int(x.get("n", 0)) + 1, "expires_at": int(now() + 86400)}, create=True)
+        if not ok:
+            self.event("msg.nowake", f"{to}: not woken, already {per_hour} wake(s) this hour")
+        return ok is not None
 
     # -------------------------------------------------------------- sessions
     def record_session(self, sid: str, transcript: str | None = None, turns: list[dict] | None = None,

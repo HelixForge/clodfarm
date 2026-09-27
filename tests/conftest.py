@@ -47,6 +47,9 @@ def env(tmp_path, backend, request, monkeypatch):
     fake = bin_dir / "claude"
     fake.write_text(f"#!/bin/sh\nexec {sys.executable} {HERE}/fake_claude.py \"$@\"\n")
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    shim = bin_dir / "clodfarm"  # the hooks the farm installs call `clodfarm`
+    shim.write_text(f"#!/bin/sh\nexec {sys.executable} -m clodfarm \"$@\"\n")
+    shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
     values = {
         "FARM_TABLE": table,
         "FARM_STORE": backend,
@@ -73,9 +76,9 @@ def env(tmp_path, backend, request, monkeypatch):
         monkeypatch.delenv("FARM_DYNAMODB_ENDPOINT", raising=False)
     for k, v in values.items():
         monkeypatch.setenv(k, v)
-    for k in ("FARM_CLAUDE_NAME", "FARM_FARM_ID", "FARM_HATCHED", "FARM_FARM"):  # a daemon in a test exports these
+    for k in ("FARM_CLAUDE_NAME", "FARM_FARM_ID", "FARM_HATCHED", "FARM_FARM", "FARM_MAIL_FLAG"):  # a daemon in a test exports these
         monkeypatch.delenv(k, raising=False)
-    for k in ("CLAUDE_CODE_OAUTH_TOKEN", "FARM_TASK_ID", "FARM_REPO_URL"):
+    for k in ("CLAUDE_CODE_OAUTH_TOKEN", "FARM_TASK_ID", "FARM_REPO_URL", "FARM_MAIL_HOPS", "FARM_OWNER"):
         monkeypatch.delenv(k, raising=False)
     (tmp_path / "claude-home").mkdir()
     return tmp_path

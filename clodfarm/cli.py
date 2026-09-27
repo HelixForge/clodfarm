@@ -7,7 +7,7 @@
     clodfarm budget [--refresh]       every account's 5-hour and 7-day usage and what the governor allows
     clodfarm spawn TITLE [--prompt TEXT | --prompt-file F | -] [--on NAME]   start a sub-agent
     clodfarm subagents [--all] [--mine] | result ID [--wait] | cancel ID | retry ID
-    clodfarm msg NAME TEXT | inbox    talk to the other Claudes on the farm
+    clodfarm msg NAME|ID TEXT [--urgent] [--wake] | inbox   talk to the other Claudes and sub-agents on the farm
     clodfarm schedule add TITLE (--cron "0 9 * * 1-5" [--tz Europe/Berlin] | --every 2h | --at "in 3h") [--prompt TEXT] [--on NAME]
     clodfarm schedule list | remove ID
     clodfarm events [-n 30] [-f]      the farm's event log
@@ -25,6 +25,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,7 +35,7 @@ from . import __version__
 from .auth import auth_status
 from .config import load
 from .governor import decide
-from .store import Store, iso, now
+from .store import TASK_ID, Store, iso, now
 
 
 def _store(cfg):
@@ -153,7 +154,7 @@ def cmd_budget(cfg, a):
         from .auth import seat_id
         seat = cfg.seat or seat_id(auth_status(cfg.claude_bin))
         res = run_agent(build_cmd(cfg, "Answer in one word."), "Reply with: ok", cfg.workspace
-                        if os.path.isdir(cfg.workspace) else os.getcwd(), dict(os.environ), 180,
+                        if os.path.isdir(cfg.workspace) else os.getcwd(), {**os.environ, "FARM_TASK_ID": "usage"}, 180,
                         on_snapshot=lambda sn: store.put_snapshot(sn, seat))
         if not res.snapshots:
             print(f"no rate-limit report received ({res.text[:200]})", file=sys.stderr)
@@ -321,26 +322,74 @@ def cmd_retry(cfg, a):
     return 0 if ok else 1
 
 
+def _my_address(cfg) -> str:
+    """Where messages for this session wait: a sub-agent's own task id, else its Claude's name (its conversations)."""
+    tid = os.environ.get("FARM_TASK_ID")
+    return tid if tid and tid != "usage" else cfg.name
+
+
 def cmd_msg(cfg, a):
     store = _store(cfg)
-    if a.to not in _names(cfg, store) and not a.force:
-        print(f"no Claude named '{a.to}' is on the farm ({', '.join(sorted(_names(cfg, store))) or 'none'}); "
-              "--force leaves it for when it joins", file=sys.stderr)
+    task = store.get_task(a.to) if TASK_ID.fullmatch(a.to) else None
+    if not task and a.to not in _names(cfg, store) and not a.force:
+        print(f"no Claude named '{a.to}' is on the farm ({', '.join(sorted(_names(cfg, store))) or 'none'}) and no "
+              "sub-agent has that id; --force leaves it for when it joins", file=sys.stderr)
+        return 2
+    if a.urgent and not task:
+        print("--urgent interrupts a running sub-agent: give its id (`clodfarm subagents`)", file=sys.stderr)
         return 2
     text = " ".join(a.text) if a.text != ["-"] else sys.stdin.read()
     if not text.strip():
         print("the message is empty", file=sys.stderr)
         return 2
-    store.send_message(os.environ.get("FARM_OWNER") or cfg.name, a.to, text.strip())
-    print(f"sent to {a.to}; it reads it with `clodfarm inbox`")
+    me = _my_address(cfg)
+    m = store.send_message(os.environ.get("FARM_OWNER") or cfg.name, a.to, text.strip(),
+                           reply=me if me != cfg.name else None, urgent=a.urgent, wake=a.wake,
+                           hops=int(os.environ.get("FARM_MAIL_HOPS") or 0), wake_after=cfg.mail_wake_after)
+    wake = f"; if nobody has read it in {cfg.mail_wake_after}s, the farm starts someone to handle it" if a.wake else ""
+    status = (task or {}).get("status")
+    if not task:
+        how = (f"{a.to}'s conversations get it at their next tool call or prompt (one that was active in the last "
+               f"10 minutes is woken for it){wake}")
+    elif status == "running":
+        how = "it is interrupted and gets it now" if a.urgent else "it gets it at its next tool call"
+    elif status in ("queued", "waiting"):
+        how = "it gets it when it next runs"
+    else:
+        how = f"it has {status}; " + (wake[2:] if a.wake else "it only reads it if it runs again (--wake resumes it)")
+    _out(m, a.json, f"sent {m['id']} to {a.to}: {how}")
     return 0
 
 
+def _take_mail(store, cfg, how: str) -> list[dict]:
+    flag = os.environ.get("FARM_MAIL_FLAG")
+    if flag:  # first, so a message that arrives while we read rings (and is flagged) again
+        try:
+            os.remove(flag)
+        except OSError:
+            pass
+    return store.claim(_my_address(cfg), f"{how}:{cfg.name}")
+
+
+def _peer(name: str) -> str:
+    """A short label for a Claude Code session name: the sub-agent id or the Claude in '[clodfarm] farm · name'."""
+    parts = [p.strip() for p in str(name).replace("[clodfarm]", "").split("·") if p.strip()]
+    if parts and TASK_ID.fullmatch(parts[-1]):
+        return parts[-1]
+    return re.sub(r"\s+", "-", parts[-1] if parts else str(name))[:40] or "?"
+
+
+MAIL_STOP_BLOCKS = 3  # a turn is kept going for new messages at most this often in a row
+
+
 def cmd_hook(cfg, a):
-    """Called by Claude Code (the hook the farm installs) on SessionStart, UserPromptSubmit, Stop and SessionEnd,
-    with the event as JSON on stdin. Registers the session and copies its new turns into the store; in a
-    conversation it also prints new messages from the other Claudes, which Claude Code adds to the conversation.
+    """Called by Claude Code (the hooks the farm installs, see auth.farm_hooks) with the event as JSON on stdin.
+    Registers the session and copies its new turns into the store, and hands the session the messages other Claudes
+    left for it in the store: at a conversation's next prompt, after a batch of tool calls, and before a turn ends
+    (the Stop blocks with them, so Claude reads them first). It logs messages sent with Claude Code's SendMessage.
+    With --listen (in the background after a conversation's turn) it waits for mail and wakes the conversation.
     It never fails the session: any problem is reported on stderr and it exits 0."""
+    from .prompts import mail_text
     from .sessions import session_kind
     try:
         ev = json.loads(sys.stdin.read() or "{}")
@@ -348,25 +397,113 @@ def cmd_hook(cfg, a):
         ev = {}
     name, sid = ev.get("hook_event_name", ""), ev.get("session_id")
     kind = session_kind()
-    if kind == "usage":  # the farm's one-word usage check is not a conversation
+    if kind == "usage" or (a.listen and not _remote_conversation(kind)):
         return 0
     try:
         store = _store(cfg)
+        if a.listen:
+            return _listen(cfg, store, sid)
+        if name == "PostToolBatch":  # its flag file exists: mail is waiting
+            msgs = _take_mail(store, cfg, "tool")
+            if msgs:
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolBatch",
+                                                         "additionalContext": mail_text(msgs)}}))
+            return 0
+        if name == "PostToolUse":
+            if ev.get("tool_name") == "SendMessage":
+                _log_native(cfg, store, ev)
+            return 0
         if sid:
             owner = os.environ.get("FARM_OWNER") if kind != "conversation" else None  # a sub-agent's Claude
             store.record_session(sid, transcript=ev.get("transcript_path"), claude=owner or cfg.name, runs_on=cfg.name, kind=kind, box=cfg.farm_id, cwd=ev.get("cwd"),
                                  task=os.environ.get("FARM_TASK_ID") if kind == "sub-agent" else None,
                                  ended=True if name == "SessionEnd" else None,
                                  end_reason=ev.get("reason") if name == "SessionEnd" else None)
+        if name == "SessionEnd" and sid and os.environ.get("FARM_MAIL_FLAG"):  # its listener stops too
+            try:
+                os.remove(_listener_file(os.environ["FARM_MAIL_FLAG"], sid))
+            except OSError:
+                pass
         if kind == "conversation" and name == "UserPromptSubmit":  # a real prompt: a session that never gets one
             # (aborted, or only opened) must not use the messages up
-            msgs = store.inbox(cfg.name)
+            msgs = _take_mail(store, cfg, "prompt")
             if msgs:
-                print("New messages from other Claudes on this farm (reply with `clodfarm msg <name> \"...\"`):\n"
-                      + "\n".join(f"- from {m['from']} at {iso(m['at'])[11:16]}Z: {m['text']}" for m in msgs))
+                print(mail_text(msgs))
+        if name == "Stop" and sid:
+            blocks = int((store.session(sid) or {}).get("mail_blocks", 0)) if ev.get("stop_hook_active") else 0
+            msgs = _take_mail(store, cfg, "stop") if blocks < MAIL_STOP_BLOCKS else []
+            if msgs:
+                print(json.dumps({"decision": "block", "reason": mail_text(msgs)}))
+                store.record_session(sid, mail_blocks=blocks + 1)
     except Exception as e:  # noqa: BLE001
         print(f"clodfarm hook: {e!r}"[:300], file=sys.stderr)
     return 0
+
+
+def _log_native(cfg, store, ev: dict):
+    """A message sent with Claude Code's own SendMessage: into the farm's event log, like `clodfarm msg`."""
+    inp, resp = ev.get("tool_input") or {}, ev.get("tool_response")
+    if isinstance(resp, str):
+        try:
+            resp = json.loads(resp)
+        except ValueError:
+            resp = {}
+    if isinstance(resp, dict) and resp.get("success") is False:
+        return
+    text = inp.get("message") or inp.get("content") or ""
+    if not isinstance(text, str) or not text.strip():
+        return
+    frm = os.environ.get("FARM_OWNER") or cfg.name
+    store.event("msg.sent", f"{frm} -> {_peer(inp.get('to') or inp.get('recipient') or '?')}: {text[:200]} (live)",
+                by=frm)
+
+
+def _remote_conversation(kind: str) -> bool:
+    """A conversation someone has with this Claude through Remote Control (the Claude app, claude.ai/code): the
+    sessions worth keeping a listener for. Claude Code waits up to 30 s for a waiting listener when a session exits, so
+    a sub-agent (its run ends with its turn), a terminal session or a one-off `claude -p` doesn't get one."""
+    return kind == "conversation" and os.environ.get("CLAUDE_CODE_ENVIRONMENT_KIND") == "bridge"
+
+
+def _listener_file(flag: str, sid: str) -> str:
+    return os.path.join(os.path.dirname(flag), ".listen-" + re.sub(r"[^A-Za-z0-9_-]", "", sid)[:64])
+
+
+def _listen(cfg, store, sid: str | None) -> int:
+    """In the background after a conversation's turn (an async hook with asyncRewake): wait for this Claude's mail
+    flag and, when it appears, take the messages and exit 2, which wakes the conversation with them (stderr). One
+    listener per session: a new turn's takes over, so it waits about LISTEN_SECONDS after the last turn. It gives up
+    when the session goes away."""
+    from .auth import LISTEN_SECONDS
+    from .prompts import mail_text
+    flag = os.environ.get("FARM_MAIL_FLAG")
+    if not flag or not sid:
+        return 0
+    mine = _listener_file(flag, sid)
+    with open(mine, "w") as f:  # the session's earlier listener sees this and stops
+        f.write(str(os.getpid()))
+
+    def still_mine() -> bool:
+        try:
+            return open(mine).read().strip() == str(os.getpid())
+        except OSError:
+            return False
+    parent, end = os.getppid(), time.time() + LISTEN_SECONDS - 15
+    try:
+        while time.time() < end and os.getppid() == parent and still_mine():
+            if os.path.exists(flag):
+                msgs = _take_mail(store, cfg, "wake")
+                if msgs:
+                    print(mail_text(msgs), file=sys.stderr)
+                    return 2
+            time.sleep(1)
+        return 0
+    finally:
+        if still_mine():
+            try:
+                os.remove(mine)
+            except OSError:
+                pass
 
 
 def cmd_sessions(cfg, a):
@@ -398,7 +535,7 @@ def cmd_session(cfg, a):
 
 
 def cmd_inbox(cfg, a):
-    msgs = _store(cfg).inbox(cfg.name, unread_only=not a.all, mark_read=not a.peek)
+    msgs = _store(cfg).inbox(_my_address(cfg), unread_only=not a.all, mark_read=not a.peek)
     _out(msgs, a.json, "\n".join(f"  {iso(m['at'])[5:16].replace('T', ' ')}  from {m['from']}: {m['text']}" for m in msgs)
          or "(no new messages)")
     return 0
@@ -567,14 +704,17 @@ def main(argv=None):
     rs.add_argument("--timeout", type=int, default=1800, help="with --wait: give up after this many seconds")
     add("cancel", cmd_cancel, "stop a sub-agent").add_argument("id")
     add("retry", cmd_retry, "start a failed or cancelled sub-agent again").add_argument("id")
-    ms = add("msg", cmd_msg, "send a message to another Claude on the farm")
-    ms.add_argument("to")
+    ms = add("msg", cmd_msg, "send a message to another Claude or to a sub-agent on the farm")
+    ms.add_argument("to", help="a Claude's name (see `clodfarm agents`) or a sub-agent's id")
     ms.add_argument("text", nargs="+", help="the message ('-' reads stdin)")
     ms.add_argument("--force", action="store_true", help="leave it even if that Claude isn't up now")
+    ms.add_argument("--urgent", action="store_true", help="interrupt that running sub-agent to hand it over now")
+    ms.add_argument("--wake", action="store_true",
+                    help="if nobody reads it in time, start a sub-agent for that Claude (or resume that sub-agent)")
     ib = add("inbox", cmd_inbox, "messages other Claudes sent you")
     ib.add_argument("--all", action="store_true", help="also the ones already read")
     ib.add_argument("--peek", action="store_true", help="don't mark them read")
-    add("hook", cmd_hook, argparse.SUPPRESS)
+    add("hook", cmd_hook, argparse.SUPPRESS).add_argument("--listen", action="store_true", help=argparse.SUPPRESS)
     ss = add("sessions", cmd_sessions, "every Claude session on the farm (conversations and sub-agents)")
     ss.add_argument("--claude", help="only this Claude's")
     ss.add_argument("-n", type=int, default=30)

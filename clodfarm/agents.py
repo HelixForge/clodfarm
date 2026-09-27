@@ -26,7 +26,7 @@ import sys
 import threading
 import time
 
-from .auth import auth_status, claude_home
+from .auth import auth_status, claude_home, share_session_registry
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>]")
 URL = re.compile(r"https://[^\s\"'<>]+")
@@ -234,6 +234,11 @@ class AgentManager:
             p = self.procs.get(agent["id"])
             if p and p.poll() is None:
                 return
+            if self.cfg.share_sessions:  # before its sessions start: they register in the farm's one list
+                try:
+                    share_session_registry(agent["config_dir"], os.path.join(self.primary_dir, "sessions"))
+                except OSError as e:
+                    print(f"agent {agent['id']}: sessions not shared ({e}); SendMessage won't reach it", flush=True)
             os.makedirs(self.logs, exist_ok=True)
             log = open(os.path.join(self.logs, f"{agent['id']}.log"), "ab")
             self.procs[agent["id"]] = subprocess.Popen([sys.executable, "-m", "clodfarm", "run"], env=self.env_for(agent),

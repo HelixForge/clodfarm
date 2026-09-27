@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0 (2026-09-27)
+
+Messages between the Claudes arrive in seconds instead of at the person's next prompt.
+
+- **Claude Code's own messaging on the farm.** The guide teaches `ListAgents` and `SendMessage`: a message reaches a
+  live session at its next tool call and wakes an idle one. Every Claude added in the farm UI lists its sessions
+  with the farm's own Claude's (`FARM_SHARE_SESSIONS`), so they all see each other, and each takes messages without
+  holding them for an approval nobody can give (`crossSessionInbound: accept`, unless set by hand). Sub-agent
+  sessions are named `[clodfarm] <claude> · <title> · <id>`, and messages sent this way show up in the event log.
+- **`clodfarm msg` to a sub-agent, and delivered while it works.** Address a Claude or a sub-agent id. A doorbell in
+  the store tells the recipient's box at once; a `PostToolBatch` hook hands the mail over after its next batch of
+  tool calls, the `Stop` hook before its turn ends, and an async hook (`asyncRewake`) wakes an idle conversation. A
+  sub-agent that isn't running gets its mail with its prompt. Each message is delivered exactly once (it used to be
+  possible twice), has an id and a reply address, and `clodfarm inbox` in a sub-agent reads its own mail.
+- **`--urgent`** interrupts a running sub-agent and hands the message over at once: sub-agents now read stream-json on
+  an open stdin (`FARM_LIVE_STDIN=0` goes back to a plain prompt).
+- **`--wake`**: mail nobody read after `FARM_MAIL_WAKE_AFTER` seconds starts a sub-agent on that Claude's account, or
+  resumes the finished sub-agent it was for. Capped by `FARM_MAIL_MAX_HOPS` and `FARM_MAIL_WAKES_PER_HOUR`, so two
+  Claudes can't keep each other busy.
+
 ## 0.4.4 (2026-09-27)
 
 - **Always the newest Claude Code.** The image ships the `latest` release instead of `stable`, and the farm updates

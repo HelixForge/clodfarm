@@ -57,7 +57,18 @@ class Config:
     task_budget_usd: float  # API mode: --max-budget-usd per agent run (0 = none)
     ui: bool  # serve the farm UI from the daemon (FARM_UI_PORT, default 8080)
     manage_claude_config: bool  # write the farm guide and folder trust into Claude Code's config (container: yes)
+    live_stdin: bool  # sub-agents read stream-json on an open stdin, so an --urgent message can interrupt them
+    share_sessions: bool  # the Claudes on one box share Claude Code's session list, so SendMessage reaches them all
+    mail_poll: float  # seconds between two looks at this Claude's doorbell (new messages for it or its sub-agents)
+    mail_wake_after: int  # a --wake message nobody read after this many seconds starts someone to handle it
+    mail_max_hops: int  # message-triggered runs in a row before messages stop waking anyone
+    mail_wakes_per_hour: int  # wakes per recipient and hour
     policy: Policy
+
+    @property
+    def mail_dir(self) -> str:
+        """Flag files, one per address with unread mail; the hook that delivers mail runs only when its flag exists."""
+        return os.path.join(self.workspace, ".farm", "mail")
 
     @property
     def farm_id(self) -> str:
@@ -138,6 +149,12 @@ def load() -> Config:
         notify_url=_env("FARM_NOTIFY_URL", ""),
         ui=_bool("FARM_UI", True),
         manage_claude_config=_bool("FARM_MANAGE_CLAUDE_CONFIG", True),
+        live_stdin=_bool("FARM_LIVE_STDIN", True),
+        share_sessions=_bool("FARM_SHARE_SESSIONS", True),
+        mail_poll=float(_env("FARM_MAIL_POLL", "2")),
+        mail_wake_after=int(_env("FARM_MAIL_WAKE_AFTER", "120")),
+        mail_max_hops=int(_env("FARM_MAIL_MAX_HOPS", "3")),
+        mail_wakes_per_hour=int(_env("FARM_MAIL_WAKES_PER_HOUR", "6")),
         policy=Policy(
             max_workers=int(_env("FARM_MAX_WORKERS", "3")),
             min_workers=int(_env("FARM_MIN_WORKERS", "1")),

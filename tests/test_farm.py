@@ -353,7 +353,7 @@ def test_every_farm_session_is_marked_clodfarm(env):
         assert rc[rc.index("--name") + 1] == "[clodfarm] test"
         assert rc[rc.index("--remote-control-session-name-prefix") + 1] == "[clodfarm] test"
         run = [c for c in calls(env) if c.get("task") == tid][0]["argv"]
-        assert run[run.index("--name") + 1] == "[clodfarm] test · name me"
+        assert run[run.index("--name") + 1] == f"[clodfarm] test · name me · {tid}"  # SendMessage finds it by id
     finally:
         stop_farm(farm, t)
 

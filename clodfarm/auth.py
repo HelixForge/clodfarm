@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -126,33 +127,95 @@ def install_guide():
 
 
 HOOK_CMD = "clodfarm hook"
+# after every batch of tool calls; the shell test keeps it free (no Python starts) unless mail is waiting
+MAIL_HOOK_CMD = '[ -e "${FARM_MAIL_FLAG:-/nonexistent}" ] && exec clodfarm hook; exit 0'
+LISTEN_HOOK_CMD = "clodfarm hook --listen"
+LISTEN_SECONDS = 600  # an idle conversation is woken for mail this long after its last turn
 _OLD_HOOKS = ("clodfarm inbox --hook",)
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "Stop", "SessionEnd")
 
 
+def farm_hooks() -> dict:
+    """The hooks the farm puts in each Claude's Claude Code settings, by event.
+      * every session event: record the session and its conversation in the farm's store; deliver messages at the
+        next prompt, and before a turn ends (a Stop that blocks with the messages, so Claude reads them first)
+      * after every batch of tool calls: deliver messages that arrived meanwhile (only when its flag file exists)
+      * after SendMessage: log the message in the farm's event log, so the farm shows it
+      * after a Remote Control conversation's turn: wait in the background and wake it when a message arrives
+        (asyncRewake)"""
+    base = {"type": "command", "command": HOOK_CMD, "timeout": 15}
+    out = {event: [{"hooks": [dict(base)]}] for event in HOOK_EVENTS}
+    out["PostToolBatch"] = [{"hooks": [{"type": "command", "command": MAIL_HOOK_CMD, "timeout": 15}]}]
+    out["PostToolUse"] = [{"matcher": "SendMessage", "hooks": [dict(base)]}]
+    out["Stop"].append({"hooks": [{"type": "command", "command": LISTEN_HOOK_CMD, "async": True, "asyncRewake": True,
+                                   "timeout": LISTEN_SECONDS}]})
+    return out
+
+
+def _ours(group: dict) -> bool:
+    cmds = {HOOK_CMD, MAIL_HOOK_CMD, LISTEN_HOOK_CMD, *_OLD_HOOKS}
+    return any(h.get("command") in cmds for h in group.get("hooks", []))
+
+
 def install_hooks():
-    """Put `clodfarm hook` in this Claude's Claude Code settings for every session event: it records each session and
-    its whole conversation in the farm's store, and shows a conversation (at its next prompt) the messages other
-    Claudes sent it.
+    """Put the farm's hooks (``farm_hooks``) in this Claude's Claude Code settings, replacing those of older versions.
     Other settings and hooks are kept."""
     path = os.path.join(claude_home(), "settings.json")
     try:
         cfg = json.load(open(path))
     except (OSError, ValueError):
         cfg = {}
-    hooks, changed = cfg.setdefault("hooks", {}), False
-    for event in list(hooks):  # the hook of older versions
-        kept = [g for g in hooks[event] if not any(h.get("command") in _OLD_HOOKS for h in g.get("hooks", []))]
-        changed |= len(kept) != len(hooks[event])
-        hooks[event] = kept
-    for event in HOOK_EVENTS:
-        groups = hooks.setdefault(event, [])
-        if not any(h.get("command") == HOOK_CMD for g in groups for h in g.get("hooks", [])):
-            groups.append({"hooks": [{"type": "command", "command": HOOK_CMD, "timeout": 15}]})
-            changed = True
-    if changed:
+    hooks = cfg.setdefault("hooks", {})
+    before = json.dumps(hooks, sort_keys=True)
+    for event in list(hooks):
+        hooks[event] = [g for g in hooks[event] if not _ours(g)]
+    for event, groups in farm_hooks().items():
+        hooks.setdefault(event, []).extend(groups)
+    for event in [e for e, g in hooks.items() if not g]:
+        del hooks[event]
+    if json.dumps(hooks, sort_keys=True) != before:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         _atomic_write(path, json.dumps(cfg, indent=2))
+
+
+def install_messaging():
+    """Let this Claude's sessions take messages from the farm's other sessions (Claude Code's cross-session
+    messaging) without holding them for an approval nobody is there to give: a sub-agent can't show the dialog, so a
+    held message would expire unread. Only sessions of this container's own OS user can reach the inbox socket, and
+    a message can never approve anything. A value set by hand (hold, refuse) is kept."""
+    path = os.path.join(claude_home(), "settings.json")
+    try:
+        cfg = json.load(open(path))
+    except (OSError, ValueError):
+        cfg = {}
+    if "crossSessionInbound" in cfg:
+        return
+    cfg["crossSessionInbound"] = "accept"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    _atomic_write(path, json.dumps(cfg, indent=2))
+
+
+def share_session_registry(config_dir: str, shared: str):
+    """Make a Claude added in the farm UI list its live sessions where the farm's own Claude does.
+
+    Claude Code finds the sessions it can message (ListAgents / SendMessage) in ``<config dir>/sessions``, and every
+    Claude on the farm has its own config dir (its own login), so by default they can't see each other; delivery goes
+    over a socket any session of the same OS user may use. Pointing each added Claude's ``sessions`` at ``shared``
+    (the farm's own Claude's) puts every session on this box in one list. Only config dirs the farm created are
+    changed; entries already there are moved over."""
+    link = os.path.join(config_dir, "sessions")
+    os.makedirs(shared, mode=0o700, exist_ok=True)
+    if os.path.islink(link):
+        if os.path.realpath(link) == os.path.realpath(shared):
+            return
+        os.remove(link)
+    elif os.path.isdir(link):
+        for name in os.listdir(link):
+            src, dst = os.path.join(link, name), os.path.join(shared, name)
+            if not os.path.exists(dst):
+                os.replace(src, dst)
+        shutil.rmtree(link, ignore_errors=True)
+    os.symlink(shared, link)
 
 
 def install_model(model: str):

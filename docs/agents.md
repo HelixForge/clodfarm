@@ -13,14 +13,44 @@ The guide teaches them to:
   then `clodfarm subagents` / `clodfarm result <id> [--wait]`. Inside a sub-agent, new sub-agents become its
   children; it ends its run and is resumed in the same session with their results. It never sleeps or polls.
 - **Use Claude Code's Agent tool** only for quick look-ups (it isn't visible on the farm or paced).
-- **Work with the other Claudes:** `clodfarm msg <name> "..."` (it appears in that Claude's next turn through a
-  Claude Code hook; `clodfarm inbox` lists them), to hand off a mission, ask for a review or avoid collisions.
+- **Work with the other Claudes:** hand off a mission, ask for a review or avoid collisions with a message (see
+  [Messages](#messages) below).
 - **Schedule work:** `clodfarm schedule add "<title>" --prompt "..." --cron "0 9 * * 1-5" --tz <zone>` (or
   `--every 2h`, `--at "in 3h"`); `clodfarm schedule list` / `remove <id>`.
 - **Commit on their branch** (sub-agents) and not push or merge. The farm does that.
 - **End with a plain summary.** That is the sub-agent's result.
 - **Stay safe:** never touch credentials; no messages outside the farm, payments, account creation or public posts
   unless the person they work for asks.
+
+## Messages
+
+Two ways, and the guide tells the Claudes when to use which:
+
+| | Reaches | Delivered |
+|---|---|---|
+| Claude Code's `SendMessage` (find the session with `ListAgents`) | the live sessions on this box: every Claude's conversations and every sub-agent (`[clodfarm] <claude> · <title> · <id>`) | at its next tool call; an idle session starts a turn for it |
+| `clodfarm msg <name or sub-agent id> "..."` | anyone, on any box, running or not (it waits in the store) | see below |
+
+A `clodfarm msg` is handed over exactly once, by the first of:
+- **With the prompt:** a sub-agent that isn't running gets it when it next starts.
+- **After its next batch of tool calls:** every Claude's doorbell in the store is checked every `FARM_MAIL_POLL`
+  seconds; new mail for its conversations or its running sub-agents sets a flag file, and a `PostToolBatch` hook
+  hands the mail over (without a flag the hook doesn't even start Python).
+- **Before a turn ends:** the `Stop` hook keeps the turn going with the mail (at most three times in a row).
+- **Waking an idle conversation:** after each turn of a Remote Control conversation (the Claude app,
+  claude.ai/code) an async hook waits up to 10 minutes and wakes it when mail arrives (Claude Code's `asyncRewake`).
+- **At the next prompt**, as before.
+- **`--urgent`** (a running sub-agent): sub-agents read stream-json on an open stdin (`FARM_LIVE_STDIN`), so the farm
+  interrupts it (a running tool is cancelled) and hands the message over as its next turn.
+- **`--wake`:** if nobody has read it after `FARM_MAIL_WAKE_AFTER` seconds, the farm starts a "mail" sub-agent on that
+  Claude's account (one at a time), or resumes the finished sub-agent it was for, in its own session. A run started by
+  a message counts a hop: after `FARM_MAIL_MAX_HOPS` hops, or `FARM_MAIL_WAKES_PER_HOUR` wakes per recipient,
+  messages no longer wake anyone, so two Claudes can't keep each other busy.
+
+Every message has an id and a reply address (a sub-agent's is its task id), and shows up in the event log.
+`SendMessage` needs the sessions to see each other: every Claude added in the farm UI lists its sessions in the farm's
+own Claude's list (`FARM_SHARE_SESSIONS`), and each Claude takes messages from them without holding them for approval
+(`crossSessionInbound: accept`, unless you set it). Messages from another Claude are never the person's approval.
 
 ## Limits that keep a swarm sane
 
@@ -31,6 +61,8 @@ The guide teaches them to:
 | `FARM_MAX_ATTEMPTS` | 3 | per sub-agent, rate-limit retries excluded |
 | `FARM_MAX_RESUMES` | 5 | a parent re-runs at most this often for late children |
 | `FARM_TASK_TIMEOUT` | 5400 s | one agent run |
+| `FARM_MAIL_MAX_HOPS` | 3 | message-triggered runs in a row before messages stop waking anyone |
+| `FARM_MAIL_WAKES_PER_HOUR` | 6 | wakes per recipient and hour |
 
 ## Customising
 

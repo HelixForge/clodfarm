@@ -56,7 +56,7 @@ operations layer:
 | 🌕 **Paced on real usage** | Every run reports the account's actual 5-hour and weekly utilization (`rate_limit_event`). The governor paces the week, leaves you 20% by default, sleeps through rejections, and never touches paid overage. |
 | 👥 **Many boxes, many seats** | Point containers on several accounts at one table: one farm, one repo, a separate budget per account. |
 | ✅ **Nothing lands untested** | `FARM_VERIFY_CMD` runs your tests on the rebased branch, and a failing check sends the agent back to fix it. |
-| 🤝 **Claudes that work together** | `clodfarm agents` shows every Claude and how much of its usage it has used. A sub-agent without `--on` runs on whichever account has room, `--on gil` picks one, and `clodfarm msg gil "..."` lands in Gil's next turn. |
+| 🤝 **Claudes that work together** | `clodfarm agents` shows every Claude and how much of its usage it has used. A sub-agent without `--on` runs on whichever account has room, `--on gil` picks one, and messages reach a Claude or a running sub-agent in seconds: at its next tool call, or it wakes up for them. |
 | ⏰ **Schedules** | "Every weekday at 9, summarize the open PRs": `clodfarm schedule add ... --cron "0 9 * * 1-5" --tz Asia/Jerusalem`, or `--every 2h`, or `--at "in 3h"`. |
 | 🔔 **Tells you when it matters** | Notifications to ntfy, Slack or Discord for failures, a tripped circuit breaker and usage limits. |
 | 📈 **Usage in real time** | A new Claude's usage is measured the moment it logs in; every run reports it live, and an idle Claude is re-measured every 5 minutes (`FARM_USAGE_REFRESH`). |
@@ -194,8 +194,12 @@ The picture at the top, step by step:
 3. **The budget governor** decides, per account, how many sub-agents may run right now. Usage comes from Claude
    Code's own `rate_limit_event`s during every run, from a one-word probe the moment a Claude logs in, and again
    whenever it has been idle for `FARM_USAGE_REFRESH` seconds.
-4. **Claudes talk to each other:** `clodfarm msg gil "..."` shows up in Gil's next conversation turn (a Claude Code
-   hook), and `clodfarm agents` shows how much of its usage each Claude has used, so one that is running high sends work elsewhere.
+4. **Claudes talk to each other in real time.** On one box they use Claude Code's own messaging (`SendMessage`): it
+   reaches a session at its next tool call and wakes an idle one. `clodfarm msg <name or sub-agent id> "..."`
+   reaches anyone, on any box: it waits in the store and is handed over by the farm's hooks after the recipient's
+   next batch of tool calls or before it finishes, wakes an idle conversation, `--urgent` interrupts a running
+   sub-agent, and `--wake` starts someone for mail nobody read. `clodfarm agents` shows how much of its usage each
+   Claude has used, so one that is running high sends work elsewhere.
 5. **When a sub-agent finishes,** its branch is rebased onto `main`, `FARM_VERIFY_CMD` runs, and `main` moves only
    if the check passes. Otherwise the sub-agent is resumed with the failure output.
 6. **Schedules** start sub-agents on a cron line (in your time zone), every N minutes or once at a time. Every box
@@ -260,7 +264,7 @@ Details and caveats: [docs/auth.md](docs/auth.md).
 | `clodfarm budget [--refresh]` | every seat's usage and what the governor allows it now |
 | `clodfarm spawn TITLE --prompt ... [--on NAME]` | start a sub-agent (the Claudes use the same command) |
 | `clodfarm subagents [--all]` · `result ID [--wait]` · `cancel ID` · `retry ID` | follow and manage sub-agents |
-| `clodfarm msg NAME TEXT` · `inbox` | messages between the Claudes |
+| `clodfarm msg NAME\|ID TEXT [--urgent] [--wake]` · `inbox` | messages to a Claude or a sub-agent |
 | `clodfarm sessions` · `session ID` | every Claude session on the farm, and its whole conversation |
 | `clodfarm schedule add TITLE (--cron ... [--tz ...] \| --every 2h \| --at ...)` / `list` / `remove ID` | scheduled tasks |
 | `clodfarm events [-f]` | the event log: sub-agents, merges, checks, messages, pauses, limits |
