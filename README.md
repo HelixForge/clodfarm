@@ -131,6 +131,7 @@ See [docs/mcp.md](docs/mcp.md).
 |---|---|
 | [**Single deployment**](#single-deployment) | One box, one Claude account. Everything in one container. |
 | [**Multiple deployments, one farm**](#multiple-deployments-one-farm) | Several boxes on your account or teammates' own accounts: one farm and one repo, each account paced on its own budget. |
+| [**+ Apps role** (optional)](#let-the-farm-build-apps-on-aws-optional) | Add-on for either one: the Claudes create and run their own serverless apps on AWS, fenced by a permissions boundary and a monthly budget. |
 
 You can start single and add boxes later. A new box simply joins the first one's table.
 
@@ -150,6 +151,35 @@ deploy/aws/deploy.sh status   # also: logs · shell · down
 You need the AWS CLI v2 and the
 [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html).
 Remote Control, the Claude API and SSM all use outbound HTTPS only. See [docs/deploy-aws.md](docs/deploy-aws.md).
+
+### Let the farm build apps on AWS (optional)
+
+The plain deployment above gives the agents **no** AWS access beyond the farm's own table, and that stays the default.
+If you want your Claudes to ship their own apps (a landing page, an API, a small SaaS), add the apps role:
+
+```bash
+deploy/aws/deploy.sh apps-role --email you@example.com --budget 50              # same AWS account as the farm
+APPS_PROFILE=my-apps-account deploy/aws/deploy.sh apps-role --email you@example.com \
+  --budget 50 --domain apps.example.com --regions us-east-1,eu-central-1         # recommended: an account of its own
+deploy/aws/deploy.sh apps-down                                                  # switch it off again
+```
+
+It deploys [deploy/aws/apps-role.yaml](deploy/aws/apps-role.yaml), lets the farm box assume the new role, and restarts
+the farm with `FARM_AWS_APPS_*` set (the farm stack itself isn't touched). From then on every Claude knows (it's in their
+guide) that `aws --profile apps ...` runs as that role, and how to deploy.
+
+| Fence | What it does |
+|---|---|
+| **Serverless only** | Lambda, API Gateway, DynamoDB, S3, CloudFront, ACM, Route 53, CloudWatch, EventBridge, SQS, SNS, Step Functions, Cognito, Bedrock and friends. No EC2, RDS or containers. |
+| **Permissions boundary** | Every role the farm creates must be named `farm-app-*` and carry the boundary, so app roles can never use IAM, billing or the account. The farm can't give itself more rights. |
+| **Budget lock** | A monthly AWS Budget (`--budget`, USD). Alerts at 50% and 80%; at 100% of actual spend AWS attaches a deny-all to the role by itself. Running apps keep serving. |
+| **Hard denies** | No IAM users or access keys, no email (SES), no domain purchases, no Marketplace or Savings Plans, and no changes to the stack that made the role. |
+| **Optional** | `--domain` creates a Route 53 zone for `<app>.<domain>`; `--regions` limits where it deploys. |
+
+**Use a separate AWS account** for the apps (`APPS_PROFILE`, e.g. a new account in your AWS Organization): then nothing
+the farm deploys can reach anything else you run, and closing the account removes it all. An
+[SCP](docs/deploy-aws.md#an-account-of-its-own-recommended) on that account makes the fences hold even against a
+mistake in IAM. More in [docs/deploy-aws.md](docs/deploy-aws.md#let-the-farm-build-apps-on-aws-optional).
 
 ### Multiple deployments, one farm
 
@@ -319,6 +349,8 @@ Every command takes `--json`.
 | `FARM_STORE` | `sqlite` | `dynamodb` to share one farm across boxes and accounts (setting `FARM_TABLE` implies it) |
 | `FARM_PUBLIC_URL` | *(from Host)* | the farm's public URL for MCP sign-in behind a proxy that rewrites Host, e.g. `https://clod.farm/team` |
 | `FARM_TABLE` / `FARM_SEAT` | `clodfarm` / from login | which DynamoDB farm to join / override the seat name |
+| `FARM_AWS_APPS_ROLE` | *(empty)* | optional apps role: the Claudes get `aws --profile apps` as this role (`deploy.sh apps-role` sets it and the `FARM_AWS_APPS_*` below) |
+| `FARM_AWS_APPS_CREDENTIALS` | `Ec2InstanceMetadata` | where that profile's source credentials come from: `Ec2InstanceMetadata`, `EcsContainer` or `Environment` (any Docker host) |
 </details>
 
 ## FAQ

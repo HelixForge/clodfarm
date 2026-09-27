@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import tempfile
 
-from .prompts import FARM_GUIDE
+from .prompts import farm_guide
 
 GUIDE_START = "<!-- clodfarm:guide:start -->"
 GUIDE_END = "<!-- clodfarm:guide:end -->"
@@ -121,7 +121,7 @@ def install_guide():
         cur = open(path).read()
     except OSError:
         cur = ""
-    block = f"{GUIDE_START}\n{FARM_GUIDE}\n{GUIDE_END}"
+    block = f"{GUIDE_START}\n{farm_guide()}\n{GUIDE_END}"
     if GUIDE_START in cur and GUIDE_END in cur:
         pre, rest = cur.split(GUIDE_START, 1)
         new = pre + block + rest.split(GUIDE_END, 1)[1]

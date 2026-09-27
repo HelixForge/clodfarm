@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Optional apps role: the farm can build and run its own apps on AWS.** `deploy/aws/deploy.sh apps-role --email
+  you@example.com [--budget 50] [--domain apps.example.com] [--regions ...]` deploys `deploy/aws/apps-role.yaml`
+  (in its own account with `APPS_PROFILE`), lets the farm box assume it and restarts the farm with `FARM_AWS_APPS_*`.
+  Every Claude then gets `aws --profile apps` and an AWS section in its guide. Fenced: serverless services only, a
+  permissions boundary on every role it creates, no IAM users, keys, email or domain purchases, and an AWS Budget that
+  locks the role at 100%. `apps-down` removes it. The plain deployment is unchanged and still gives no AWS access.
+- The image is unchanged: with the apps role on, the farm installs the AWS CLI v2 into the farm user's home at startup.
+
 ## 0.6.0 (2026-09-27)
 
 Messages between the Claudes arrive in seconds instead of at the person's next prompt.

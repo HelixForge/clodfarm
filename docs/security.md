@@ -29,11 +29,22 @@ clodfarm gives autonomous agents a shell. Be deliberate about what that shell ca
 6. **Token hygiene:** if you use `CLAUDE_CODE_OAUTH_TOKEN`, keep `.env` out of git and prefer a secret store.
    Revoke tokens you no longer use.
 
+## The optional apps role
+
+With [`deploy.sh apps-role`](deploy-aws.md#let-the-farm-build-apps-on-aws-optional) the agents can create real AWS
+resources, and running apps cost real money. The role is fenced: serverless services only, a permissions boundary on
+every role they create (so they can't widen their own rights), no IAM users, keys, email or domain purchases, and a
+budget that locks the role at 100%. The boundary is what makes that hold; a prompt is not. Still:
+- put the apps in **their own AWS account**, so a mistake or a prompt injection can only reach the farm's own apps;
+- keep `--budget` at what you'd accept losing in a month, and read the 50% alert;
+- remember that anything the agents deploy is public on the internet: review what they launch.
+
 ## What clodfarm itself does and doesn't do
 
 - It never reads your credentials. It runs `claude auth status` and prints what that reports: logged in or not, the
   plan type, the email.
-- The only network calls it makes itself go to DynamoDB. Everything else is Claude Code and the agents.
+- The only network calls it makes itself go to DynamoDB. With the apps role on, it also writes an `apps` profile into
+  the container's AWS CLI config; it never calls AWS with it itself. Everything else is Claude Code and the agents.
 - It doesn't send messages, spend money, post publicly or create accounts. The guide tells agents not to either,
   unless the person they work for explicitly asks.
 

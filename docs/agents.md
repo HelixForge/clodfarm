@@ -19,6 +19,9 @@ The guide teaches them to:
   `--every 2h`, `--at "in 3h"`); `clodfarm schedule list` / `remove <id>`.
 - **Commit on their branch** (sub-agents) and not push or merge. The farm does that.
 - **End with a plain summary.** That is the sub-agent's result.
+- **Build apps on AWS** (only when the optional apps role is on): `aws --profile apps ...`, one CloudFormation stack
+  per app, roles named `<prefix>-*` with the permissions boundary, within the monthly budget
+  ([deploy-aws.md](deploy-aws.md#let-the-farm-build-apps-on-aws-optional)).
 - **Stay safe:** never touch credentials; no messages outside the farm, payments, account creation or public posts
   unless the person they work for asks.
 
