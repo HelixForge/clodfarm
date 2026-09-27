@@ -161,7 +161,7 @@ def api(method: str, token: str, **params) -> dict:
 
 
 def manifest(farm: str) -> dict:
-    name = f"clodfarm {farm}"[:35]
+    name = (f"clodfarm {farm}" if farm != "clodfarm" else "clodfarm")[:35]
     return {
         "display_information": {"name": name, "background_color": "#4f6b25",
                                 "description": "Your clodfarm: DM it or @mention it and a Claude does the job.",
