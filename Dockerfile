@@ -30,8 +30,11 @@ RUN python3 -m venv /opt/clodfarm && /opt/clodfarm/bin/pip install --no-cache-di
 
 USER farm
 WORKDIR /workspace
-# Claude Code native build (https://docs.claude.com/en/docs/claude-code/setup)
-RUN curl -fsSL https://claude.ai/install.sh | bash -s -- "$CLAUDE_VERSION" && claude --version \
+# Claude Code native build (https://docs.claude.com/en/docs/claude-code/setup). CI passes a new CLAUDE_FRESH on every
+# build, so a cached layer never ships an old "latest".
+ARG CLAUDE_FRESH=
+RUN echo "claude code $CLAUDE_VERSION ${CLAUDE_FRESH}" \
+    && curl -fsSL https://claude.ai/install.sh | bash -s -- "$CLAUDE_VERSION" && claude --version \
     && git config --global user.name "clodfarm" && git config --global user.email "clodfarm@localhost" \
     && git config --global init.defaultBranch main
 
