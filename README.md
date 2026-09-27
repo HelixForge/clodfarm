@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/farm.png" alt="The clodfarm UI: a pixel-art farm where every Claude Code agent is a little Claude character. Some work at terminals beside crop plots, mini Claudes help as sub-agents, finished work blooms, and a Claude naps by the barn while its budget governor paces it" width="100%">
+  <a href="assets/demo-10s.mp4"><img src="assets/demo-10s.webp" alt="clodfarm in 10 seconds, on the farm UI's pixel art: 1, ask your Claude from the Claude app on your phone; 2, it splits the work into sub-agents, each on its own git branch; 3, Claudes team up: matan's Claude asks gil's Claude to take the tests and a sub-agent runs on gil's account; 4, it stays in budget: noa's Claude pauses at 80% of its weekly limit; 5, it ships tested code: merged to main only when the tests pass" width="100%"></a>
 </p>
 
 <p align="center">
@@ -42,6 +42,10 @@ is a lump of soil, and this is where your agents grow.
 </tr>
 </table>
 
+<p align="center">
+  <img src="assets/farm.png" alt="The clodfarm UI: a pixel-art farm where every Claude Code agent is a little Claude character. Some work at terminals beside crop plots, mini Claudes help as sub-agents, finished work blooms, and a Claude naps by the barn while its budget governor paces it" width="100%">
+</p>
+
 ## Why clodfarm
 
 A `while true; claude -p` loop gets you an agent that forgets what it did, can't split work, can't be reached from
@@ -58,8 +62,10 @@ operations layer:
 | ✅ **Nothing lands untested** | `FARM_VERIFY_CMD` runs your tests on the rebased branch, and a failing check sends the agent back to fix it. |
 | 🤝 **Claudes that work together** | `clodfarm agents` shows every Claude and how much of its usage it has used. A sub-agent without `--on` runs on whichever account has room, `--on gil` picks one, and messages reach a Claude or a running sub-agent in seconds: at its next tool call, or it wakes up for them. |
 | ⏰ **Schedules** | "Every weekday at 9, summarize the open PRs": `clodfarm schedule add ... --cron "0 9 * * 1-5" --tz Asia/Jerusalem`, or `--every 2h`, or `--at "in 3h"`. |
+| 💬 **Slack** | DM the farm's app or @mention it: a sub-agent does the job and answers in the thread. Connect it from the farm UI in about two minutes, with no public URL ([docs/slack.md](docs/slack.md)). |
 | 🔔 **Tells you when it matters** | Notifications to ntfy, Slack or Discord for failures, a tripped circuit breaker and usage limits. |
 | 📈 **Usage in real time** | A new Claude's usage is measured the moment it logs in; every run reports it live, and an idle Claude is re-measured every 5 minutes (`FARM_USAGE_REFRESH`). |
+| 🔌 **Claude Code on your laptop, connected** | The farm is a remote MCP server: `claude mcp add --transport http farm <url>/mcp`, sign in once, and your local Claude sees the farm, hands it work and messages its Claudes. OAuth 2.1 + PKCE, no password in Claude Code. |
 | 🕹️ **A farm you can watch** | Open `http://localhost:8080`: one pixel Claude per account, its sub-agents around its plot, napping when its budget says so. Tap a Claude for its budget, its sub-agents and a link to talk to it in the Claude app; hatch new Claudes (each its own login) from the browser. |
 
 You talk to your Claude in the Claude app; the farm UI shows who is working on what; the Claudes and you use the
@@ -104,6 +110,20 @@ Either way the farm's state lives in a SQLite file inside the workspace volume, 
 > [!TIP]
 > Point it at a real repo with `FARM_REPO_URL` (plus a deploy key) and set `FARM_VERIFY_CMD="pytest -q"`. The farm
 > clones the repo, and every sub-agent's work lands on `main` only when your tests pass.
+
+## Connect Claude Code on your computer
+
+The farm is a remote MCP server, so the Claude Code on your laptop can see the farm, start sub-agents on it and
+message its Claudes:
+
+```bash
+claude mcp add --transport http --scope user farm http://localhost:8080/mcp   # or https://<your farm>/mcp
+```
+
+Run `/mcp` in Claude Code and sign in. The farm's own page asks for its password and a name for your computer, and
+Claude Code gets a token for this farm only (OAuth 2.1 + PKCE; `clodfarm disconnect` ends it). Then just ask:
+"what's the farm doing?", "have the farm add CSV export, on gil", "tell noa the release is out".
+See [docs/mcp.md](docs/mcp.md).
 
 ## Deploy
 
@@ -268,6 +288,7 @@ Details and caveats: [docs/auth.md](docs/auth.md).
 | `clodfarm sessions` · `session ID` | every Claude session on the farm, and its whole conversation |
 | `clodfarm schedule add TITLE (--cron ... [--tz ...] \| --every 2h \| --at ...)` / `list` / `remove ID` | scheduled tasks |
 | `clodfarm events [-f]` | the event log: sub-agents, merges, checks, messages, pauses, limits |
+| `clodfarm connect` · `connections` · `disconnect ID` | Claude Code on your computer, over MCP ([docs/mcp.md](docs/mcp.md)) |
 | `clodfarm pause [reason]` / `resume` | stop and restart new sub-agents on every box |
 | `clodfarm login / whoami / doctor` | login and a setup check |
 
@@ -290,10 +311,13 @@ Every command takes `--json`.
 | `FARM_REPO_URL` | *(empty)* | repo to work in (required for more than one box) |
 | `FARM_VERIFY_CMD` | *(empty)* | check that must pass before landing, e.g. `pytest -q` |
 | `FARM_NOTIFY_URL` | *(empty)* | ntfy, Slack or Discord webhook |
+| `FARM_SLACK_BOT_TOKEN` / `FARM_SLACK_APP_TOKEN` | *(empty)* | give the farm work from Slack (easier: the UI's SLACK button; [docs/slack.md](docs/slack.md)) |
+| `FARM_SLACK_ALLOW` | *(empty)* | emails or Slack member IDs that may give it work (empty: every full member of the workspace) |
 | `FARM_STALL_THRESHOLD` | `5` | failed runs in a row that pause the farm |
 | `FARM_REMOTE_CONTROL` | `1` | keep a Remote Control session up |
 | `FARM_PERMISSION_MODE` | `bypassPermissions` | the container is the sandbox ([security](docs/security.md)) |
 | `FARM_STORE` | `sqlite` | `dynamodb` to share one farm across boxes and accounts (setting `FARM_TABLE` implies it) |
+| `FARM_PUBLIC_URL` | *(from Host)* | the farm's public URL for MCP sign-in behind a proxy that rewrites Host, e.g. `https://clod.farm/team` |
 | `FARM_TABLE` / `FARM_SEAT` | `clodfarm` / from login | which DynamoDB farm to join / override the seat name |
 </details>
 

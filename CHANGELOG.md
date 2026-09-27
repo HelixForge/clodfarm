@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 (2026-09-27)
+## 0.6.0 (2026-09-27)
 
 Messages between the Claudes arrive in seconds instead of at the person's next prompt.
 
@@ -19,6 +19,28 @@ Messages between the Claudes arrive in seconds instead of at the person's next p
 - **`--wake`**: mail nobody read after `FARM_MAIL_WAKE_AFTER` seconds starts a sub-agent on that Claude's account, or
   resumes the finished sub-agent it was for. Capped by `FARM_MAIL_MAX_HOPS` and `FARM_MAIL_WAKES_PER_HOUR`, so two
   Claudes can't keep each other busy.
+
+## 0.5.0 (2026-09-27)
+
+- **Connect Claude Code on your computer: the farm is a remote MCP server** at `/mcp` (Streamable HTTP).
+  `claude mcp add --transport http farm <url>/mcp`, then `/mcp` to sign in on the farm's own page (its password and a
+  name for your computer). 15 tools: see the farm, spawn/cancel/retry sub-agents, message Claudes, read their
+  answers, schedules. OAuth 2.1 with discovery (RFC 9728/8414), dynamic registration, PKCE S256, audience-bound
+  hour-long tokens and rotating refresh tokens stored only as hashes; read-only or read-and-work. It can never log
+  Claudes in or out, release them or pause the farm. `clodfarm connect | connections | disconnect ID`;
+  `FARM_PUBLIC_URL` behind a proxy that rewrites Host. See docs/mcp.md.
+- **Give the farm work from Slack.** DM the farm's app or @mention it in a channel: a sub-agent does the job and
+  answers in the thread (👀 while it works, ✅ or ❌ when done). Follow-ups in the thread carry the conversation so
+  far; `status` shows the Claudes and their usage. It runs on the sender's own Claude (matched by account
+  email, stored only as the seat hash), else on a random Claude with room; `gil: …` runs it on gil's account. Connect it from the farm UI's
+  new **SLACK** button in about two minutes: a prefilled Slack app manifest, then two tokens pasted back. It uses
+  Socket Mode, so there's no public URL or open port, and the client is standard library only. Only full members of
+  the workspace can use it (never guests or people from other organisations), optionally narrowed to an allow list.
+  `clodfarm slack` prints the steps for a setup without the UI. See [docs/slack.md](docs/slack.md).
+- `clodfarm msg` reaches connected Claude Codes by their name.
+- **A 10-second demo at the top of the README** (`assets/demo-10s.webp`, click for the MP4), drawn with the farm UI's
+  own sprites. Re-render it with `scripts/render-demo.mjs` (headless Chromium + ffmpeg); `scripts/demo10.html` is the
+  deterministic timeline.
 
 ## 0.4.4 (2026-09-27)
 

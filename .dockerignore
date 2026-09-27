@@ -5,3 +5,6 @@
 *.egg-info
 build
 dist
+assets/*.mp4
+assets/*.webp
+node_modules

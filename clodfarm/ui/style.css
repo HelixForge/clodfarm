@@ -238,6 +238,14 @@ pre, .pre {
   font: 11px var(--font-px); background: var(--clay); color: #fff; border: 3px solid #6b2f1f; border-radius: 50%;
 }
 .hatch-steps li.done::before { content: "✓"; background: var(--hp-good); border-color: #1f7a45; }
+.slack-tool { position: relative; }
+.slack-tool[data-state]::after { content: ""; position: absolute; top: 6px; right: 6px; width: 9px; height: 9px; background: #999; }
+.slack-tool[data-state=live]::after { background: var(--hp-good); box-shadow: 0 0 6px var(--hp-good); }
+.slack-tool[data-state=error]::after { background: #e0513c; }
+.slack-status { font: 10px/1.5 var(--font-px); margin: 0 0 10px; }
+.slack-status.live { color: #1f7a45; } .slack-status.error { color: #b3261e; } .slack-status.wait { color: #8a5a00; }
+.slack-form .row { display: flex; gap: 8px; align-items: flex-end; } .slack-form .row label { flex: 1; }
+.hatch-steps kbd { font: 16px var(--font-body); background: var(--paper-2); padding: 0 4px; border-radius: 3px; }
 .login-link { display: block; text-align: center; text-decoration: none; margin-top: 8px; }
 .egg-anim { display: block; margin: 8px auto 16px; width: 96px; height: 96px; }
 .center { text-align: center; }

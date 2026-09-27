@@ -7,12 +7,14 @@
     clodfarm budget [--refresh]       every account's 5-hour and 7-day usage and what the governor allows
     clodfarm spawn TITLE [--prompt TEXT | --prompt-file F | -] [--on NAME]   start a sub-agent
     clodfarm subagents [--all] [--mine] | result ID [--wait] | cancel ID | retry ID
-    clodfarm msg NAME|ID TEXT [--urgent] [--wake] | inbox   talk to the other Claudes and sub-agents on the farm
+    clodfarm msg NAME|ID TEXT [--urgent] [--wake] | inbox   talk to the other Claudes, sub-agents and connected Claude Codes
+    clodfarm connect | connections | disconnect ID   Claude Code on your computer, over MCP (docs/mcp.md)
     clodfarm schedule add TITLE (--cron "0 9 * * 1-5" [--tz Europe/Berlin] | --every 2h | --at "in 3h") [--prompt TEXT] [--on NAME]
     clodfarm schedule list | remove ID
     clodfarm events [-n 30] [-f]      the farm's event log
     clodfarm pause [REASON] | resume  stop or restart new sub-agents on every box
     clodfarm ui | ui-passwd           serve the farm UI on its own | set its password
+    clodfarm slack                    Slack: connected or not, and how to connect it (the UI's SLACK button is easier)
     clodfarm init                     create the DynamoDB table
     clodfarm doctor                   check claude, login, the store, git and the workspace
 
@@ -330,8 +332,9 @@ def _my_address(cfg) -> str:
 
 def cmd_msg(cfg, a):
     store = _store(cfg)
+    from .mcp import connection_names
     task = store.get_task(a.to) if TASK_ID.fullmatch(a.to) else None
-    if not task and a.to not in _names(cfg, store) and not a.force:
+    if not task and a.to not in _names(cfg, store) | connection_names(cfg.workspace) and not a.force:
         print(f"no Claude named '{a.to}' is on the farm ({', '.join(sorted(_names(cfg, store))) or 'none'}) and no "
               "sub-agent has that id; --force leaves it for when it joins", file=sys.stderr)
         return 2
@@ -570,6 +573,22 @@ def cmd_schedule(cfg, a):
     return 1
 
 
+def cmd_slack(cfg, a):
+    from .slack import load_settings, manifest_url
+    s = load_settings(cfg)
+    info, ok = s.get("info") or {}, bool(s.get("bot_token") and s.get("app_token"))
+    _out({"configured": ok, "team": info.get("team"), "bot": info.get("bot_name"), "allow": s.get("allow") or [],
+          "manifest_url": manifest_url(cfg.farm)}, a.json,
+         (f"Slack: connected to {info.get('team') or '?'} as @{info.get('bot_name') or '?'}"
+          + (f"; only {', '.join(s['allow'])} can give it work" if s.get("allow") else "") if ok else
+          "Slack: not connected. Easiest: the SLACK button in the farm UI. By hand:\n"
+          f"  1. open this, then Create an App > From a manifest (it's filled in) > Next > Create:\n     {manifest_url(cfg.farm)}\n"
+          "  2. Install to Workspace; copy the Bot User OAuth Token (xoxb-...)\n"
+          "  3. Basic Information > App-Level Tokens > Generate with connections:write (xapp-...)\n"
+          "  4. set FARM_SLACK_BOT_TOKEN and FARM_SLACK_APP_TOKEN (optional FARM_SLACK_ALLOW) and restart the farm"))
+    return 0
+
+
 def cmd_events(cfg, a):
     store = _store(cfg)
     since = now() - 86400 * 7
@@ -590,6 +609,36 @@ def cmd_events(cfg, a):
         time.sleep(3)
         emit(store.events(now() - 120, 200))
     return 0
+
+
+def cmd_connect(cfg, a):
+    url = (a.url or os.environ.get("FARM_PUBLIC_URL") or f"http://localhost:{os.environ.get('FARM_UI_PORT', '8080')}"
+           + ("/" + os.environ.get("FARM_UI_BASE", "").strip("/") if os.environ.get("FARM_UI_BASE", "").strip("/") else "")).rstrip("/")
+    print("On your computer, add the farm to Claude Code (once):\n\n"
+          f"  claude mcp add --transport http --scope user {cfg.farm} {url}/mcp\n\n"
+          "Then run /mcp in Claude Code, pick it and sign in: the farm asks for its UI password and a name for\n"
+          "your computer. Claude Code never sees the password; it gets a token for this farm only, which you can\n"
+          "end with `clodfarm disconnect ID`. Behind a proxy that rewrites Host (CloudFront), set FARM_PUBLIC_URL.")
+    return 0
+
+
+def cmd_connections(cfg, a):
+    from .mcp import OAuthStore, oauth_path
+    rows = OAuthStore(oauth_path(cfg.workspace)).connections()
+    _out(rows, a.json, "\n".join(
+        f"  {r['id']}  {r['name']:<20} {r['scope']:<20} {r['client_name'][:30]:<30} connected {_ago(r['created'])} ago"
+        f" · last used {_ago(r['last_used']) + ' ago' if r['last_used'] else 'never'}" for r in rows)
+         or "(nothing connected: see `clodfarm connect`)")
+    return 0
+
+
+def cmd_disconnect(cfg, a):
+    from .mcp import OAuthStore, oauth_path
+    ok = OAuthStore(oauth_path(cfg.workspace)).disconnect(a.id)
+    if ok:
+        _store(cfg).event("mcp.disconnected", f"connection {a.id} ended by hand", by=cfg.name)
+    print("disconnected: its tokens stop working now" if ok else "no such connection (see `clodfarm connections`)")
+    return 0 if ok else 1
 
 
 def cmd_pause(cfg, a):
@@ -738,9 +787,14 @@ def main(argv=None):
     scs.add_parser("remove").add_argument("id")
     for q in scs.choices.values():
         q.add_argument("--json", action="store_true")
+    add("slack", cmd_slack, "give the farm work from Slack: status, or how to connect it")
     e = add("events", cmd_events, "the event log")
     e.add_argument("-n", type=int, default=30)
     e.add_argument("-f", "--follow", action="store_true")
+    add("connect", cmd_connect, "how to connect Claude Code on your computer (MCP)").add_argument(
+        "--url", help="the farm's public URL (default FARM_PUBLIC_URL, else localhost)")
+    add("connections", cmd_connections, "the MCP clients connected to this farm")
+    add("disconnect", cmd_disconnect, "end an MCP connection").add_argument("id")
     add("pause", cmd_pause, "pause new work everywhere").add_argument("reason", nargs="*")
     add("resume", cmd_resume, "resume work")
     add("ui", cmd_ui, "serve the farm UI (the daemon also serves it unless FARM_UI=0)")

@@ -1,0 +1,192 @@
+<!doctype html>
+<!-- 10-second clodfarm teaser: 4 steps, one big line each. Deterministic: window.render(t). Render: node scripts/render-demo.mjs -->
+<html lang="en"><head><meta charset="utf-8"><title>clodfarm in 10 seconds</title>
+<link rel="stylesheet" href="../clodfarm/ui/style.css">
+<style>
+  html, body { overflow: hidden; height: auto; }
+  body { margin: 0; width: 1920px; height: 1080px; background: #1c3519; position: relative; -webkit-font-smoothing: antialiased; }
+  #cam { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+  #cam canvas { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; image-rendering: pixelated; }
+  #labels > * { position: absolute; }
+  .tagname { font: 12px var(--font-px); color: #fff; text-shadow: 2px 2px 0 #1b2410; transform: translateX(-50%); white-space: nowrap; }
+  .bubble { transform: translate(-50%, -100%); font-size: 11px; }
+  .bubble img { width: 20px; height: 20px; image-rendering: pixelated; }
+  .bubble.ok { background: #e3f6e6; } .bubble.ok::after { background: #e3f6e6; }
+  .ui { position: absolute; }
+  /* the one big line */
+  #cap { left: 50%; top: 56px; transform: translateX(-50%); padding: 30px 48px 34px; text-align: center; white-space: nowrap; }
+  #cap .n { display: inline-block; font: 40px/1 var(--font-px); color: #fff; background: var(--clay); border: 4px solid var(--ink); border-radius: 8px; padding: 14px 18px; margin-right: 26px; vertical-align: middle; }
+  #cap .t { display: inline-block; font: 54px/1.1 var(--font-px); color: var(--ink); vertical-align: middle; }
+  #cap .b { font: 50px/1 var(--font-body); color: var(--ink-2); margin-top: 18px; }
+  /* phone */
+  #phone { left: 90px; top: 300px; width: 520px; height: 700px; background: #1c2233; border: 7px solid #0e121c; border-radius: 52px;
+    box-shadow: 0 12px 0 rgba(18,22,12,.35), 0 30px 60px rgba(0,0,0,.35); padding: 52px 18px 24px; }
+  #phone .scr { background: var(--paper); border-radius: 22px; height: 100%; padding: 24px 20px; display: flex; flex-direction: column; gap: 20px; }
+  #phone .app { font: 16px/1.5 var(--font-px); color: var(--clay-2); border-bottom: 3px solid var(--paper-2); padding-bottom: 14px; }
+  .msg { font: 48px/1 var(--font-body); padding: 14px 18px; border: 4px solid var(--ink); border-radius: 14px; background: #fff; max-width: 90%; }
+  .msg.me { align-self: flex-end; background: #fde6df; }
+  /* budget bar */
+  #meter { left: 50%; bottom: 70px; width: 1100px; margin-left: -550px; padding: 28px 36px 34px; }
+  #meter .h { font: 26px var(--font-px); display: flex; justify-content: space-between; margin-bottom: 22px; }
+  #meter .h em { font-style: normal; color: #c0392b; }
+  #meter .bar { position: relative; height: 54px; background: #3b3f4a; border: 5px solid var(--ink); border-radius: 14px; }
+  #meter .bar i { display: block; height: 100%; border-radius: 8px; background: var(--hp-good); box-shadow: inset 0 -6px 0 rgba(0,0,0,.18); }
+  #meter .bar i.mid { background: var(--hp-mid); } #meter .bar i.low { background: var(--hp-low); }
+  #meter .cap { position: absolute; left: 80%; top: -16px; bottom: -16px; width: 8px; margin-left: -4px; background: var(--ink); }
+  #meter .cap span { position: absolute; top: 76px; left: 50%; transform: translateX(-50%); font: 20px var(--font-px); white-space: nowrap; }
+  #meter .pct { position: absolute; right: 18px; top: 50%; transform: translateY(-50%); font: 26px var(--font-px); color: #fff; text-shadow: 2px 2px 0 #1b2410; }
+  /* merged badge */
+  #merged { left: 50%; bottom: 90px; transform: translateX(-50%); font: 44px var(--font-px); color: #fff; background: #2f9e6b; border: 5px solid var(--ink); border-radius: 12px; padding: 26px 40px; box-shadow: 0 8px 0 rgba(0,0,0,.3); white-space: nowrap; }
+  /* title / end */
+  #veil { position: absolute; inset: 0; background: radial-gradient(ellipse at center, rgba(16,26,12,.6), rgba(8,12,6,.92)); }
+  .card { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #f4f1e8; }
+  .card canvas { width: 176px; height: 198px; image-rendering: pixelated; margin-bottom: 30px; }
+  .card h1 { font: 124px/1 var(--font-px); margin: 0 0 36px; letter-spacing: 6px; color: #fff; text-shadow: 0 10px 0 var(--clay-2), 0 18px 0 rgba(0,0,0,.35); }
+  .card .tl { font: 68px/1.05 var(--font-body); color: #f4f1e8; }
+  .card .gh { margin-top: 44px; font: 34px var(--font-px); background: var(--clay); color: #fff; border: 5px solid var(--ink); border-radius: 10px; padding: 24px 32px; box-shadow: 0 7px 0 rgba(0,0,0,.35); }
+  .card .fine { position: absolute; bottom: 30px; font: 26px var(--font-body); color: rgba(244,241,232,.55); }
+</style></head>
+<body data-page="diagram">
+<div id="cam"><canvas id="bg"></canvas><canvas id="act"></canvas><canvas id="fgc"></canvas><div id="labels"></div></div>
+<div id="ui"></div>
+<script src="../clodfarm/ui/app.js"></script>
+<script>
+"use strict";
+const S = 4, W = 480, H = 270, DUR = 10;
+const $id = (i) => document.getElementById(i);
+const bgc = $id("bg"), act = $id("act"), fgc = $id("fgc");
+bgc.width = W; bgc.height = H; fgc.width = W; fgc.height = H; act.width = W * S; act.height = H * S;
+const g = bgc.getContext("2d"), A = act.getContext("2d"); A.imageSmoothingEnabled = false;
+const world = buildWorld(W, H, 11, {}), L = world.L;
+fgc.getContext("2d").drawImage(world.fg, 0, 0);
+
+const seg = (t, a, b) => clamp((t - a) / (b - a), 0, 1);
+const ease = (x) => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const easeOut = (x) => 1 - Math.pow(1 - x, 3);
+const back = (x) => { const c = 1.9; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+const win = (t, a, b, f = .25) => Math.min(seg(t, a, a + f), 1 - seg(t, b - f, b));
+const el = (tag, cls, parent, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; parent.append(e); return e; };
+const put = (img, x, y, { sc = 1, alpha = 1 } = {}) => { if (alpha <= 0 || sc <= 0) return;
+  const w = img.width * S * sc, hh = img.height * S * sc; A.save(); A.globalAlpha = alpha; A.translate(Math.round(x * S), Math.round(y * S));
+  A.drawImage(img, Math.round(-w / 2), Math.round(-hh), Math.round(w), Math.round(hh)); A.restore(); };
+const shadow = (x, y, rx, a = 1) => { A.save(); A.globalAlpha = .28 * a; A.fillStyle = "#14200a"; A.beginPath(); A.ellipse(x * S, y * S, rx * S, 2 * S, 0, 0, 7); A.fill(); A.restore(); };
+const block = (x, y, w, hh, c, a = 1) => { A.save(); A.globalAlpha = a; A.fillStyle = c; A.fillRect(Math.round(x * S), Math.round(y * S), w * S, hh * S); A.restore(); };
+const blinkAt = (t, s) => ((t * 1000 + s * 977) % 3100) < 130;
+const typing = (t, s) => Math.floor(t / .2 + s) % 2;
+
+const COL = { matan: HAT_COLORS[1], gil: HAT_COLORS[2], noa: HAT_COLORS[4] };
+const P = L.plots, spot = (p) => ({ x: p.x - 7, y: p.y + p.h });
+const M = spot(P[0]), G2 = spot(P[2]), N = spot(P[3]);
+const scroll = paint(ICONS.scroll[0], ICONS.scroll[1], 10);
+const minis = [
+  { col: COL.matan, x: P[0].x + 4, y: P[0].y - 2, born: 3.1, done: 8.0, k: 0 },
+  { col: COL.matan, x: P[0].x + 22, y: P[0].y - 2, born: 3.4, done: 8.15, k: 1 },
+  { col: COL.matan, x: P[0].x + 13, y: P[0].y + P[0].h + 9, born: 3.7, done: 8.3, k: 2 },
+  { col: COL.gil, x: P[1].x + 13, y: P[1].y - 2, born: 5.75, done: 8.45, k: -1 },
+  { col: COL.gil, x: P[2].x + 13, y: P[2].y - 2, born: -1, done: 99 },
+  { col: COL.noa, x: P[3].x + 13, y: P[3].y - 2, born: -1, done: 99, sleepAt: 7.2 },
+];
+const SLEEP = 7.2;
+
+// world labels
+const LB = $id("labels");
+const tag = (txt, p) => { const e = el("div", "tagname", LB, txt); e.style.left = p.x * S + "px"; e.style.top = (p.y + 3) * S + "px"; };
+tag("matan", M); tag("gil", G2); tag("noa", N);
+const zzz = el("div", "bubble", LB, `<img src="${icon("zzz")}" alt="">`); zzz.style.left = N.x * S + "px"; zzz.style.top = (N.y - 22) * S + "px";
+const onit = el("div", "bubble ok", LB, `<img src="${icon("heart")}" alt=""><span>ON IT</span>`); onit.style.left = G2.x * S + "px"; onit.style.top = (G2.y - 24) * S + "px";
+const ask = el("div", "bubble", LB, `<img src="${icon("scroll")}" alt=""><span>GIL, TAKE THE TESTS?</span>`); ask.style.left = M.x * S + "px"; ask.style.top = (M.y - 24) * S + "px";
+const gtag = el("div", "bubble ok", LB, "<span>ON GIL'S ACCOUNT</span>"); gtag.style.left = (P[1].x + 13) * S + "px"; gtag.style.top = (P[1].y - 11) * S + "px";
+const subs = el("div", "bubble", LB, `<img src="${icon("terminal")}" alt=""><span></span>`); subs.style.left = M.x * S + "px"; subs.style.top = (M.y - 24) * S + "px";
+
+// screen UI
+const UIr = $id("ui");
+const cap = el("div", "ui panel", UIr, `<div><span class="n"></span><span class="t"></span></div><div class="b"></div>`); cap.id = "cap";
+const STEPS = [
+  [1.0, 2.9, "1", "ASK YOUR CLAUDE", "from the Claude app on your phone"],
+  [2.9, 4.5, "2", "IT SPLITS THE WORK", "sub-agents, each on its own git branch"],
+  [4.5, 6.3, "3", "CLAUDES TEAM UP", "your Claude asks a teammate's Claude for help"],
+  [6.3, 7.9, "4", "IT STAYS IN BUDGET", "each Claude pauses at 80% of its weekly limit"],
+  [7.9, 9.15, "5", "IT SHIPS TESTED CODE", "merges to main only when tests pass"],
+];
+const phone = el("div", "ui", UIr, `<div class="scr"><div class="app">CLAUDE APP → CODE</div><div class="msg me"></div><div class="msg">On it.</div></div>`); phone.id = "phone";
+const [meMsg, aiMsg] = phone.querySelectorAll(".msg");
+const meter = el("div", "ui panel", UIr, `<div class="h"><span>NOA · WEEKLY USAGE</span><em></em></div><div class="bar"><i></i><b class="cap"><span>STOP 80%</span></b><span class="pct"></span></div>`); meter.id = "meter";
+const merged = el("div", "ui", UIr, "TESTS PASSED → MERGED"); merged.id = "merged";
+const veil = el("div", "", UIr); veil.id = "veil";
+const title = el("div", "card", UIr, `<canvas width="16" height="18"></canvas><h1>CLODFARM</h1><div class="tl">Claude Code agents that work 24/7.</div>`);
+const end = el("div", "card", UIr, `<canvas width="16" height="18"></canvas><h1>CLODFARM</h1><div class="tl">Free and open source.</div>
+  <div class="gh">★ github.com/matank001/clodfarm</div><div class="fine">MIT · independent project, not affiliated with Anthropic</div>`);
+const cardCv = [title, end].map(c => { const x = c.querySelector("canvas").getContext("2d"); x.imageSmoothingEnabled = false; return x; });
+
+// camera: one slow push-in on the field
+function camera(t) {
+  const K = [[0, 240, 135, 1], [0.8, 240, 135, 1], [3.4, 312, 124, 1.5], [4.5, 312, 124, 1.5], [4.95, 296, 126, 2.0], [6.2, 296, 126, 2.0], [6.7, 312, 124, 1.5], [99, 312, 124, 1.5]];
+  let i = 1; while (i < K.length - 1 && t > K[i][0]) i++;
+  const u = ease(seg(t, K[i - 1][0], K[i][0])), z = lerp(K[i - 1][3], K[i][3], u), cx = lerp(K[i - 1][1], K[i][1], u), cy = lerp(K[i - 1][2], K[i][2], u);
+  const tx = clamp(960 - cx * S * z, 1920 - 1920 * z, 0), ty = clamp(540 - cy * S * z, 1080 - 1080 * z, 0);
+  $id("cam").style.transform = `translate(${tx}px, ${ty}px) scale(${z})`;
+}
+
+window.render = function (t) {
+  camera(t);
+  g.drawImage(world.bg, 0, 0);
+  for (const m of minis.slice(0, 4)) { const a = t - m.born; if (a < 0) continue;
+    const pl = m.k < 0 ? P[1] : P[0], kk = m.k < 0 ? 1 : m.k; drawCrop(g, pl.x + 5 + kk * 8, pl.y + pl.h - 3, t >= m.done ? "ripe" : a < .6 ? "seed" : a < 1.6 ? "sprout" : "grow", t + m.k, t >= m.done); }
+  for (let k = 0; k < 3; k++) drawCrop(g, P[2].x + 5 + k * 8, P[2].y + P[2].h - 3, "grow", t + k, false);
+
+  A.clearRect(0, 0, act.width, act.height);
+  const working = t > 1.6;
+  shadow(M.x, M.y, 6); put(critterSprite("straw", COL.matan, { arms: working ? typing(t, 0) : 0, blink: blinkAt(t, 1), look: 1 }), M.x, M.y + 1); put(LAPTOP_ON, M.x + 8.5, M.y + 1);
+  shadow(G2.x, G2.y, 6); put(critterSprite("beanie", COL.gil, { arms: typing(t, .5), blink: blinkAt(t, 2), look: t > 5 && t < 5.8 ? -1 : 1 }), G2.x, G2.y + 1); put(LAPTOP_ON, G2.x + 8.5, G2.y + 1);
+  const gs = t >= SLEEP;
+  shadow(N.x, N.y, 6); put(critterSprite("cap", COL.noa, { arms: gs ? 0 : typing(t, .2), blink: blinkAt(t, 3), sleep: gs, look: 1 }), N.x, N.y + 1); put(gs ? LAPTOP_OFF : LAPTOP_ON, N.x + 8.5, N.y + 1);
+  const fu = seg(t, 5.0, 5.6);
+  if (fu > 0 && fu < 1) { const e = ease(fu); put(scroll, lerp(M.x + 6, G2.x - 2, e), lerp(M.y - 12, G2.y - 12, e) - Math.sin(e * Math.PI) * 8, { sc: 2.4 }); }
+  for (const m of minis) {
+    if (t < m.born) continue;
+    const pop = m.born < 0 ? 1 : back(seg(t, m.born, m.born + .35)), gone = seg(t, m.done, m.done + .3);
+    if (gone >= 1) continue;
+    const idle = m.sleepAt != null && t >= m.sleepAt;
+    shadow(m.x, m.y, 3.5, (1 - gone) * pop);
+    put(miniSprite(m.col, { arms: idle ? 0 : typing(t, m.x * .13), blink: blinkAt(t, m.x) }), m.x, m.y + 1 - Math.sin(gone * Math.PI) * 5, { sc: pop, alpha: 1 - gone });
+    if (!idle && !gone && pop > .9) { block(m.x + 3, m.y - 4, 4, 3, "#1b1f2a"); block(m.x + 4, m.y - 3, 2, 1, "#7cfc9a"); }
+    for (const [t0, col] of [[m.born, "#f4f1e8"], [m.done, "#ffd59e"]]) { const u = seg(t, t0, t0 + .6); if (t0 < 0 || u <= 0 || u >= 1) continue;
+      for (let k = 0; k < 8; k++) { const a = k / 8 * Math.PI * 2 + t0, r = 3 + easeOut(u) * 11; block(m.x + Math.cos(a) * r - .5, m.y - 4 + Math.sin(a) * r * .7 - u * 4, 1, 1, k % 2 ? col : "#d97757", 1 - u); } }
+  }
+  const n = minis.slice(0, 4).filter(m => t >= m.born && t < m.done).length;
+  subs.style.opacity = n ? 1 : 0; subs.querySelector("span").textContent = `${n} SUB-AGENT${n === 1 ? "" : "S"}`;
+  zzz.style.opacity = seg(t, SLEEP, SLEEP + .2);
+  onit.style.opacity = win(t, 5.55, 6.15, .12); ask.style.opacity = win(t, 4.85, 5.7, .12); subs.style.visibility = t > 4.8 && t < 5.75 ? "hidden" : "visible"; gtag.style.opacity = win(t, 6.1, 7.9, .15);
+
+  const c = STEPS.find(([a, z]) => t >= a && t < z);
+  if (c) { const [a, z, num, ti, body] = c, v = win(t, a, z, .2);
+    cap.style.opacity = v; cap.style.transform = `translateX(-50%) translateY(${(1 - easeOut(v)) * -24}px)`;
+    const [row, b] = cap.children; row.children[0].textContent = num; row.children[1].textContent = ti; b.textContent = body; }
+  else cap.style.opacity = 0;
+
+  const pv = win(t, 1.05, 3.0, .3);
+  phone.style.opacity = pv > 0 ? 1 : 0; phone.style.transform = `translateX(${(1 - easeOut(pv)) * -700}px)`;
+  const typed = "Add CSV export to the report page", nch = Math.floor(seg(t, 1.3, 2.2) * typed.length);
+  meMsg.textContent = typed.slice(0, nch) || " "; aiMsg.style.opacity = seg(t, 2.35, 2.5);
+
+  const mv = win(t, 6.35, 7.9, .2), use = lerp(.55, .80, ease(seg(t, 6.5, SLEEP)));
+  meter.style.opacity = mv; meter.style.transform = `translateY(${(1 - easeOut(mv)) * 30}px)`;
+  const bar = meter.querySelector(".bar i"); bar.style.width = (use * 100).toFixed(1) + "%"; bar.className = use < .7 ? "" : use < .79 ? "mid" : "low";
+  meter.querySelector(".pct").textContent = Math.round(use * 100) + "%";
+  meter.querySelector("em").textContent = t >= SLEEP ? "PAUSED" : "";
+
+  const gv = win(t, 8.05, 9.2, .2); merged.style.opacity = gv; merged.style.transform = `translateX(-50%) scale(${.8 + .2 * back(seg(t, 8.05, 8.4))})`;
+
+  const tv = 1 - seg(t, 0.75, 1.05), ev = seg(t, 9.15, 9.45);
+  veil.style.opacity = Math.max(tv, ev);
+  $id("cam").style.filter = Math.max(tv, ev) > .01 ? `blur(${(Math.max(tv, ev) * 5).toFixed(2)}px)` : "none";
+  title.style.opacity = tv * seg(t, 0, .25); end.style.opacity = ev;
+  title.querySelector("h1").style.transform = `translateY(${(1 - easeOut(seg(t, 0, .6))) * 24}px)`;
+  end.style.transform = `scale(${1.04 - .04 * easeOut(ev)})`;
+  cardCv.forEach(x => { x.clearRect(0, 0, 16, 18); x.drawImage(critterSprite("straw", COL.matan, { arms: Math.floor(t / .4) % 2, blink: blinkAt(t, 9) }), 0, 0); });
+};
+window.DUR = DUR;
+window.ready = document.fonts.ready.then(() => Promise.all([...document.images].map(i => i.decode().catch(() => {})))).then(() => { render(0); return true; });
+render(0);
+</script>
+</body></html>
