@@ -341,6 +341,8 @@ def test_every_session_and_its_whole_conversation_is_recorded(env, tmp_path):
     out = cli("session", "abc").stdout
     assert "YOU: refactor the importer" in out and "TOOL [tool_result]: started sub-agent 1" in out
     assert "abc" in cli("sessions").stdout
+    hook("SessionStart", FARM_TASK_ID="usage")  # the usage check is not recorded
+    assert store.session("abc")["kind"] == "conversation" and len(store.sessions()) == 1
     hook("SessionEnd", FARM_TASK_ID="t9", FARM_OWNER="gil")  # the same hook inside a sub-agent run
     s = store.session("abc")
     assert s["ended"] and s["kind"] == "sub-agent" and s["claude"] == "gil" and s["task"] == "t9"

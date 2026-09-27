@@ -348,6 +348,8 @@ def cmd_hook(cfg, a):
         ev = {}
     name, sid = ev.get("hook_event_name", ""), ev.get("session_id")
     kind = session_kind()
+    if kind == "usage":  # the farm's one-word usage check is not a conversation
+        return 0
     try:
         store = _store(cfg)
         if sid:
@@ -368,7 +370,7 @@ def cmd_hook(cfg, a):
 
 
 def cmd_sessions(cfg, a):
-    rows = _store(cfg).sessions(a.claude, a.n)
+    rows = [s for s in _store(cfg).sessions(a.claude, a.n + 500) if a.all or s.get("kind") != "usage"][:a.n]
     _out(rows, a.json, "\n".join(
         f"  {r['id'][:8]}  {r.get('kind', '?'):<12} {r.get('claude', '?'):<12} {_ago(r.get('last_at')):>5}  "
         f"{r.get('turns', 0):>4} turns  {'ended ' if r.get('ended') else ''}{(r.get('title') or '')[:60]}" for r in rows)
@@ -576,6 +578,7 @@ def main(argv=None):
     ss = add("sessions", cmd_sessions, "every Claude session on the farm (conversations and sub-agents)")
     ss.add_argument("--claude", help="only this Claude's")
     ss.add_argument("-n", type=int, default=30)
+    ss.add_argument("--all", action="store_true", help="also the usage checks recorded by older versions")
     se = add("session", cmd_session, "one session's whole conversation")
     se.add_argument("id")
     add("agents", cmd_agents, "the Claudes on this farm and how much of its usage each has used")

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3 (2026-09-27)
+
+- The farm's own usage check is no longer recorded as a session, and `clodfarm sessions` hides the ones older
+  versions recorded (`--all` shows them).
+
 ## 0.4.2 (2026-09-26)
 
 - **Usage reads like Claude's own usage page:** "35% used", a bar that fills up to 100% (green, then amber, then red),
