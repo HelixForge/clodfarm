@@ -72,6 +72,9 @@ def test_parent_spawns_sub_agents_and_everything_merges(env):
         resumed = [c for c in calls(env) if c.get("task") == tid and c.get("resume")]
         assert len(resumed) == 1, "the parent is resumed once, in its own session"
         assert farm.store.get_snapshot() is not None, "every run reports real usage"
+        tools = farm.store.tools()[farm.cfg.name]                     # what this Claude can use, from its runs
+        assert "mcp__github__create_pr" in tools["tools"] and tools["mcp_servers"][0]["status"] == "connected"
+        assert tools["plugins"] == [{"name": "farm-kit", "version": "1.0.0"}], "never the plugin paths"
     finally:
         stop_farm(farm, t)
 

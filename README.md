@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="assets/demo-10s.mp4"><img src="assets/demo-10s.webp" alt="clodfarm in 10 seconds, on the farm UI's pixel art: 1, ask your Claude from the Claude app on your phone; 2, it splits the work into sub-agents, each on its own git branch; 3, Claudes team up: matan's Claude asks gil's Claude to take the tests and a sub-agent runs on gil's account; 4, it stays in budget: noa's Claude pauses at 80% of its weekly limit; 5, it ships tested code: merged to main only when the tests pass" width="100%"></a>
+  <a href="https://clod.farm"><img src="assets/readme/hero.png" alt="CLOD FARM: a farm of Claude Code agents. The pixel-art farm from clod.farm: a barn, a pond, crop plots and little Claude characters working at terminals" width="100%"></a>
 </p>
 
 <p align="center">
@@ -11,15 +11,19 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/matank001/clodfarm/actions/workflows/ci.yml"><img src="https://github.com/matank001/clodfarm/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-E8875B" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white" alt="Docker">
-  <img src="https://img.shields.io/badge/runs-Claude%20Code-D97757" alt="Runs Claude Code">
-  <img src="https://img.shields.io/badge/deploy-AWS%20in%2010%20min-FF9900?logo=amazonaws&logoColor=white" alt="AWS deploy">
+  <a href="https://github.com/matank001/clodfarm/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/matank001/clodfarm/ci.yml?branch=main&label=CI&labelColor=4a3b2c" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-E8875B?labelColor=4a3b2c" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white&labelColor=4a3b2c" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white&labelColor=4a3b2c" alt="Docker">
+  <img src="https://img.shields.io/badge/runs-Claude%20Code-D97757?labelColor=4a3b2c" alt="Runs Claude Code">
+  <img src="https://img.shields.io/badge/deploy-AWS%20in%2010%20min-FF9900?logo=amazonaws&logoColor=white&labelColor=4a3b2c" alt="AWS deploy">
 </p>
 
 <h3 align="center">Your Claude Code agents keep working while you sleep, and stop before they eat your week.</h3>
+
+<p align="center">
+  <a href="assets/demo-10s.mp4"><img src="assets/demo-10s.webp" alt="clodfarm in 10 seconds, on the farm UI's pixel art: 1, ask your Claude from the Claude app on your phone; 2, it splits the work into sub-agents, each on its own git branch; 3, Claudes team up: matan's Claude asks gil's Claude to take the tests and a sub-agent runs on gil's account; 4, it stays in budget: noa's Claude pauses at 80% of its weekly limit; 5, it ships tested code: merged to main only when the tests pass" width="100%"></a>
+</p>
 
 **clodfarm** (say it out loud) is a farm of Claude Code agents running around the clock in a container. A clod
 is a lump of soil, and this is where your agents grow.
@@ -33,20 +37,12 @@ is a lump of soil, and this is where your agents grow.
   <img src="assets/architecture.png" alt="How clodfarm works, drawn as the farm: on your phone you ask your Claude (matan) for work over Remote Control; it works at a plot with three mini-Claude sub-agents, one running on gil's account; gil works at the next plot; noa naps because its budget is paced; the barn is the shared store and git repo and the board runs schedules" width="100%">
 </p>
 
-<table>
-<tr>
-<td width="25%" valign="top"><b>01 · Install</b><br>One line on any box with Docker, or one command on AWS with no open ports.</td>
-<td width="25%" valign="top"><b>02 · Add your Claudes</b><br>Tap the egg in the farm UI and log in. Teammates add theirs the same way.</td>
-<td width="25%" valign="top"><b>03 · Talk to yours</b><br>Claude app → Code → your farm. Ask for anything, from anywhere.</td>
-<td width="25%" valign="top"><b>04 · Watch it grow</b><br>Sub-agents, messages between Claudes and schedules, all on the farm, paced on real usage.</td>
-</tr>
-</table>
-
 <p align="center">
-  <img src="assets/farm.png" alt="The clodfarm UI: a pixel-art farm where every Claude Code agent is a little Claude character. Some work at terminals beside crop plots, mini Claudes help as sub-agents, finished work blooms, and a Claude naps by the barn while its budget governor paces it" width="100%">
+  <img src="assets/readme/steps.png" alt="How you get started. 01 Install: one line on any box with Docker, or one command on AWS with no open ports. 02 Add your Claudes: tap the egg in the farm UI and log in; teammates add theirs the same way. 03 Talk to yours: Claude app, Code, your farm; ask for anything, from anywhere. 04 Watch it grow: sub-agents, messages, schedules and dashboards, all on the farm, paced on real usage." width="100%">
 </p>
 
-## Why clodfarm
+<a name="why-clodfarm"></a>
+<h2><img src="assets/readme/why.png" height="44" alt="Why clodfarm"></h2>
 
 A `while true; claude -p` loop gets you an agent that forgets what it did, can't split work, can't be reached from
 your phone, and runs until it hits the wall and locks you out of your own Claude. clodfarm is the missing
@@ -54,24 +50,28 @@ operations layer:
 
 | | |
 |---|---|
-| 🌙 **Always on** | Claudes restart, leases expire, crashed sub-agents are retried, and timed-out ones continue in their own session. |
-| 📱 **Talk to it from your phone** | Every Claude keeps `claude remote-control` up, so it is a session in its person's Claude app and at claude.ai/code. |
-| 🌱 **Sub-agents you can see** | `clodfarm spawn` starts one: a mini Claude on the farm, in its own git worktree. A sub-agent's own sub-agents are its children, and it is resumed *in its own session* to merge their work. |
-| 🌕 **Paced on real usage** | Every run reports the account's actual 5-hour and weekly utilization (`rate_limit_event`). The governor paces the week, leaves you 20% by default, sleeps through rejections, and never touches paid overage. |
-| 👥 **Many boxes, many seats** | Point containers on several accounts at one table: one farm, one repo, a separate budget per account. |
-| ✅ **Nothing lands untested** | `FARM_VERIFY_CMD` runs your tests on the rebased branch, and a failing check sends the agent back to fix it. |
-| 🤝 **Claudes that work together** | `clodfarm agents` shows every Claude and how much of its usage it has used. A sub-agent without `--on` runs on whichever account has room, `--on gil` picks one, and messages reach a Claude or a running sub-agent in seconds: at its next tool call, or it wakes up for them. |
-| ⏰ **Schedules** | "Every weekday at 9, summarize the open PRs": `clodfarm schedule add ... --cron "0 9 * * 1-5" --tz Asia/Jerusalem`, or `--every 2h`, or `--at "in 3h"`. |
-| 💬 **Slack** | DM the farm's app or @mention it: a sub-agent does the job and answers in the thread. Connect it from the farm UI in about two minutes, with no public URL ([docs/slack.md](docs/slack.md)). |
-| 🔔 **Tells you when it matters** | Notifications to ntfy, Slack or Discord for failures, a tripped circuit breaker and usage limits. |
-| 📈 **Usage in real time** | A new Claude's usage is measured the moment it logs in; every run reports it live, and an idle Claude is re-measured every 5 minutes (`FARM_USAGE_REFRESH`). |
-| 🔌 **Claude Code on your laptop, connected** | The farm is a remote MCP server: `claude mcp add --transport http farm <url>/mcp`, sign in once, and your local Claude sees the farm, hands it work and messages its Claudes. OAuth 2.1 + PKCE, no password in Claude Code. |
-| 🕹️ **A farm you can watch** | Open `http://localhost:8080`: one pixel Claude per account, its sub-agents around its plot, napping when its budget says so. Tap a Claude for its budget, its sub-agents and a link to talk to it in the Claude app; hatch new Claudes (each its own login) from the browser. |
+| <img src="assets/icons/moon.svg" width="18" height="18" align="top" alt=""> **Always on** | Claudes restart, leases expire, crashed sub-agents are retried, and timed-out ones continue in their own session. |
+| <img src="assets/icons/claude.svg" width="18" height="18" align="top" alt=""> **Talk to it from your phone** | Every Claude keeps `claude remote-control` up, so it is a session in its person's Claude app and at claude.ai/code. |
+| <img src="assets/icons/git-branch.svg" width="18" height="18" align="top" alt=""> **Sub-agents you can see** | `clodfarm spawn` starts one: a mini Claude on the farm, in its own git worktree. A sub-agent's own sub-agents are its children, and it is resumed *in its own session* to merge their work. |
+| <img src="assets/icons/gauge.svg" width="18" height="18" align="top" alt=""> **Paced on real usage** | Every run reports the account's actual 5-hour and weekly utilization (`rate_limit_event`). The governor paces the week, leaves you 20% by default, sleeps through rejections, and never touches paid overage. |
+| <img src="assets/icons/server.svg" width="18" height="18" align="top" alt=""> **Many boxes, many seats** | Point containers on several accounts at one table: one farm, one repo, a separate budget per account. |
+| <img src="assets/icons/cloud.svg" width="18" height="18" align="top" alt=""> **Builds its own apps on AWS (optional)** | `deploy.sh apps-role` lets the Claudes create and run serverless apps as a fenced role: a permissions boundary on every role they make, no IAM users or keys, and a budget that locks the role at 100% ([details](#let-the-farm-build-apps-on-aws-optional)). |
+| <img src="assets/icons/shield-check.svg" width="18" height="18" align="top" alt=""> **Nothing lands untested** | `FARM_VERIFY_CMD` runs your tests on the rebased branch, and a failing check sends the agent back to fix it. |
+| <img src="assets/icons/users.svg" width="18" height="18" align="top" alt=""> **Claudes that work together** | `clodfarm agents` shows every Claude and how much of its usage it has used. A sub-agent without `--on` runs on whichever account has room, `--on gil` picks one, and messages reach a Claude or a running sub-agent in seconds: at its next tool call, or it wakes up for them. |
+| <img src="assets/icons/clock.svg" width="18" height="18" align="top" alt=""> **Schedules** | "Every weekday at 9, summarize the open PRs": `clodfarm schedule add ... --cron "0 9 * * 1-5" --tz Asia/Jerusalem`, or `--every 2h`, or `--at "in 3h"`. |
+| <img src="assets/icons/chart-column.svg" width="18" height="18" align="top" alt=""> **Dashboards** | "Keep a dashboard of the test suite": the Claudes build pages at `/dashboards/<name>` (stats with their trend, charts, bar lists, tables, progress, notes). Live ones run code from the repo on a schedule and push what it prints; a broken one tells its Claude to fix it ([docs/dashboards.md](docs/dashboards.md)). |
+| <img src="assets/icons/slack.svg" width="18" height="18" align="top" alt=""> **Slack** | DM the farm's app or @mention it: a sub-agent does the job and answers in the thread. Connect it from the farm UI in about two minutes, with no public URL ([docs/slack.md](docs/slack.md)). |
+| <img src="assets/icons/bell.svg" width="18" height="18" align="top" alt=""> **Tells you when it matters** | Notifications to ntfy, Slack or Discord for failures, a tripped circuit breaker and usage limits. |
+| <img src="assets/icons/activity.svg" width="18" height="18" align="top" alt=""> **Usage in real time** | A new Claude's usage is measured the moment it logs in; every run reports it live, and an idle Claude is re-measured every 5 minutes (`FARM_USAGE_REFRESH`). |
+| <img src="assets/icons/modelcontextprotocol.svg" width="18" height="18" align="top" alt=""> **Claude Code on your laptop, connected** | The farm is a remote MCP server: `claude mcp add --transport http farm <url>/mcp`, sign in once, and your local Claude sees the farm, hands it work and messages its Claudes. OAuth 2.1 + PKCE, no password in Claude Code. |
+| <img src="assets/icons/monitor-play.svg" width="18" height="18" align="top" alt=""> **A farm you can watch** | Open `http://localhost:8080`: one pixel Claude per account, its sub-agents around its plot, napping when its budget says so. Tap a Claude for its budget, its sub-agents, its tools and a link to talk to it in the Claude app (or the chat button for how to talk to yours); hatch new Claudes (each its own login) from the browser. |
+| <img src="assets/icons/wrench.svg" width="18" height="18" align="top" alt=""> **Each Claude's tools** | A Claude's card lists what it can use, as Claude Code reported it on its last run: model and version, MCP servers (connected, needs sign-in or failed), built-in and MCP tools, skills, plugins and sub-agent types. |
 
 You talk to your Claude in the Claude app; the farm UI shows who is working on what; the Claudes and you use the
 same CLI.
 
-## Quick start
+<a name="quick-start"></a>
+<h2><img src="assets/readme/quick-start.png" height="44" alt="Quick start"></h2>
 
 One container, no config, no database to run:
 
@@ -111,7 +111,8 @@ Either way the farm's state lives in a SQLite file inside the workspace volume, 
 > Point it at a real repo with `FARM_REPO_URL` (plus a deploy key) and set `FARM_VERIFY_CMD="pytest -q"`. The farm
 > clones the repo, and every sub-agent's work lands on `main` only when your tests pass.
 
-## Connect Claude Code on your computer
+<a name="connect-claude-code-on-your-computer"></a>
+<h2><img src="assets/readme/connect.png" height="44" alt="Connect Claude Code on your computer"></h2>
 
 The farm is a remote MCP server, so the Claude Code on your laptop can see the farm, start sub-agents on it and
 message its Claudes:
@@ -125,7 +126,8 @@ Claude Code gets a token for this farm only (OAuth 2.1 + PKCE; `clodfarm disconn
 "what's the farm doing?", "have the farm add CSV export, on gil", "tell noa the release is out".
 See [docs/mcp.md](docs/mcp.md).
 
-## Deploy
+<a name="deploy"></a>
+<h2><img src="assets/readme/deploy.png" height="44" alt="Deploy"></h2>
 
 | | What you get |
 |---|---|
@@ -231,7 +233,8 @@ clodfarm spawn "Refactor the parser" --prompt "..." && clodfarm status
 
 Full guide: [docs/multi-seat.md](docs/multi-seat.md).
 
-## How it works
+<a name="how-it-works"></a>
+<h2><img src="assets/readme/how-it-works.png" height="44" alt="How it works"></h2>
 
 The picture at the top, step by step:
 
@@ -277,22 +280,24 @@ It's a pure, unit-tested function: [clodfarm/governor.py](clodfarm/governor.py) 
 More: [architecture](docs/architecture.md) · [what agents are told](docs/agents.md) · [login options](docs/auth.md) ·
 [security](docs/security.md) · [how it's tested](docs/testing.md).
 
-## How it compares
+<a name="how-it-compares"></a>
+<h2><img src="assets/readme/how-it-compares.png" height="44" alt="How it compares"></h2>
 
 |  | `while` loop | Single-loop runners (e.g. ralph, continuous-claude) | **clodfarm** |
 |---|:---:|:---:|:---:|
-| Runs unattended, survives crashes | ❌ | ✅ | ✅ |
-| Parallel agents | ❌ | via separate instances | ✅ visible sub-agents |
-| Sub-agent tree, parent resumes in its own session | ❌ | ❌ | ✅ |
-| Paces on the real 5-hour **and** weekly utilization | ❌ | waits out limits | ✅ per seat |
-| Several boxes and accounts in one farm | ❌ | ❌ | ✅ |
-| Merge only when tests pass | ❌ | ✅ (continuous-claude) | ✅ |
-| Steer it from the Claude app | ❌ | ❌ | ✅ Remote Control |
-| Cloud deploy with no open ports | ❌ | ❌ | ✅ |
+| Runs unattended, survives crashes | <img src="assets/icons/x.svg" width="16" height="16" alt="no"> | <img src="assets/icons/check.svg" width="16" height="16" alt="yes"> | <img src="assets/icons/check.svg" width="16" height="16" alt="yes"> |
+| Parallel agents | <img src="assets/icons/x.svg" width="16" height="16" alt="no"> | via separate instances | <img src="assets/icons/check.svg" width="16" height="16" alt="yes"> visible sub-agents |
+| Sub-agent tree, parent resumes in its own session | <img src="assets/icons/x.svg" width="16" height="16" alt="no"> | <img src="assets/icons/x.svg" width="16" height="16" alt="no"> | <img src="assets/icons/check.svg" width="16" height="16" alt="yes"> |
+| Paces on the real 5-hour **and** weekly utilization | <img src="assets/icons/x.svg" width="16" height="16" alt="no"> | waits out limits | <img src="assets/icons/check.svg" width="16" height="16" alt="yes"> per seat |
+| Several boxes and accounts in one farm | <img src="assets/icons/x.svg" width="16" height="16" alt="no"> | <img src="assets/icons/x.svg" width="16" height="16" alt="no"> | <img src="assets/icons/check.svg" width="16" height="16" alt="yes"> |
+| Merge only when tests pass | <img src="assets/icons/x.svg" width="16" height="16" alt="no"> | <img src="assets/icons/check.svg" width="16" height="16" alt="yes"> (continuous-claude) | <img src="assets/icons/check.svg" width="16" height="16" alt="yes"> |
+| Steer it from the Claude app | <img src="assets/icons/x.svg" width="16" height="16" alt="no"> | <img src="assets/icons/x.svg" width="16" height="16" alt="no"> | <img src="assets/icons/check.svg" width="16" height="16" alt="yes"> Remote Control |
+| Cloud deploy with no open ports | <img src="assets/icons/x.svg" width="16" height="16" alt="no"> | <img src="assets/icons/x.svg" width="16" height="16" alt="no"> | <img src="assets/icons/check.svg" width="16" height="16" alt="yes"> |
 
 Both runners are great at what they do, and we learned from them. See [related projects](#related-projects).
 
-## Logging in
+<a name="logging-in"></a>
+<h2><img src="assets/readme/logging-in.png" height="44" alt="Logging in"></h2>
 
 Your login stays in the container's `claude-home` volume. clodfarm never reads or prints it.
 
@@ -305,7 +310,8 @@ Your login stays in the container's `claude-home` volume. clodfarm never reads o
 
 Details and caveats: [docs/auth.md](docs/auth.md).
 
-## Commands
+<a name="commands"></a>
+<h2><img src="assets/readme/commands.png" height="44" alt="Commands"></h2>
 
 | Command | |
 |---|---|
@@ -317,6 +323,7 @@ Details and caveats: [docs/auth.md](docs/auth.md).
 | `clodfarm msg NAME\|ID TEXT [--urgent] [--wake]` · `inbox` | messages to a Claude or a sub-agent |
 | `clodfarm sessions` · `session ID` | every Claude session on the farm, and its whole conversation |
 | `clodfarm schedule add TITLE (--cron ... [--tz ...] \| --every 2h \| --at ...)` / `list` / `remove ID` | scheduled tasks |
+| `clodfarm dashboard push NAME --file spec.json` / `push NAME --run CMD --every 1h` / `metric NAME KEY VALUE` / `list` / `show` / `refresh` / `remove` | dashboards at `/dashboards/<name>` |
 | `clodfarm events [-f]` | the event log: sub-agents, merges, checks, messages, pauses, limits |
 | `clodfarm connect` · `connections` · `disconnect ID` | Claude Code on your computer, over MCP ([docs/mcp.md](docs/mcp.md)) |
 | `clodfarm pause [reason]` / `resume` | stop and restart new sub-agents on every box |
@@ -341,7 +348,7 @@ Every command takes `--json`.
 | `FARM_REPO_URL` | *(empty)* | repo to work in (required for more than one box) |
 | `FARM_VERIFY_CMD` | *(empty)* | check that must pass before landing, e.g. `pytest -q` |
 | `FARM_NOTIFY_URL` | *(empty)* | ntfy, Slack or Discord webhook |
-| `FARM_SLACK_BOT_TOKEN` / `FARM_SLACK_APP_TOKEN` | *(empty)* | give the farm work from Slack (easier: the UI's SLACK button; [docs/slack.md](docs/slack.md)) |
+| `FARM_SLACK_BOT_TOKEN` / `FARM_SLACK_APP_TOKEN` | *(empty)* | give the farm work from Slack (easier: the UI's Slack button; [docs/slack.md](docs/slack.md)) |
 | `FARM_SLACK_ALLOW` | *(empty)* | emails or Slack member IDs that may give it work (empty: every full member of the workspace) |
 | `FARM_STALL_THRESHOLD` | `5` | failed runs in a row that pause the farm |
 | `FARM_REMOTE_CONTROL` | `1` | keep a Remote Control session up |
@@ -353,7 +360,8 @@ Every command takes `--json`.
 | `FARM_AWS_APPS_CREDENTIALS` | `Ec2InstanceMetadata` | where that profile's source credentials come from: `Ec2InstanceMetadata`, `EcsContainer` or `Environment` (any Docker host) |
 </details>
 
-## FAQ
+<a name="faq"></a>
+<h2><img src="assets/readme/faq.png" height="44" alt="FAQ"></h2>
 
 <details>
 <summary><b>Is this allowed?</b></summary>
@@ -400,7 +408,8 @@ API keys: yes, with a daily dollar cap instead of subscription pacing. Bedrock a
 Code's own environment variables but aren't tested yet. PRs welcome.
 </details>
 
-## Related projects
+<a name="related-projects"></a>
+<h2><img src="assets/readme/related.png" height="44" alt="Related projects"></h2>
 
 - [ralph-claude-code](https://github.com/frankbria/ralph-claude-code) is a hardened single loop with a circuit
   breaker and exit detection. From its bug history we took three rules:
@@ -416,7 +425,8 @@ Code's own environment variables but aren't tested yet. PRs welcome.
 clodfarm is the first open piece of **Pluribus**, an experiment in running a small company with a swarm of
 Claude agents. This repo is the engine that keeps a swarm like that working.
 
-## Contributing
+<a name="contributing"></a>
+<h2><img src="assets/readme/contributing.png" height="44" alt="Contributing"></h2>
 
 Issues and PRs welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md). The whole loop is tested without a
 subscription, using a fake `claude` that speaks the stream-json protocol:
@@ -427,7 +437,8 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[test]" && .venv/bin/pytest
 
 Security issues: see [SECURITY.md](SECURITY.md).
 
-## License
+<a name="license"></a>
+<h2><img src="assets/readme/license.png" height="44" alt="License"></h2>
 
 [MIT](LICENSE). clodfarm is an independent open-source project, not affiliated with or endorsed by Anthropic.
 "Claude" and "Claude Code" are trademarks of Anthropic, PBC.

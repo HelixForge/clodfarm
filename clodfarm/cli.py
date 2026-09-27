@@ -611,9 +611,80 @@ def cmd_events(cfg, a):
     return 0
 
 
+def _farm_url() -> str:
+    return (os.environ.get("FARM_PUBLIC_URL") or f"http://localhost:{os.environ.get('FARM_UI_PORT', '8080')}"
+            + ("/" + os.environ.get("FARM_UI_BASE", "").strip("/") if os.environ.get("FARM_UI_BASE", "").strip("/") else "")).rstrip("/")
+
+
+def cmd_dashboard(cfg, a):
+    from . import dashboards as dash
+    from .gitops import git
+    from .schedule import parse_every
+    store, by = _store(cfg), os.environ.get("FARM_TASK_ID") or cfg.name
+    owner = os.environ.get("FARM_OWNER") or cfg.name
+    try:
+        if a.sub == "list":
+            rows = [dash.summary(store, d, 7) for d in dash.all_(store)]
+            _out(rows, a.json, "\n".join(
+                f"  {r['slug']:<24} {r['title'][:40]:<40} {_ago(r['updated']):>6} ago  by {r['owner'] or '-'}"
+                + (f"  live every {r['every'] // 60}m" + ("" if r["ok"] is not False else " (last refresh FAILED)")
+                   if r["live"] else "") for r in rows) or "(no dashboards yet: `clodfarm dashboard push <name> --file spec.json`)")
+            return 0
+        if a.sub == "show":
+            d = dash.get(store, a.name)
+            if not d:
+                print(f"no dashboard {a.name}", file=sys.stderr)
+                return 1
+            v = dash.view(store, d, 30)
+            _out(v, a.json, json.dumps({k: v[k] for k in ("title", "description", "widgets", "refresh")}, indent=1)
+                 + f"\n\n{_farm_url()}/dashboards/{d['slug']}")
+            return 0
+        if a.sub == "push":
+            if a.run:  # a live dashboard: run its code now (so errors show here), then the farm runs it on schedule
+                every = parse_every(a.every or "1h")
+                if every < dash.MIN_EVERY:
+                    raise ValueError(f"refresh at most every {dash.MIN_EVERY // 60} minutes")
+                cwd = git(os.getcwd(), "rev-parse", "--show-toplevel", check=False).strip() or os.getcwd()
+                d = dash.push(store, a.name, dash.run_refresh(a.run, cwd, a.name), by=by, owner=owner)
+                d = dash.set_refresh(store, a.name, a.run, every, by=by)
+            elif a.no_refresh and not a.file:
+                d = dash.set_refresh(store, a.name, None, by=by)
+            else:
+                d = dash.push(store, a.name, open(a.file).read() if a.file not in (None, "-") else sys.stdin.read(),
+                              by=by, owner=owner)
+                if a.no_refresh:
+                    d = dash.set_refresh(store, a.name, None, by=by)
+            live = d.get("refresh")
+            _out(d, a.json, f"dashboard {d['slug']}: {len(d['widgets'])} widget(s)"
+                 + (f", refreshed every {live['every'] // 60}m by `{live['cmd']}` (run in the repo on main)" if live else "")
+                 + f"\n{_farm_url()}/dashboards/{d['slug']}")
+            return 0
+        if a.sub == "metric":
+            d = dash.set_metric(store, a.name, a.key, dash._num(a.value, a.key, True), a.label, a.unit, a.good, by=by,
+                                owner=owner)
+            _out(d, a.json, f"{d['slug']}/{a.key} = {a.value}{a.unit or ''}  {_farm_url()}/dashboards/{d['slug']}")
+            return 0
+        if a.sub == "refresh":
+            d = dash.get(store, a.name)
+            if not d or not d.get("refresh"):
+                print(f"{a.name} is not a live dashboard (push it with --run)", file=sys.stderr)
+                return 1
+            cwd = git(os.getcwd(), "rev-parse", "--show-toplevel", check=False).strip() or os.getcwd()
+            r = dash.refresh(store, d, cwd)
+            print("refreshed" if r["ok"] else f"refresh failed: {r['error']}")
+            return 0 if r["ok"] else 1
+        if a.sub == "remove":
+            ok = dash.remove(store, a.name, by=by)
+            print("removed" if ok else "no such dashboard")
+            return 0 if ok else 1
+    except (ValueError, OSError) as e:  # SpecError is a ValueError
+        print(f"dashboard: {e}", file=sys.stderr)
+        return 2
+    return 1
+
+
 def cmd_connect(cfg, a):
-    url = (a.url or os.environ.get("FARM_PUBLIC_URL") or f"http://localhost:{os.environ.get('FARM_UI_PORT', '8080')}"
-           + ("/" + os.environ.get("FARM_UI_BASE", "").strip("/") if os.environ.get("FARM_UI_BASE", "").strip("/") else "")).rstrip("/")
+    url = (a.url or _farm_url()).rstrip("/")
     print("On your computer, add the farm to Claude Code (once):\n\n"
           f"  claude mcp add --transport http --scope user {cfg.farm} {url}/mcp\n\n"
           "Then run /mcp in Claude Code, pick it and sign in: the farm asks for its UI password and a name for\n"
@@ -786,6 +857,33 @@ def main(argv=None):
     scs.add_parser("list")
     scs.add_parser("remove").add_argument("id")
     for q in scs.choices.values():
+        q.add_argument("--json", action="store_true")
+    db = add("dashboard", cmd_dashboard, "dashboards the Claudes keep: pages at /dashboards/<name> that show improvements")
+    dbs = db.add_subparsers(dest="sub", required=True)
+    dbs.add_parser("list", help="every dashboard")
+    dbs.add_parser("show", help="one dashboard's spec and link").add_argument("name")
+    dp = dbs.add_parser("push", help="create or replace a dashboard from a JSON spec (see `clodfarm dashboard push -h`)",
+                        description="Create or replace a dashboard. The spec is JSON: {title, description, widgets: [...]}; "
+                        "widget types: stat {key,label,value,unit,good:up|down,target}, chart {label,unit,from:[stat keys]} "
+                        "or {label,unit,series:[{name,points:[[time,value]]}]}, bars {label,unit,items:[{label,value,href}]}, "
+                        "table {label,columns,rows}, progress {label,value,max}, text {label,text (**bold**, `code`, "
+                        "[links](https://..), - lists)}. Every push records each stat's value, so the page shows its trend.")
+    dp.add_argument("name", help="lowercase-and-dashes; the page is /dashboards/<name>")
+    dp.add_argument("--file", help="the JSON spec ('-' or nothing: stdin)")
+    dp.add_argument("--run", help="make it live: a command, run in the repo, that prints the JSON spec (e.g. "
+                    "'python3 dashboards/tests.py'); commit that code so the farm can run it")
+    dp.add_argument("--every", help="with --run: how often the farm runs it (default 1h, at least 5m)")
+    dp.add_argument("--no-refresh", action="store_true", help="stop refreshing a live dashboard")
+    dm = dbs.add_parser("metric", help="set one stat (adds the dashboard and the stat when new)")
+    dm.add_argument("name")
+    dm.add_argument("key")
+    dm.add_argument("value")
+    dm.add_argument("--label")
+    dm.add_argument("--unit")
+    dm.add_argument("--good", choices=["up", "down"], help="which way is better (colors the change)")
+    dbs.add_parser("refresh", help="run a live dashboard's command now").add_argument("name")
+    dbs.add_parser("remove", help="delete a dashboard and its history").add_argument("name")
+    for q in dbs.choices.values():
         q.add_argument("--json", action="store_true")
     add("slack", cmd_slack, "give the farm work from Slack: status, or how to connect it")
     e = add("events", cmd_events, "the event log")

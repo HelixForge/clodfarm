@@ -31,6 +31,7 @@ class RunResult:
     rate_limited: bool = False
     timed_out: bool = False
     error_text: str = ""  # the result text when Claude Code reported an error
+    init: dict = field(default_factory=dict)  # Claude Code's init event: its tools, MCP servers, skills, plugins
 
 
 def session_name(cfg, what: str = "") -> str:
@@ -158,6 +159,7 @@ def run_agent(cmd: list[str], prompt: str, cwd: str, env: dict, timeout: int,
         typ = ev.get("type")
         if typ == "system" and ev.get("subtype") == "init":
             res.session_id = ev.get("session_id")
+            res.init = ev
         elif typ == "rate_limit_event":
             snap = Snapshot.from_event(ev.get("rate_limit_info") or {}, time.time())
             res.snapshots.append(snap)

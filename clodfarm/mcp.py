@@ -294,6 +294,14 @@ TOOLS = [
      "tz), every (30m, 2h, 1d, 1w) or at (2026-10-01T09:00 in tz, or 'in 3h').",
      _schema({"title": S, "prompt": S, "cron": S, "every": S, "at": S, "tz": S, "on": S}, ["title", "prompt"])),
     ("farm_schedule_remove", "farm:work", "Remove a schedule.", _schema({"id": S}, ["id"])),
+    ("farm_dashboards", "farm:read", "The farm's dashboards (pages at /dashboards/<name> that show improvements). "
+     "With dashboard (its name): its widgets and the history of its stats.", _schema({"dashboard": S})),
+    ("farm_dashboard_push", "farm:work", "Create or replace a dashboard at /dashboards/<dashboard>. spec is "
+     "{title, description, widgets: [...]}; widget types: stat {key,label,value,unit,good:'up'|'down',target}, "
+     "chart {label,unit,from:[stat keys]} (plots the stats' recorded history) or {label,unit,series:[{name,points:"
+     "[[iso time, value]]}]}, bars {label,unit,items:[{label,value}]}, table {label,columns,rows}, progress "
+     "{label,value,max}, text {label,text}. Every push records each stat's value, so the page shows how it moved.",
+     _schema({"dashboard": S, "spec": {"type": "object"}}, ["dashboard", "spec"])),
 ]
 READ_ONLY = {t[0] for t in TOOLS if t[1] == "farm:read"}
 
@@ -386,6 +394,21 @@ def run_tool(ui, grant: dict, name: str, args: dict):
         return {**sch, "when": describe(sch)}
     if name == "farm_schedule_remove":
         return {"removed": store.remove_schedule(s("id", 64))}
+    if name in ("farm_dashboards", "farm_dashboard_push"):
+        from . import dashboards
+        pub = os.environ.get("FARM_PUBLIC_URL", "").rstrip("/")
+        try:
+            if name == "farm_dashboard_push":
+                d = dashboards.push(store, s("dashboard", 48), args.get("spec"), by=me, owner=me)
+                return {"dashboard": d["slug"], "widgets": len(d["widgets"]), "url": f"{pub}/dashboards/{d['slug']}"}
+            if s("dashboard", 48):
+                d = dashboards.get(store, s("dashboard", 48))
+                if not d:
+                    raise ToolError("no such dashboard")
+                return dashboards.view(store, d)
+            return [dashboards.summary(store, d, 7) for d in dashboards.all_(store)]
+        except dashboards.SpecError as e:
+            raise ToolError(str(e)) from None
     raise ToolError(f"unknown tool {name}")
 
 

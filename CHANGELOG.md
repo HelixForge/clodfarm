@@ -1,7 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 (2026-09-27)
 
+Dashboards that show what is improving, each Claude's tools on its card, and an optional AWS role so the farm can
+build and run its own apps.
+
+- **Dashboards.** The Claudes build pages that show what is improving, at `/dashboards/<name>`, with a list at
+  `/dashboards` (the chart button on the farm, or D). A dashboard is a JSON spec of widgets (stats, charts, bar lists,
+  tables, progress, notes) that the farm draws in its own look; no agent-written code runs in the browser. Every push
+  records each stat's value (one point per hour, kept 400 days), so stats show their trend and change over 24h, 7d,
+  30d or 90d without the agent keeping any history. `clodfarm dashboard metric` logs one number; `push --run CMD
+  --every 1h` makes a dashboard live: the farm runs that code in the repo on schedule (claimed once across boxes) and
+  pushes what it prints. When a live dashboard breaks, the page says so and its Claude gets a message (`--wake`) to
+  fix it. MCP: `farm_dashboards` and `farm_dashboard_push`.
+- **Each Claude's tools.** Tap a Claude: its card lists what it can use, as Claude Code reported it on its last run:
+  model and version, MCP servers and whether they're connected (or need sign-in, or failed), built-in and MCP tools,
+  skills, plugins and sub-agent types.
+- **A smaller toolbar.** Slack is now just its logo, and "talk to your Claude" is a small button (or T) that opens a
+  window with the steps, example asks and the MCP command for Claude Code on your computer.
 - **Optional apps role: the farm can build and run its own apps on AWS.** `deploy/aws/deploy.sh apps-role --email
   you@example.com [--budget 50] [--domain apps.example.com] [--regions ...]` deploys `deploy/aws/apps-role.yaml`
   (in its own account with `APPS_PROFILE`), lets the farm box assume it and restarts the farm with `FARM_AWS_APPS_*`.
@@ -9,6 +25,9 @@
   permissions boundary on every role it creates, no IAM users, keys, email or domain purchases, and an AWS Budget that
   locks the role at 100%. `apps-down` removes it. The plain deployment is unchanged and still gives no AWS access.
 - The image is unchanged: with the apps role on, the farm installs the AWS CLI v2 into the farm user's home at startup.
+- **The README in the clod.farm theme**: the site's farm scene as the hero, farm-sign section headings, the four steps
+  as farm panels, a fresh screenshot of the new UI, and real icons (Slack, Claude and MCP marks, line icons) instead of
+  emoji. `scripts/render-readme.sh` regenerates the images.
 
 ## 0.6.0 (2026-09-27)
 

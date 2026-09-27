@@ -25,7 +25,18 @@ Click a Claude for its status, its usage (5-hour and 7-day, % used as on Claude'
 its sub-agents (and the ones it runs for others), and **TALK TO IT**: the link to its Remote Control session in the
 Claude app. That's where you give it work. Under **SESSIONS** are its conversations and sub-agent runs; open one to
 read the whole conversation (every session is recorded by the farm's Claude Code hook). Click a mini Claude for that sub-agent's job, where it runs and its own
-sub-agents. **+ NEW CLAUDE** (key `C`) adds a Claude login.
+sub-agents. Under **TOOLS** is what that Claude can use, as Claude Code reported it on its last run: model and
+version, its MCP servers (connected, needs sign-in or failed), built-in and MCP tools, skills, plugins and sub-agent
+types.
+
+The toolbar, bottom right:
+
+| Button | Key | What it does |
+|---|---|---|
+| Chat bubble | `T` | How to talk to your Claude: the steps in the Claude app, example asks, and the MCP command for Claude Code on your computer. With no Claude logged in yet, it says to log one in first. |
+| Slack logo | `S` | Give the farm work from Slack ([slack.md](slack.md)). Its dot is green when connected. |
+| Chart | `D` | The dashboards ([dashboards.md](dashboards.md)). |
+| **+ NEW CLAUDE** | `C` | Add a Claude login. |
 
 When you **release** a Claude, it leaves with everything it was running: its `clodfarm run` stops, its sub-agents go
 back to wait for another Claude with budget, and it no longer shows on the farm.

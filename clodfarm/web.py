@@ -30,7 +30,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import __version__
+from . import __version__, dashboards
 from . import mcp
 from .agents import AgentManager
 from .slack import SlackBridge
@@ -492,6 +492,12 @@ def make_handler(ui: FarmUI):
             self._headers(405, "application/json", {"Allow": "POST"}, 2)
             self.wfile.write(b"{}")
 
+        def _page(self, rel: str):
+            """An HTML page at a nested path: its asset links are written against the UI's base, not relative."""
+            data = open(os.path.join(UI_DIR, rel), "rb").read().replace(b"{{BASE}}", BASE.encode())
+            self._headers(200, "text/html; charset=utf-8", {"Cache-Control": "no-cache"}, len(data))
+            self.wfile.write(data)
+
         # ----------------------------------------------------------- GET
         def do_GET(self):
             if self.path.split("?", 1)[0] == "/healthz":  # the container health check, with or without a prefix
@@ -512,6 +518,8 @@ def make_handler(ui: FarmUI):
                     return self._static("index.html")
                 if path == "/healthz":
                     return self._json({"ok": True, "version": __version__})
+                if path in ("/dashboards", "/dashboards/") or re.fullmatch(r"/dashboards/[a-z0-9-]{1,48}", path):
+                    return self._page("dash.html")  # the list and each dashboard: one page, routed by dash.js
                 if not path.startswith("/api/"):
                     return self._static(path.lstrip("/"))
                 if path == "/api/me":
@@ -523,6 +531,20 @@ def make_handler(ui: FarmUI):
                     return self._json(ui.state())
                 if path == "/api/slack":
                     return self._json(ui.slack.view())
+                m = re.fullmatch(r"/api/agents/([a-z0-9@._-]+)/tools", path)
+                if m:  # what that Claude can use, as its last run saw it
+                    t = ui.store.tools().get(m.group(1))
+                    return self._json({k: v for k, v in t.items() if k not in ("PK", "SK", "ver")} if t else {"tools": None})
+                if path == "/api/dashboards":
+                    return self._json([dashboards.summary(ui.store, d) for d in dashboards.all_(ui.store)])
+                m = re.fullmatch(r"/api/dashboards/([a-z0-9-]{1,48})", path)
+                if m:
+                    d = dashboards.get(ui.store, m.group(1))
+                    if not d:
+                        return self._err(404, "no such dashboard")
+                    q = {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()}
+                    days = max(1, min(365, int(q.get("days") or 30))) if str(q.get("days") or "30").isdigit() else 30
+                    return self._json(dashboards.view(ui.store, d, days))
                 if path == "/api/sessions":  # every Claude session on the farm, newest first
                     q = {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()}
                     keep = ("id", "claude", "runs_on", "kind", "task", "title", "turns", "started", "last_at", "ended")

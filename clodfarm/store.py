@@ -7,6 +7,7 @@ Items (PK / SK):
 
     TASK#<id>          / META              a task (GSI1PK = STATUS#<status>, GSI1SK = priority, then age)
     TASK#<id>          / RUN#<ts>          one agent run of that task (usage, cost)
+    TOOLS              / <claude>          what that Claude can use (tools, MCP servers, skills), from its last run
     BUDGET             / <seat>            newest rate_limit snapshot of that Claude account (seat)
     SLOT               / <seat>#<n>        concurrency slot n of that seat (lease, shared by its boxes)
     SPEND              / <seat>#<day>      API-mode list-price spend per seat and day
@@ -538,6 +539,29 @@ class Store:
 
     # ---------------------------------------------------------------- budget
     # Everything budget-related is per seat (one Claude account): snapshots, slots, spend. The queue is shared.
+    # ----------------------------------------------------------------- tools
+    def put_tools(self, claude: str, init: dict, where: str = "task", keep_newer: float = 0):
+        """What a Claude can use, from Claude Code's init event: built-in and MCP tools, MCP servers and their
+        status, skills, plugins and sub-agent types. ``keep_newer``: leave a record younger than that many seconds
+        (the usage check runs outside the repo, so it doesn't see the repo's own MCP servers and skills)."""
+        if not init or not isinstance(init.get("tools"), list):
+            return
+        t = now()
+        rec = {"claude": claude, "at": t, "where": where, "model": init.get("model"),
+               "version": init.get("claude_code_version"), "permission_mode": init.get("permissionMode"),
+               "tools": [str(x)[:120] for x in init["tools"][:400]],
+               "mcp_servers": [{k: str(m.get(k) or "")[:120] for k in ("name", "status", "source")}
+                               for m in (init.get("mcp_servers") or [])[:60] if isinstance(m, dict)],
+               "skills": [str(x)[:120] for x in (init.get("skills") or [])[:200]],
+               "agents": [str(x)[:120] for x in (init.get("agents") or [])[:60]],
+               "plugins": [{k: str(p.get(k) or "")[:120] for k in ("name", "version")}  # never the paths
+                           for p in (init.get("plugins") or [])[:60] if isinstance(p, dict)]}
+        self._update("TOOLS", claude, lambda x: None if keep_newer and float(x.get("at", 0)) > t - keep_newer
+                     else dict(rec), create=True)
+
+    def tools(self) -> dict[str, dict]:
+        return {i["SK"]: i for i in self.b.query("TOOLS")}
+
     def put_snapshot(self, snap: Snapshot, seat: str = DEFAULT_SEAT):
         """Keep only the newest observation per seat (several workers report at once)."""
         new = {"seat": seat, **snap.to_dict()}

@@ -92,7 +92,11 @@ def main(argv):
          "resume": "--resume" in argv, "live": live})
     now = time.time()
     u5, u7 = float(os.environ.get("FAKE_UTIL_5H", "0.10")), float(os.environ.get("FAKE_UTIL_7D", "0.10"))
-    out({"type": "system", "subtype": "init", "session_id": session, "model": "claude-opus-5-5"})
+    out({"type": "system", "subtype": "init", "session_id": session, "model": "claude-opus-5-5",
+         "claude_code_version": "9.9.9", "permissionMode": "bypassPermissions",
+         "tools": ["Bash", "Edit", "Read", "mcp__github__create_pr"], "skills": ["dataviz"], "agents": ["Explore"],
+         "mcp_servers": [{"name": "github", "status": "connected", "source": "project"}],
+         "plugins": [{"name": "farm-kit", "version": "1.0.0", "path": "/secret/path"}]})
     rejected = "REJECT" in prompt
     out({"type": "rate_limit_event", "rate_limit_info": {
         "status": "rejected" if rejected else "allowed", "resetsAt": int(now + 3600), "rateLimitType": "five_hour",
