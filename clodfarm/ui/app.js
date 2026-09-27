@@ -168,7 +168,7 @@ const LAPTOP_ON = LAPTOP(true), LAPTOP_OFF = LAPTOP(false);
 
 // 10 x 10 icons for bubbles and buttons
 const ICONS = {
-  terminal: [["oooooooooo", "osssssssso", "osgsssssso", "ossgssssso", "osgssssso", "osssggggso", "osssssssso", "oooooooooo", "...oooo...", "..oooooo.."],
+  terminal: [["oooooooooo", "osssssssso", "osgsssssso", "ossgssssso", "osgsssssso", "osssggggso", "osssssssso", "oooooooooo", "...oooo...", "..oooooo.."],
     { o: "#1b1f2a", s: "#22303c", g: "#7cfc9a" }],
   zzz: [["......oooo", ".......oo.", "......oo..", "..oooooooo", "....oo....", "...oo.....", "..oooo....", "oooo......", "..oo......", ".oooo....."],
     { o: "#3c4a6b" }],
@@ -192,6 +192,8 @@ const ICONS = {
     { r: "#e0513c", l: "#f7a296" }],
   egg: [["...oooo...", "..occcco..", ".occsccco.", ".occcccco.", "occccccsco", "ocscccccco", "occcccccco", "oddcccccdo", ".oddcccdo.", "..oooooo.."],
     { o: "#6b5a3a", c: "#f6eed8", s: "#e2875f", d: "#d8c9a3" }],
+  chart: [["o.........", "o.......gg", "o.......gg", "o....bb.gg", "o....bb.gg", "o.rr.bb.gg", "o.rr.bb.gg", "o.rr.bb.gg", "o.rr.bb.gg", "oooooooooo"],
+    { o: "#3c4a6b", b: "#1c9fd6", g: "#3cc36b", r: "#d97757" }],
   quill: [["........oo", ".......owo", "......owwo", ".....owwo.", "....owwo..", "...owwo...", "..oowo....", "..ooo.....", ".ooo......", "oo........"],
     { o: "#3a2a1a", w: "#f6ecd0" }],
 };
@@ -772,8 +774,15 @@ const UI = {
     for (const img of $$("img[data-icon]")) img.src = icon(img.dataset.icon);
     Scene.init();
     this.bind();
-    try { const me = await api("api/me"); App.user = me.user; this.showFarm(); }
+    try { const me = await api("api/me"); App.user = me.user; if (!this.goNext()) this.showFarm(); }
     catch { this.showTitle(); }
+  },
+  /** Back to the dashboard page that sent you to log in (?next=dashboards/<name>); only farm-local paths. */
+  goNext() {
+    const next = new URLSearchParams(location.search).get("next") || "";
+    if (!/^dashboards(\/[a-z0-9-]{1,48})?$/.test(next)) return false;
+    location.replace(next);
+    return true;
   },
   showTitle() {
     clearInterval(App.polling); App.polling = null;
@@ -832,12 +841,11 @@ const UI = {
       h("span", { class: "chip" }, "SUB-AGENTS ", h("b", { text: String(busy) }), waiting ? [" · WAITING ", h("b", { text: String(waiting) })] : null),
     ];
     const me = st.agents.find(a => a.primary);
-    $("#talk-name").textContent = sessionName(st, me?.name || st.farm);
-    $("#talk-hint").href = me?.remote_control || "https://claude.ai/code";
-    $("#talk-hint").hidden = !st.agents.some(a => a.loggedIn); // first log a Claude in (the egg)
+    if ($("#dlg-claude").open) this.renderClaude(st);
     const sl = $("#slack-tool"), ss = st.slack?.state;
     if (ss && ss !== "off") sl.dataset.state = ss === "live" ? "live" : ss === "error" ? "error" : "wait"; else delete sl.dataset.state;
     sl.title = ss === "live" ? `On Slack (${st.slack.team || "connected"}): DM it or @mention it (S)` : "Give the farm work from Slack (S)";
+    sl.setAttribute("aria-label", ss === "live" ? "Slack: connected" : ss === "error" ? "Slack: error" : "Slack");
     if (st.paused) chips.push(h("span", { class: "chip warn" }, "⏸ PAUSED: " + (st.pause_reason || "").slice(0, 40).toUpperCase()));
     fill($("#chips"), ...chips);
   },
@@ -871,7 +879,7 @@ const UI = {
       e.preventDefault();
       const f = new FormData(e.target), err = $("#login-error"), btn = e.target.querySelector("button");
       err.textContent = ""; btn.disabled = true;
-      try { const r = await api("api/login", { password: f.get("password") }); App.user = r.user; e.target.reset(); this.showFarm(); }
+      try { const r = await api("api/login", { password: f.get("password") }); App.user = r.user; e.target.reset(); if (!this.goNext()) this.showFarm(); }
       catch (x) { err.textContent = x.message.toUpperCase(); }
       finally { btn.disabled = false; }
     });
@@ -890,13 +898,57 @@ const UI = {
     }
     addEventListener("keydown", (e) => {
       if ($("#hud").hidden || $$("dialog[open]").length || /INPUT|TEXTAREA/.test(document.activeElement?.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
-      const k = { c: "hatch", h: "hatch", n: "hatch", s: "slack" }[e.key.toLowerCase()];
+      const k = { c: "hatch", h: "hatch", n: "hatch", s: "slack", t: "talk", d: "dashboards" }[e.key.toLowerCase()];
       if (k) { e.preventDefault(); this.act(k); }
     });
   },
   act(a) {
     if (a === "hatch") return this.openHatch(null, true);
     if (a === "slack") return this.openSlack();
+    if (a === "talk") return this.openClaude();
+    if (a === "dashboards") location.href = "dashboards";
+  },
+
+  // ------------------------------------------------------ talk to your Claude
+  openClaude() {
+    $("#claude-body").dataset.key = "";
+    this.renderClaude(App.state);
+    const d = $("#dlg-claude");
+    d.showModal();
+    requestAnimationFrame(() => { d.scrollTop = 0; d.querySelector(".x").focus({ preventScroll: true }); }); // open at the top
+  },
+  renderClaude(st) {
+    if (!st) return;
+    const me = st.agents.find(a => a.primary) || st.agents.find(a => a.loggedIn), name = me?.name || st.farm;
+    const none = !st.agents.some(a => a.loggedIn);
+    const link = me?.remote_control, body = $("#claude-body"), key = JSON.stringify([name, link, none]);
+    if (body.dataset.key === key) return;
+    body.dataset.key = key;
+    const mcp = `claude mcp add --transport http --scope user ${st.farm} ${location.origin}${location.pathname.replace(/\/$/, "")}/mcp`;
+    const copy = h("button", { type: "button", class: "btn", text: "COPY", onclick: async (e) => {
+      try { await navigator.clipboard.writeText(mcp); e.target.textContent = "COPIED ✓"; } catch { e.target.textContent = "SELECT IT"; }
+      setTimeout(() => (e.target.textContent = "COPY"), 1500);
+    } });
+    fill(body,
+      none ? h("p", { class: "banner-note" }, h("strong", { text: "FIRST, LOG IN A CLAUDE. " }), "No Claude lives on this farm yet: tap ",
+        h("strong", { text: "+ NEW CLAUDE" }), " (or the egg) and log in with your Claude account. Then:") : null,
+      h("p", {}, "Your farm's own Claude, ", h("strong", { text: name.toUpperCase() }), ", is always on. Talk to it from the Claude app on your phone or computer."),
+      h("ol", { class: "hatch-steps" },
+        h("li", {}, "Open the ", h("strong", { text: "Claude app" }), " (or claude.ai)."),
+        h("li", {}, "Go to ", h("strong", { text: "Code" }), "."),
+        h("li", {}, "Pick the session ", h("strong", { class: "session-name", text: sessionName(st, name) }), link ? " (or use the button below)." : ".")),
+      h("h3", { class: "kicker", text: "ASK IT ANYTHING" }),
+      h("ul", { class: "examples" },
+        h("li", { text: "“Fix the flaky login test and tell me when it's on main.”" }),
+        h("li", { text: "“Split the migration into 3 sub-agents.”" }),
+        h("li", { text: "“Every weekday at 9, check the errors and keep a dashboard of them.”" })),
+      h("p", { class: "muted small", text: "It starts sub-agents (you see them here as mini Claudes), asks the other Claudes for help, schedules work and builds dashboards, and it watches its budget." }),
+      h("h3", { class: "kicker", text: "OR FROM CLAUDE CODE ON YOUR COMPUTER" }),
+      h("div", { class: "copy-row" }, h("code", { class: "pre", text: mcp }), copy),
+      h("p", { class: "muted small", text: "Then run /mcp in Claude Code and sign in with the farm password." }));
+    fill($("#claude-actions"), none
+      ? h("button", { class: "btn primary", type: "button", onclick: () => { $("#dlg-claude").close(); this.openHatch(null, true); } }, "+ NEW CLAUDE")
+      : h("a", { class: "btn primary", href: link || "https://claude.ai/code", target: "_blank", rel: "noopener noreferrer", text: "OPEN IN CLAUDE ↗" }));
   },
 
   // ----------------------------------------------------------------- dialogs
@@ -970,6 +1022,7 @@ const UI = {
         : "Measuring its usage…" }));
     if (mine.length) parts.push(h("h3", { text: `ITS SUB-AGENTS (${mine.length})` }), h("ul", { class: "subs" }, mine.map(t => h("li", {}, badge(t),
       h("span", { text: t.title + (t.on && t.on !== a.id ? ` · on ${t.on}` : "") })))));
+    if (a.loggedIn || a.remote) parts.push(h("h3", { text: "TOOLS" }), this.toolList(a.id));
     parts.push(h("h3", { text: "SESSIONS" }), this.sessionList(a.id));
     if (elsewhere.length) parts.push(h("h3", { text: `HELPING OTHERS (${elsewhere.length})` }), h("ul", { class: "subs" }, elsewhere.map(t => h("li", {}, badge(t),
       h("span", { text: `${t.title} · for ${t.owner}` })))));
@@ -986,6 +1039,50 @@ const UI = {
       acts.push(rel);
     }
     fill($("#sum-actions"), acts);
+  },
+
+  // ------------------------------------------------------------------- tools
+  /** What a Claude can use: its model, MCP servers (and whether they're connected), tools, skills and plugins, as
+   * Claude Code reported them when it last ran a sub-agent on the farm. */
+  toolList(claude) {
+    const box = h("div", { class: "tools" });
+    this.toolsOpen = this.toolsOpen || new Set();
+    const group = (id, title, items, render) => {
+      if (!items.length) return null;
+      const d = h("details", { class: "tool-group", open: this.toolsOpen.has(id) },
+        h("summary", {}, title, h("span", { class: "muted", text: ` (${items.length})` })), h("div", { class: "tool-chips" }, items.map(render)));
+      d.addEventListener("toggle", () => d.open ? this.toolsOpen.add(id) : this.toolsOpen.delete(id));
+      return d;
+    };
+    const chip = (text, cls = "") => h("span", { class: `tool-chip ${cls}`, text });
+    const draw = (t) => {
+      if (!t || !t.tools) return fill(box, h("p", { class: "muted small", text: "Shown after its first sub-agent or usage check runs." }));
+      const slug = n => "mcp__" + n.replace(/[^A-Za-z0-9_-]/g, "_") + "__";
+      const mcpTools = t.tools.filter(x => x.startsWith("mcp__")), builtIn = t.tools.filter(x => !x.startsWith("mcp__"));
+      const STATUS = { connected: ["ok", "CONNECTED"], "needs-auth": ["wait", "NEEDS SIGN-IN"], pending: ["wait", "STARTING"], failed: ["bad", "FAILED"], disabled: ["off", "OFF"] };
+      fill(box,
+        h("p", { class: "small tool-meta", text: [t.model && `Model ${t.model}`, t.version && `Claude Code ${t.version}`, t.permission_mode && `permissions: ${t.permission_mode}`].filter(Boolean).join(" · ") }),
+        t.mcp_servers.length ? h("ul", { class: "mcp-list" }, t.mcp_servers.map(m => {
+          const [cls, label] = STATUS[m.status] || ["off", String(m.status || "?").toUpperCase()], n = mcpTools.filter(x => x.startsWith(slug(m.name))).length;
+          return h("li", {}, h("i", { class: `mcp-dot ${cls}`, "aria-hidden": "true" }), h("span", { class: "mcp-name", text: m.name }),
+            h("span", { class: "muted", text: n ? ` · ${n} tool${n === 1 ? "" : "s"}` : "" }), h("span", { class: `mcp-status ${cls}`, text: label }));
+        })) : h("p", { class: "muted small", text: "No MCP servers." }),
+        group("builtin", "BUILT-IN TOOLS", builtIn, x => chip(x)),
+        group("mcp", "MCP TOOLS", mcpTools, x => { // "mcp__claude_ai_Gmail__search" -> "claude.ai Gmail › search"
+          const m = t.mcp_servers.find(m => x.startsWith(slug(m.name)));
+          return chip(m ? `${m.name} › ${x.slice(slug(m.name).length)}` : x.replace(/^mcp__/, "").replace("__", " › "), "mcp");
+        }),
+        group("skills", "SKILLS", t.skills, x => chip(x)),
+        group("plugins", "PLUGINS", t.plugins, p => chip(p.version ? `${p.name} ${p.version}` : p.name)),
+        group("agents", "SUB-AGENT TYPES", t.agents, x => chip(x)),
+        h("p", { class: "muted small", text: `As its ${t.where === "usage check" ? "hourly usage check" : "last sub-agent"} saw it, ${ago(t.at)}.` }));
+    };
+    const hit = this.toolCache?.[claude];
+    if (hit) draw(hit.t);
+    if (!hit || Date.now() - hit.at > 30000) api(`api/agents/${encodeURIComponent(claude)}/tools`).then(t => {
+      this.toolCache = { ...(this.toolCache || {}), [claude]: { at: Date.now(), t } }; draw(t);
+    }).catch(() => {});
+    return box;
   },
 
   // ---------------------------------------------------------------- sessions

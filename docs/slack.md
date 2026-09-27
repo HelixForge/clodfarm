@@ -23,7 +23,7 @@ and it lands on `main` only when `FARM_VERIFY_CMD` passes.
 
 ## Connect it (about two minutes, once)
 
-Open the farm UI and click **SLACK** (key `S`):
+Open the farm UI and click the **Slack** button, the one with the Slack logo (key `S`):
 
 1. **CREATE THE SLACK APP.** On the Slack page, click Create an App → From a manifest → Continue. The manifest is
    already filled in (name, bot, scopes, events, Socket Mode): Next → Create, picking your workspace if it asks.

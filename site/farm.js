@@ -168,7 +168,7 @@ const LAPTOP_ON = LAPTOP(true), LAPTOP_OFF = LAPTOP(false);
 
 // 10 x 10 icons for bubbles and buttons
 const ICONS = {
-  terminal: [["oooooooooo", "osssssssso", "osgsssssso", "ossgssssso", "osgssssso", "osssggggso", "osssssssso", "oooooooooo", "...oooo...", "..oooooo.."],
+  terminal: [["oooooooooo", "osssssssso", "osgsssssso", "ossgssssso", "osgsssssso", "osssggggso", "osssssssso", "oooooooooo", "...oooo...", "..oooooo.."],
     { o: "#1b1f2a", s: "#22303c", g: "#7cfc9a" }],
   zzz: [["......oooo", ".......oo.", "......oo..", "..oooooooo", "....oo....", "...oo.....", "..oooo....", "oooo......", "..oo......", ".oooo....."],
     { o: "#3c4a6b" }],

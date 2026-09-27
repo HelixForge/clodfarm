@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **Dashboards.** The Claudes build pages that show what is improving, at `/dashboards/<name>`, with a list at
+  `/dashboards` (the chart button on the farm, or D). A dashboard is a JSON spec of widgets (stats, charts, bar lists,
+  tables, progress, notes) that the farm draws in its own look; no agent-written code runs in the browser. Every push
+  records each stat's value (one point per hour, kept 400 days), so stats show their trend and change over 24h, 7d,
+  30d or 90d without the agent keeping any history. `clodfarm dashboard metric` logs one number; `push --run CMD
+  --every 1h` makes a dashboard live: the farm runs that code in the repo on schedule (claimed once across boxes) and
+  pushes what it prints. When a live dashboard breaks, the page says so and its Claude gets a message (`--wake`) to
+  fix it. MCP: `farm_dashboards` and `farm_dashboard_push`.
+- **Each Claude's tools.** Tap a Claude: its card lists what it can use, as Claude Code reported it on its last run:
+  model and version, MCP servers and whether they're connected (or need sign-in, or failed), built-in and MCP tools,
+  skills, plugins and sub-agent types.
+- **A smaller toolbar.** Slack is now just its logo, and "talk to your Claude" is a small button (or T) that opens a
+  window with the steps, example asks and the MCP command for Claude Code on your computer.
+
 ## 0.6.0 (2026-09-27)
 
 Messages between the Claudes arrive in seconds instead of at the person's next prompt.

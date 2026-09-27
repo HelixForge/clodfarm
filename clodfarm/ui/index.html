@@ -37,11 +37,9 @@
 
 
   <div class="toolbar" role="toolbar" aria-label="Farm actions">
-    <a class="talk-hint" id="talk-hint" href="https://claude.ai/code" target="_blank" rel="noopener noreferrer" title="Talk to your Claude in the Claude app">
-      <b>TALK TO YOUR CLAUDE</b>
-      <span>Open the <strong>Claude app</strong> → <strong>Code</strong> → <strong id="talk-name">clodfarm</strong> and ask it anything. It starts sub-agents (you see them here), asks the other Claudes for help and schedules work.</span>
-    </a>
-    <button type="button" class="tool wide-tool slack-tool" data-act="slack" id="slack-tool" title="Give the farm work from Slack (S)"><img alt="" data-icon="chat"><span>SLACK</span></button>
+    <button type="button" class="tool mini" data-act="talk" id="talk-tool" title="Talk to your Claude (T)" aria-label="Talk to your Claude"><img alt="" data-icon="chat"></button>
+    <button type="button" class="tool mini slack-tool" data-act="slack" id="slack-tool" title="Give the farm work from Slack (S)" aria-label="Slack"><img alt="" src="slack.svg"></button>
+    <a class="tool mini" href="dashboards" id="dash-tool" title="Dashboards (D)" aria-label="Dashboards"><img alt="" data-icon="chart"></a>
     <button type="button" class="tool wide-tool" data-act="hatch" title="Add a new Claude (C)"><img alt="" data-icon="egg"><span>+ NEW CLAUDE</span></button>
   </div>
 
@@ -76,6 +74,13 @@
   <h2 id="hatch-h">NEW CLAUDE</h2>
   <div id="hatch-body"></div>
   <button class="x" type="button" data-close aria-label="Close">✕</button>
+</dialog>
+
+<dialog id="dlg-claude" class="panel dlg" aria-labelledby="claude-h">
+  <h2 id="claude-h">TALK TO YOUR CLAUDE</h2>
+  <div id="claude-body"></div>
+  <div class="dlg-actions" id="claude-actions"></div>
+  <button class="x" type="button" data-close aria-label="Close" autofocus>✕</button>
 </dialog>
 
 <dialog id="dlg-slack" class="panel dlg" aria-labelledby="slack-h">

@@ -8,6 +8,7 @@
 | [agents.md](agents.md) | What every Claude is told: budget, sub-agents, messages, schedules; the limits that keep a swarm sane |
 | [auth.md](auth.md) | The four ways to log in, and their caveats |
 | [ui.md](ui.md) | The farm UI: what you see, hatching agents, the password |
+| [dashboards.md](dashboards.md) | Dashboards the Claudes keep: the spec, stat history and trends, live dashboards |
 | [slack.md](slack.md) | Give the farm work from Slack: connecting it, how it works, who can use it |
 | [deploy-aws.md](deploy-aws.md) | The CloudFormation stack, costs, private repos, updating |
 | [mcp.md](mcp.md) | Connect Claude Code on your computer (remote MCP, OAuth) |

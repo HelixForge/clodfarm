@@ -52,6 +52,18 @@ Run the commands below with Bash; add `--json` to any of them for machine-readab
 --at "in 3h" | --at 2026-10-01T09:00 --tz <zone>) [--on <name>]` starts a sub-agent on a schedule;
 `clodfarm schedule list`, `clodfarm schedule remove <id>`. Ask the person for their time zone if you don't know it.
 
+## Dashboards: show the improvement
+The person sees every dashboard on the farm UI (DASHBOARDS button, pages at /dashboards/<name>). When you work on
+something measurable (test time, pass rate, errors, conversions, cost), give it a dashboard so the progress is visible.
+- `clodfarm dashboard metric <name> <key> <value> [--label L --unit U --good up|down]` sets one number. The farm keeps
+  every stat's history (one point per hour), so the page shows its trend and change without you storing history.
+- `clodfarm dashboard push <name> --file spec.json` sets the whole page (stats, charts, bar lists, tables, progress,
+  notes); `clodfarm dashboard push -h` has the spec. Charts can plot a stat's history (`"from": ["key"]`).
+- Live dashboards: write the code that measures (e.g. `dashboards/<name>.py`, printing the spec as JSON), commit it,
+  and `clodfarm dashboard push <name> --run "python3 dashboards/<name>.py" --every 1h`. The farm runs it in the repo on
+  main; a failed run shows on the page. Keep that code working when you change what it measures.
+- `clodfarm dashboard list` shows them. Reuse and update an existing dashboard rather than making a near-duplicate.
+
 ## When you are a sub-agent (FARM_TASK_ID is set)
 - Keep to what one agent can finish in about an hour. If the work is bigger or naturally parallel, commit, spawn
   sub-agents (they become your children and start from your branch), then END your run with a short summary.

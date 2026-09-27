@@ -25,7 +25,7 @@ import sys
 import threading
 import time
 
-from . import gitops, notify, prompts
+from . import dashboards, gitops, notify, prompts
 from .auth import (accept_remote_control, auth_status, banner, claude_name, install_guide, install_hooks,
                    install_messaging, install_model, seat_id, trust_directory)
 from .config import primary_name_file
@@ -100,6 +100,10 @@ class Farm:
                 self.store.reap_expired()
                 for t in self.store.fire_due(self.cfg.max_depth, self.cfg.max_attempts):
                     print(f"schedule: queued {t['id']} {t['title'][:80]}", flush=True)
+                for d in dashboards.claim_due(self.store):  # live dashboards: run their code, off this loop
+                    cwd = self.cfg.repo_dir if gitops.is_repo(self.cfg.repo_dir) else self.cfg.workspace
+                    threading.Thread(target=dashboards.refresh, args=(self.store, d, cwd), name=f"dash-{d['slug']}",
+                                     daemon=True).start()
                 for tid in self.store.dispatch_wakes(self.cfg.mail_max_hops, self.cfg.mail_wakes_per_hour):
                     print(f"mail: {tid} started for an unread --wake message", flush=True)
                 if now() - last_status > 600:
@@ -316,6 +320,7 @@ class Farm:
         finally:
             self.procs.pop("usage", None)
         self.store.add_spend(res.cost_usd, self.seat)
+        self.store.put_tools(self.cfg.name, res.init, where="usage check", keep_newer=86400)
         if not res.snapshots:
             return False
         sn = res.snapshots[-1]
@@ -498,6 +503,7 @@ class Farm:
 
         after = res.snapshots[-1] if res.snapshots else None
         store.add_spend(res.cost_usd, self.seat)
+        store.put_tools(cfg.name, res.init)  # what this Claude can use, as its last sub-agent saw it
         store.add_run(tid, {
             "worker": holder, "started": started, "duration_s": round(res.duration_s, 1), "ok": res.ok,
             "cost_usd_list_price": res.cost_usd, "turns": res.num_turns, "terminal_reason": res.terminal_reason,
