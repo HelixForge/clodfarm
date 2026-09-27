@@ -6,12 +6,14 @@ LABEL org.opencontainers.image.title="clodfarm" \
       org.opencontainers.image.source="https://github.com/matank001/clodfarm" \
       org.opencontainers.image.licenses="MIT"
 
-ARG CLAUDE_VERSION=stable
+# the newest Claude Code (the "latest" channel, ahead of "stable"); the farm keeps it current (FARM_CLAUDE_UPDATE)
+ARG CLAUDE_VERSION=latest
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     PATH=/home/farm/.local/bin:/opt/clodfarm/bin:$PATH \
     CLAUDE_CONFIG_DIR=/home/farm/.claude \
     DISABLE_AUTOUPDATER=1 \
+    FARM_CLAUDE_UPDATE=3600 \
     FARM_WORKSPACE=/workspace \
     PYTHONUNBUFFERED=1
 

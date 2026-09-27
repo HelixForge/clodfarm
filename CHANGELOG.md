@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.4 (2026-09-27)
+
+- **Always the newest Claude Code.** The image ships the `latest` release instead of `stable`, and the farm updates
+  it every hour (`FARM_CLAUDE_UPDATE`, 0 = never), so new models such as Opus 5.5 reach every Claude the day they ship.
+  On `stable` (2.1.274), `opus` still meant Opus 5. Sub-agents run on a new version at once; each Claude's Remote
+  Control restarts on it once no one has talked to that Claude for 15 minutes.
+- **The sessions you open from the Claude app use `FARM_MODEL`** by default, like the farm's sub-agents: it is set
+  as each Claude's default model.
+
 ## 0.4.3 (2026-09-27)
 
 - The farm's own usage check is no longer recorded as a session, and `clodfarm sessions` hides the ones older

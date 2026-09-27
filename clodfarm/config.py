@@ -32,6 +32,7 @@ class Config:
     model: str
     permission_mode: str
     claude_bin: str
+    claude_update: int  # update Claude Code to the newest release every this many seconds (0 = never; image: 3600)
     task_timeout: int
     lease_seconds: int
     remote_control: bool
@@ -112,6 +113,7 @@ def load() -> Config:
         model=_env("FARM_MODEL", "opus"),
         permission_mode=_env("FARM_PERMISSION_MODE", "bypassPermissions"),
         claude_bin=_env("FARM_CLAUDE_BIN", "claude"),
+        claude_update=int(_env("FARM_CLAUDE_UPDATE", "0")),
         task_timeout=int(_env("FARM_TASK_TIMEOUT", "5400")),
         lease_seconds=int(_env("FARM_LEASE_SECONDS", "300")),
         remote_control=_bool("FARM_REMOTE_CONTROL", True),

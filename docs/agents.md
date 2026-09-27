@@ -34,7 +34,11 @@ The guide teaches them to:
 
 ## Customising
 
-- **Model:** `FARM_MODEL` applies to every agent.
+- **Model:** `FARM_MODEL` applies to every agent, and is each Claude's default model for the sessions you open
+  from the Claude app. An alias (`opus`) follows the newest model of that family.
+- **Claude Code version:** the image ships the newest release (the `latest` channel) and the farm updates it every
+  hour (`FARM_CLAUDE_UPDATE`, 0 = never). Sub-agents run on a new version at once; each Claude's Remote Control
+  restarts on it once no one has talked to that Claude for 15 minutes.
 - **Tools and MCP servers:** anything in the container's Claude Code config (`/home/farm/.claude/settings.json`,
   `claude mcp add ...` via `docker exec`) applies to all agents.
 - **Project rules:** a `CLAUDE.md` in your work repo is read by every agent, like in any Claude Code project.

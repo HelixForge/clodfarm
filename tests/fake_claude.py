@@ -12,6 +12,7 @@ Behaviour is driven by words in the prompt, so tests can script agents:
 FAKE_CHILD_SLOW=<s> makes SPAWNed sub-agents take s seconds (for watching them in the farm UI).
 Utilization reported in each rate_limit_event comes from FAKE_UTIL_5H / FAKE_UTIL_7D.
 Every invocation is appended to $FAKE_CLAUDE_LOG (JSON lines) for assertions.
+`--version` prints the version in $FAKE_CLAUDE_VERSION (a file) when set; `install` writes $FAKE_CLAUDE_INSTALLS into it.
 """
 import json
 import os
@@ -45,7 +46,14 @@ def main(argv):
         out(st)
         return 0
     if argv[:1] == ["--version"]:
-        print("9.9.9 (Fake Claude)")
+        vf = os.environ.get("FAKE_CLAUDE_VERSION")
+        print(f"{open(vf).read().strip() if vf else '9.9.9'} (Fake Claude)")
+        return 0
+    if argv[:1] == ["install"]:
+        log({"cmd": "install", "argv": argv})
+        if os.environ.get("FAKE_CLAUDE_VERSION") and os.environ.get("FAKE_CLAUDE_INSTALLS"):
+            with open(os.environ["FAKE_CLAUDE_VERSION"], "w") as f:
+                f.write(os.environ["FAKE_CLAUDE_INSTALLS"])
         return 0
     if argv[:1] == ["remote-control"]:
         log({"cmd": "remote-control", "argv": argv, "cwd": os.getcwd()})

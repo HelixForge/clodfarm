@@ -155,6 +155,22 @@ def install_hooks():
         _atomic_write(path, json.dumps(cfg, indent=2))
 
 
+def install_model(model: str):
+    """Make FARM_MODEL this Claude's default model, so the sessions you open from the Claude app (Remote Control) use
+    the same model as its sub-agents (which get `--model`). An alias such as `opus` follows the newest model of that
+    family that the installed Claude Code knows. Other settings are kept."""
+    path = os.path.join(claude_home(), "settings.json")
+    try:
+        cfg = json.load(open(path))
+    except (OSError, ValueError):
+        cfg = {}
+    if not model or cfg.get("model") == model:
+        return
+    cfg["model"] = model
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    _atomic_write(path, json.dumps(cfg, indent=2))
+
+
 def trust_directory(path: str):
     """Mark a folder as trusted and onboarding as done, so unattended sessions
     (Remote Control, headless workers) never stop at a first-run dialog."""

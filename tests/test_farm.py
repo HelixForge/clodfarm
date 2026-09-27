@@ -234,6 +234,57 @@ def test_remote_control_prompt_is_pre_answered(env):
         stop_farm(farm, t)
 
 
+def test_app_sessions_default_to_the_farm_model(env, monkeypatch):
+    monkeypatch.setenv("FARM_MODEL", "opus")
+    farm, t = start_farm()
+    try:
+        cfg = json.load(open(env / "claude-home" / "settings.json"))
+        assert cfg["model"] == "opus" and cfg["hooks"], "the model is added next to the hooks"
+    finally:
+        stop_farm(farm, t)
+
+
+def test_claude_code_is_kept_on_the_newest_release(env, monkeypatch):
+    version = env / "claude-version"
+    version.write_text("1.0.0")
+    monkeypatch.setenv("FAKE_CLAUDE_VERSION", str(version))
+    monkeypatch.setenv("FAKE_CLAUDE_INSTALLS", "2.0.0")
+    monkeypatch.setenv("FARM_CLAUDE_UPDATE", "3600")
+    monkeypatch.setenv("FARM_RC_VERSION_CHECK", "1")
+    monkeypatch.setenv("FARM_TICK_SECONDS", "1")
+    farm, t = start_farm()
+    rcs = lambda: [c for c in calls(env) if c["cmd"] == "remote-control"]  # noqa: E731
+    try:
+        wait_for(rcs)
+        assert [c["argv"] for c in calls(env) if c["cmd"] == "install"] == [["install", "latest"]]
+        assert [e["msg"] for e in farm.store.events(time.time() - 60) if e["type"] == "claude.updated"] == \
+            ["Claude Code 1.0.0 → 2.0.0"]
+        assert farm.rc_version == "2.0.0", "Remote Control starts on the updated version"
+        # a newer release lands while someone is talking to this Claude from the app: they are not cut off
+        farm.store.record_session("s1", claude="test", kind="conversation")
+        version.write_text("3.0.0")
+        time.sleep(4)
+        assert len(rcs()) == 1 and farm.rc_version == "2.0.0"
+        farm.store.record_session("s1", ended=True)
+        wait_for(lambda: len(rcs()) == 2)
+        wait_for(lambda: farm.rc_version == "3.0.0")
+        assert [e for e in farm.store.events(time.time() - 60) if e["type"] == "rc.updating"]
+        assert not [e for e in farm.store.events(time.time() - 60) if e["type"] == "rc.exited"]
+    finally:
+        stop_farm(farm, t)
+
+
+def test_added_claudes_leave_updating_to_the_farms_own(env, monkeypatch):
+    monkeypatch.setenv("FARM_CLAUDE_UPDATE", "3600")
+    monkeypatch.setenv("FARM_HATCHED", "1")
+    farm, t = start_farm()
+    try:
+        wait_for(lambda: [c for c in calls(env) if c["cmd"] == "remote-control"])
+        assert not [c for c in calls(env) if c["cmd"] == "install"]
+    finally:
+        stop_farm(farm, t)
+
+
 def test_stopping_a_box_hands_its_running_task_back_at_once(env):
     farm, t = start_farm()
     tid = json.loads(cli("spawn", "long", "--prompt", "SLOW 30 COMMIT long", "--json").stdout)["id"]

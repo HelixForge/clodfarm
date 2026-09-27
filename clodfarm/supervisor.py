@@ -7,6 +7,7 @@ Threads:
                            claude.ai/code; restarted if it exits
   * runner 0..N-1          take a budget slot, take the next sub-agent this account may run, run it headless
   * usage keeper           measures the account's real usage right after login and whenever no run has for a while
+  * updater                keeps Claude Code on its newest release (FARM_CLAUDE_UPDATE; the farm's own Claude only)
   * main loop              starts scheduled sub-agents, reaps dead leases, prints a status line
 """
 
@@ -22,8 +23,8 @@ import threading
 import time
 
 from . import gitops, notify, prompts
-from .auth import (accept_remote_control, auth_status, banner, claude_name, install_guide, install_hooks, seat_id,
-                   trust_directory)
+from .auth import (accept_remote_control, auth_status, banner, claude_name, install_guide, install_hooks, install_model,
+                   seat_id, trust_directory)
 from .config import primary_name_file
 from .config import Config, load
 from .governor import Snapshot, decide
@@ -32,6 +33,7 @@ from .store import Store, iso, now
 
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\]8;;[^\x07\x1b]*(?:\x07|\x1b\\)?")
+RC_IDLE = 900  # Remote Control is restarted on a new Claude Code only when no conversation was active for this long
 
 
 class Farm:
@@ -42,6 +44,8 @@ class Farm:
         self.stop = threading.Event()
         self.procs: dict[str, subprocess.Popen] = {}
         self.ui = None
+        self.rc_version = ""  # the Claude Code version Remote Control is running
+        self.rc_updating = False  # Remote Control was stopped to restart on a new version
 
     # ------------------------------------------------------------ lifecycle
     def run(self):
@@ -63,12 +67,16 @@ class Farm:
                 accept_remote_control()
             install_guide()
             install_hooks()
+            install_model(self.cfg.model)
             trust_directory(self.cfg.repo_dir)
             trust_directory(self.cfg.workspace)
         self.store.event("farm.started", f"{self.cfg.farm_id}: {self.cfg.policy.max_workers} workers, "
                          f"model {self.cfg.model}, remote control {'on' if self.cfg.remote_control else 'off'}, "
                          f"billing {'API key' if self.cfg.policy.api_mode else 'subscription'}")
         threads = []
+        if self.updates_claude():
+            self.update_claude()  # before Remote Control starts, so it starts on the newest version
+            threads.append(threading.Thread(target=self.update_loop, name="updater", daemon=True))
         if self.cfg.remote_control:
             threads.append(threading.Thread(target=self.remote_control_loop, name="remote-control", daemon=True))
         if self.cfg.usage_refresh > 0:
@@ -77,7 +85,7 @@ class Farm:
             threads.append(threading.Thread(target=self.worker_loop, args=(i,), name=f"w{i}", daemon=True))
         for t in threads:
             t.start()
-        last_status = 0.0
+        last_status = last_rc_check = 0.0
         while not self.stop.is_set():
             try:
                 self.store.reap_expired()
@@ -86,6 +94,9 @@ class Farm:
                 if now() - last_status > 600:
                     self.print_status()
                     last_status = now()
+                if now() - last_rc_check > int(os.environ.get("FARM_RC_VERSION_CHECK", "300")):
+                    self.restart_stale_rc()
+                    last_rc_check = now()
             except Exception as e:  # keep the farm alive through transient AWS errors
                 print(f"housekeeping error: {e}", flush=True)
             self.stop.wait(int(os.environ.get("FARM_TICK_SECONDS", "15")))  # schedules fire within a tick
@@ -181,6 +192,7 @@ class Farm:
                    "--remote-control-session-name-prefix", session_name(self.cfg), "--spawn", self.cfg.rc_spawn,
                    "--capacity", str(self.cfg.rc_capacity), "--permission-mode", self.cfg.permission_mode]
             t0 = now()
+            self.rc_version = self.claude_version()
             try:
                 p = subprocess.Popen(cmd, cwd=self.cfg.repo_dir, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                      stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=True)
@@ -205,10 +217,68 @@ class Farm:
             self.procs.pop("remote-control", None)
             if self.stop.is_set():
                 return
+            if self.rc_updating:  # stopped by restart_stale_rc: start again on the new version right away
+                self.rc_updating = False
+                continue
             ran = now() - t0
             backoff = 10 if ran > 300 else min(backoff * 2, 1800)
             self.store.event("rc.exited", f"code {p.returncode} after {ran:.0f}s; restarting in {backoff}s")
             self.stop.wait(backoff)
+
+    def restart_stale_rc(self):
+        """Remote Control keeps running the Claude Code it was started with. After an update, restart it on the new
+        version, but only when no one has talked to this Claude for RC_IDLE seconds, so no conversation is cut off."""
+        p = self.procs.get("remote-control")
+        if not p or p.poll() is not None or not self.rc_version:
+            return
+        cur = self.claude_version()
+        if not cur or cur == self.rc_version:
+            return
+        if any(s.get("kind") == "conversation" and not s.get("ended") and now() - float(s.get("last_at", 0)) < RC_IDLE
+               for s in self.store.sessions(self.cfg.name, 50)):
+            return
+        self.store.event("rc.updating", f"Remote Control '{self.cfg.name}': restarting on Claude Code {cur} "
+                         f"(was {self.rc_version})")
+        self.rc_updating = True
+        try:
+            os.killpg(p.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            self.rc_updating = False
+
+    # ------------------------------------------------------------ Claude Code
+    def claude_version(self) -> str:
+        try:
+            out = subprocess.run([self.cfg.claude_bin, "--version"], capture_output=True, text=True, timeout=30,
+                                 stdin=subprocess.DEVNULL).stdout.split()
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        return out[0] if out else ""
+
+    def updates_claude(self) -> bool:
+        """Only the farm's own Claude updates Claude Code: the Claudes added in the UI run the same binary."""
+        return self.cfg.claude_update > 0 and not os.environ.get("FARM_HATCHED")
+
+    def update_claude(self):
+        """Install the newest Claude Code release (the `latest` channel). The next sub-agent runs on it at once;
+        Remote Control moves to it once no one is talking to it (restart_stale_rc)."""
+        before = self.claude_version()
+        try:
+            p = subprocess.run([self.cfg.claude_bin, "install", "latest"], capture_output=True, text=True, timeout=600,
+                               stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            print(f"claude update: {e!r}", flush=True)
+            return
+        if p.returncode:
+            print(f"claude update failed (code {p.returncode}): {ANSI.sub('', p.stdout + p.stderr).strip()[-300:]}",
+                  flush=True)
+            return
+        after = self.claude_version()
+        if after and after != before:
+            self.store.event("claude.updated", f"Claude Code {before or '?'} → {after}")
+
+    def update_loop(self):
+        while not self.stop.wait(self.cfg.claude_update):
+            self.update_claude()
 
     # ----------------------------------------------------------------- usage
     def usage_loop(self):
