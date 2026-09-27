@@ -64,6 +64,7 @@ operations layer:
 | ⏰ **Schedules** | "Every weekday at 9, summarize the open PRs": `clodfarm schedule add ... --cron "0 9 * * 1-5" --tz Asia/Jerusalem`, or `--every 2h`, or `--at "in 3h"`. |
 | 🔔 **Tells you when it matters** | Notifications to ntfy, Slack or Discord for failures, a tripped circuit breaker and usage limits. |
 | 📈 **Usage in real time** | A new Claude's usage is measured the moment it logs in; every run reports it live, and an idle Claude is re-measured every 5 minutes (`FARM_USAGE_REFRESH`). |
+| 🔌 **Claude Code on your laptop, connected** | The farm is a remote MCP server: `claude mcp add --transport http farm <url>/mcp`, sign in once, and your local Claude sees the farm, hands it work and messages its Claudes. OAuth 2.1 + PKCE, no password in Claude Code. |
 | 🕹️ **A farm you can watch** | Open `http://localhost:8080`: one pixel Claude per account, its sub-agents around its plot, napping when its budget says so. Tap a Claude for its budget, its sub-agents and a link to talk to it in the Claude app; hatch new Claudes (each its own login) from the browser. |
 
 You talk to your Claude in the Claude app; the farm UI shows who is working on what; the Claudes and you use the
@@ -108,6 +109,20 @@ Either way the farm's state lives in a SQLite file inside the workspace volume, 
 > [!TIP]
 > Point it at a real repo with `FARM_REPO_URL` (plus a deploy key) and set `FARM_VERIFY_CMD="pytest -q"`. The farm
 > clones the repo, and every sub-agent's work lands on `main` only when your tests pass.
+
+## Connect Claude Code on your computer
+
+The farm is a remote MCP server, so the Claude Code on your laptop can see the farm, start sub-agents on it and
+message its Claudes:
+
+```bash
+claude mcp add --transport http --scope user farm http://localhost:8080/mcp   # or https://<your farm>/mcp
+```
+
+Run `/mcp` in Claude Code and sign in. The farm's own page asks for its password and a name for your computer, and
+Claude Code gets a token for this farm only (OAuth 2.1 + PKCE; `clodfarm disconnect` ends it). Then just ask:
+"what's the farm doing?", "have the farm add CSV export, on gil", "tell noa the release is out".
+See [docs/mcp.md](docs/mcp.md).
 
 ## Deploy
 
@@ -268,6 +283,7 @@ Details and caveats: [docs/auth.md](docs/auth.md).
 | `clodfarm sessions` · `session ID` | every Claude session on the farm, and its whole conversation |
 | `clodfarm schedule add TITLE (--cron ... [--tz ...] \| --every 2h \| --at ...)` / `list` / `remove ID` | scheduled tasks |
 | `clodfarm events [-f]` | the event log: sub-agents, merges, checks, messages, pauses, limits |
+| `clodfarm connect` · `connections` · `disconnect ID` | Claude Code on your computer, over MCP ([docs/mcp.md](docs/mcp.md)) |
 | `clodfarm pause [reason]` / `resume` | stop and restart new sub-agents on every box |
 | `clodfarm login / whoami / doctor` | login and a setup check |
 
@@ -294,6 +310,7 @@ Every command takes `--json`.
 | `FARM_REMOTE_CONTROL` | `1` | keep a Remote Control session up |
 | `FARM_PERMISSION_MODE` | `bypassPermissions` | the container is the sandbox ([security](docs/security.md)) |
 | `FARM_STORE` | `sqlite` | `dynamodb` to share one farm across boxes and accounts (setting `FARM_TABLE` implies it) |
+| `FARM_PUBLIC_URL` | *(from Host)* | the farm's public URL for MCP sign-in behind a proxy that rewrites Host, e.g. `https://clod.farm/team` |
 | `FARM_TABLE` / `FARM_SEAT` | `clodfarm` / from login | which DynamoDB farm to join / override the seat name |
 </details>
 
