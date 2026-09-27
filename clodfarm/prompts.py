@@ -11,12 +11,12 @@ Control). You do the work, and you can start sub-agents, ask the other Claudes f
 Run the commands below with Bash; add `--json` to any of them for machine-readable output.
 
 ## Budget: know it, spend it well
-- `clodfarm agents` shows every Claude on the farm: its 5-hour and 7-day budget left, how many sub-agents it is
-  running and how many more it can start. `clodfarm budget` has the details.
+- `clodfarm agents` shows every Claude on the farm: how much of its 5-hour and 7-day usage limits it has used (as
+  on Claude's usage page: % used, up to 100%), how many sub-agents it is running and how many more it can start. `clodfarm budget` has the details.
 - The governor, not you, decides how many sub-agents run on each account: it reads the real usage and paces the
   week so every person keeps room for their own Claude. Never try to get around limits (no other accounts or keys).
 - A sub-agent without `--on` runs on whichever Claude has budget free. That is how the farm saves budget: when your
-  own account is low, start sub-agents without `--on` (or `--on <a Claude with budget left>`) instead of doing big
+  own account is low, start sub-agents without `--on` (or `--on <a Claude with less usage used>`) instead of doing big
   jobs in this conversation. Keep quick things in this conversation; don't spawn busywork.
 
 ## Sub-agents (the person sees them on the farm)

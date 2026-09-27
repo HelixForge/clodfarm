@@ -662,6 +662,9 @@ const Scene = {
 // ============================================================== farm state sync
 const App = { state: null, seenAgents: null, seenEvents: 0, lastTitles: {}, polling: null, user: null };
 
+/** How a Claude's Remote Control session is named in the Claude app (runner.session_name). */
+const sessionName = (st, name) => `[clodfarm] ${name === st.farm ? name : st.farm + " · " + name}`;
+
 function colorFor(id) { return HAT_COLORS[hashStr(id) % HAT_COLORS.length]; }
 
 const SUB_SPOTS = [[4, -2], [22, -2], [4, 23], [22, 23], [13, -2], [13, 23], [33, 4], [33, 16]];
@@ -825,7 +828,7 @@ const UI = {
       h("span", { class: "chip" }, "SUB-AGENTS ", h("b", { text: String(busy) }), waiting ? [" · WAITING ", h("b", { text: String(waiting) })] : null),
     ];
     const me = st.agents.find(a => a.primary);
-    $("#talk-name").textContent = `[clodfarm] ${me?.name || st.farm}`;
+    $("#talk-name").textContent = sessionName(st, me?.name || st.farm);
     $("#talk-hint").href = me?.remote_control || "https://claude.ai/code";
     $("#talk-hint").hidden = !st.agents.some(a => a.loggedIn); // first log a Claude in (the egg)
     if (st.paused) chips.push(h("span", { class: "chip warn" }, "⏸ PAUSED: " + (st.pause_reason || "").slice(0, 40).toUpperCase()));
@@ -891,10 +894,11 @@ const UI = {
   // ----------------------------------------------------------------- dialogs
   hp(label, util, resets) {
     if (util == null) { const i = h("i"); i.style.width = "0"; return h("div", { class: "hp" }, h("span", { text: label }), h("div", { class: "bar" }, i), h("span", { class: "lbl", text: "NOT MEASURED YET" })); }
-    const left = clamp(1 - util, 0, 1), cls = left > 0.5 ? "" : left > 0.2 ? "mid" : "low";
-    const bar = h("i", { class: cls }); bar.style.width = `${Math.round(left * 100)}%`;
+    // like Claude's own usage page: how much of the limit is used, filling up to 100%, and when it resets
+    const used = clamp(util, 0, 1), cls = used < 0.5 ? "" : used < 0.8 ? "mid" : "low";
+    const bar = h("i", { class: cls }); bar.style.width = `${Math.round(used * 100)}%`;
     return h("div", { class: "hp", title: `${Math.round(util * 100)}% used` }, h("span", { text: label }), h("div", { class: "bar" }, bar),
-      h("span", { class: "lbl", text: `${Math.round(left * 100)}% LEFT${resets ? " · " + until(resets) : ""}` }));
+      h("span", { class: "lbl", text: `${Math.round(used * 100)}% USED${resets ? " · RESETS IN " + until(resets) : ""}` }));
   },
   spriteCanvas(c, size) {
     const cv = h("canvas", { width: 20, height: 20 }), g = cv.getContext("2d");
@@ -951,9 +955,9 @@ const UI = {
       a.stats ? [h("dt", { text: "RAN (7D)" }), h("dd", { text: `${a.stats.ran} sub-agents · ${a.stats.done} done · ${a.stats.failed} failed` })] : null)];
     if (a.loggedIn) parts.push(h("h3", { text: "TALK TO IT" }), a.remote_control
       ? [h("a", { class: "btn primary login-link", href: a.remote_control, target: "_blank", rel: "noopener noreferrer" }, "OPEN IN THE CLAUDE APP ↗"),
-        h("p", { class: "muted small", text: `Or open the Claude app, go to Code and pick “[clodfarm] ${a.name}”. It starts sub-agents, asks the other Claudes for help and schedules work, and it watches its budget.` })]
-      : h("p", { class: "muted small", text: a.remote ? "It lives on another box: talk to it from its own Claude app." : `Its Remote Control session is starting. It shows up in the Claude app under Code as “[clodfarm] ${a.name}”.` }));
-    parts.push(h("h3", { text: "BUDGET LEFT" }), this.hp("5H", b.five_hour, b.five_hour_resets), this.hp("7D", b.seven_day, b.seven_day_resets),
+        h("p", { class: "muted small", text: `Or open the Claude app, go to Code and pick “${sessionName(st, a.name)}”. It starts sub-agents, asks the other Claudes for help and schedules work, and it watches its budget.` })]
+      : h("p", { class: "muted small", text: a.remote ? "It lives on another box: talk to it from its own Claude app." : `Its Remote Control session is starting. It shows up in the Claude app under Code as “${sessionName(st, a.name)}”.` }));
+    parts.push(h("h3", { text: "USAGE" }), this.hp("5H", b.five_hour, b.five_hour_resets), this.hp("7D", b.seven_day, b.seven_day_resets),
       h("p", { class: "muted small", text: b.measured ? `Measured ${ago(b.measured)}. ` + (b.can_start ? `It can start ${b.can_start} more sub-agent${b.can_start === 1 ? "" : "s"} now.` : `No new sub-agents on its account now: ${b.reason}.`)
         : "Measuring its usage…" }));
     if (mine.length) parts.push(h("h3", { text: `ITS SUB-AGENTS (${mine.length})` }), h("ul", { class: "subs" }, mine.map(t => h("li", {}, badge(t),

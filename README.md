@@ -26,7 +26,7 @@ is a lump of soil, and this is where your agents grow.
 - **You talk to your Claude from the Claude app on your phone.** It does the work, or starts sub-agents for it.
 - **You see every sub-agent** on the farm: mini Claudes working at the plot of the Claude that started them.
 - **Claudes work together:** each one is a person's own account. They message each other and run sub-agents on
-  whichever account has budget left.
+  whichever account has room.
 - **Every account is paced on its real 5-hour and weekly usage**, measured the moment it joins and kept current.
 
 <p align="center">
@@ -56,7 +56,7 @@ operations layer:
 | 🌕 **Paced on real usage** | Every run reports the account's actual 5-hour and weekly utilization (`rate_limit_event`). The governor paces the week, leaves you 20% by default, sleeps through rejections, and never touches paid overage. |
 | 👥 **Many boxes, many seats** | Point containers on several accounts at one table: one farm, one repo, a separate budget per account. |
 | ✅ **Nothing lands untested** | `FARM_VERIFY_CMD` runs your tests on the rebased branch, and a failing check sends the agent back to fix it. |
-| 🤝 **Claudes that work together** | `clodfarm agents` shows every Claude and the budget it has left. A sub-agent without `--on` runs on whichever account has room, `--on gil` picks one, and `clodfarm msg gil "..."` lands in Gil's next turn. |
+| 🤝 **Claudes that work together** | `clodfarm agents` shows every Claude and how much of its usage it has used. A sub-agent without `--on` runs on whichever account has room, `--on gil` picks one, and `clodfarm msg gil "..."` lands in Gil's next turn. |
 | ⏰ **Schedules** | "Every weekday at 9, summarize the open PRs": `clodfarm schedule add ... --cron "0 9 * * 1-5" --tz Asia/Jerusalem`, or `--every 2h`, or `--at "in 3h"`. |
 | 🔔 **Tells you when it matters** | Notifications to ntfy, Slack or Discord for failures, a tripped circuit breaker and usage limits. |
 | 📈 **Usage in real time** | A new Claude's usage is measured the moment it logs in; every run reports it live, and an idle Claude is re-measured every 5 minutes (`FARM_USAGE_REFRESH`). |
@@ -195,7 +195,7 @@ The picture at the top, step by step:
    Code's own `rate_limit_event`s during every run, from a one-word probe the moment a Claude logs in, and again
    whenever it has been idle for `FARM_USAGE_REFRESH` seconds.
 4. **Claudes talk to each other:** `clodfarm msg gil "..."` shows up in Gil's next conversation turn (a Claude Code
-   hook), and `clodfarm agents` shows who has budget left, so a Claude that is running low sends work elsewhere.
+   hook), and `clodfarm agents` shows how much of its usage each Claude has used, so one that is running high sends work elsewhere.
 5. **When a sub-agent finishes,** its branch is rebased onto `main`, `FARM_VERIFY_CMD` runs, and `main` moves only
    if the check passes. Otherwise the sub-agent is resumed with the failure output.
 6. **Schedules** start sub-agents on a cron line (in your time zone), every N minutes or once at a time. Every box
@@ -256,7 +256,7 @@ Details and caveats: [docs/auth.md](docs/auth.md).
 | Command | |
 |---|---|
 | `clodfarm status` | the Claudes, their budget, the links to talk to them, the sub-agents at work |
-| `clodfarm agents` | every Claude on the farm and the budget it has left |
+| `clodfarm agents` | every Claude on the farm and its usage (% used, like Claude's usage page) |
 | `clodfarm budget [--refresh]` | every seat's usage and what the governor allows it now |
 | `clodfarm spawn TITLE --prompt ... [--on NAME]` | start a sub-agent (the Claudes use the same command) |
 | `clodfarm subagents [--all]` · `result ID [--wait]` · `cancel ID` · `retry ID` | follow and manage sub-agents |
@@ -275,6 +275,7 @@ Every command takes `--json`.
 | Variable | Default | |
 |---|---|---|
 | `FARM_MAX_WORKERS` | `3` | sub-agents one Claude may run at once (upper bound; the governor decides) |
+| `FARM_NAME` / `FARM_CLAUDE_NAME` | `clodfarm` / from the login | the farm's name / its own Claude's name (default: the login email before `@`) |
 | `FARM_USAGE_REFRESH` | `300` | re-measure an idle Claude's usage after this many seconds (0 = only from runs) |
 | `FARM_TZ` | `UTC` | default time zone for `clodfarm schedule` |
 | `FARM_MODEL` / `FARM_EFFORT` | `opus` / default | model and effort for every agent |

@@ -66,7 +66,7 @@ g.drawImage(fg, 0, 0);
 const OX = 300, at = (x, y) => ({ left: OX + x * S + "px", top: y * S + "px" });
 const el = (tag, cls, style, html) => { const e = document.createElement(tag); if (cls) e.className = cls; Object.assign(e.style, style); if (html != null) e.innerHTML = html; ov.append(e); return e; };
 const bubble = (name, x, y, text) => { const e = el("div", "bubble", at(x, y), `<img src="${icon(name)}" alt="">` + (text ? `<span>${text}</span>` : "")); return e; };
-const hp = (label, left) => `<div class="hp"><span>${label}</span><div class="bar"><i class="${left > .5 ? "" : left > .2 ? "mid" : "low"}" style="width:${left * 100}%"></i></div><span class="lbl">${Math.round(left * 100)}% LEFT</span></div>`;
+const hp = (label, used) => `<div class="hp"><span>${label}</span><div class="bar"><i class="${used < .5 ? "" : used < .8 ? "mid" : "low"}" style="width:${used * 100}%"></i></div><span class="lbl">${Math.round(used * 100)}% USED</span></div>`;
 const tag = (name, x, y) => el("div", "tagname", at(x, y + 3), name);
 tag("MATAN", matan.x, matan.y); tag("GIL", gil.x, gil.y); tag("NOA", noa.x, noa.y);
 bubble("terminal", matan.x, matan.y - 24, "3 SUB-AGENTS"); bubble("terminal", gil.x, gil.y - 24, "1 SUB-AGENT"); bubble("zzz", noa.x, noa.y - 22);
@@ -77,7 +77,7 @@ el("div", "col", {}, "<h3>YOU, ON<br>YOUR PHONE</h3>");
 const phone = el("div", "phone", { left: "25px", top: "250px" }, `<div class="scr">
   <div class="app">CLAUDE APP → CODE → [CLODFARM] MATAN</div>
   <div class="msg me">refactor the importer, and have gil's Claude take the batching part</div>
-  <div class="msg">On it: 3 sub-agents. Batching runs on gil's account, mine is at 65%.</div>
+  <div class="msg">On it: 3 sub-agents. Batching runs on gil's account; I've used 35% of my 5 hours.</div>
   <div class="msg me">every weekday at 9, triage new issues</div>
   <div class="msg">Scheduled (Asia/Jerusalem).</div></div>`);
 
@@ -86,10 +86,10 @@ const n1 = el("div", "note panel", { left: "330px", top: "440px", maxWidth: "300
 const n2 = el("div", "note panel", { left: (OX + p0.x * S - 20) + "px", top: "620px", maxWidth: "380px" },
   `<h4>2 · SUB-AGENTS YOU CAN SEE</h4><code>clodfarm spawn</code> starts one: a mini Claude in its own git worktree. No <code>--on</code>? It runs on whichever Claude has budget free: <b style="color:${colGil}">this one</b> runs on gil's.`);
 const n3 = el("div", "note panel", { left: "1560px", top: "560px", maxWidth: "380px" },
-  `<h4>3 · BUDGET, REAL TIME</h4>Every account is paced on its real 5-hour and 7-day usage: live from every run, measured on login and when idle. Noa is resting to keep room for her own Claude.
-   ${hp("5H", .65)}${hp("7D", .78)}`);
+  `<h4>3 · USAGE, REAL TIME</h4>Every account is paced on its real 5-hour and 7-day usage: live from every run, measured on login and when idle. Noa is resting to keep room for her own Claude.
+   ${hp("5H", .35)}${hp("7D", .22)}`);
 const n4 = el("div", "note panel", { left: "1150px", top: "150px", maxWidth: "340px" },
-  `<h4>4 · CLAUDES WORK TOGETHER</h4><code>clodfarm msg gil "…"</code> lands in gil's next turn. <code>clodfarm agents</code> shows who has budget left.`);
+  `<h4>4 · CLAUDES WORK TOGETHER</h4><code>clodfarm msg gil "…"</code> lands in gil's next turn. <code>clodfarm agents</code> shows how much usage each has used.`);
 const n5 = el("div", "note panel", { left: "330px", top: "690px", maxWidth: "420px" },
   `<h4>5 · THE BARN AND THE BOARD</h4>One store (SQLite, or DynamoDB across boxes) and one git repo. Sub-agents land on main when your tests pass. The board runs schedules: <code>--cron</code>, <code>--every</code>, <code>--at</code>.`);
 

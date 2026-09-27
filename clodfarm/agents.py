@@ -219,7 +219,9 @@ class AgentManager:
         if not agent.get("primary"):  # its own login only, never the container's token or key
             for k in _CRED_ENV:
                 env.pop(k, None)
-            env.update(FARM_NAME=agent["id"], FARM_UI="0", FARM_CONTAINER_NAME=os.environ.get("FARM_CONTAINER_NAME", "clodfarm"))
+            env.pop("FARM_CLAUDE_NAME", None)  # that's the farm's own Claude, not this one
+            env.update(FARM_NAME=agent["id"], FARM_HATCHED="1", FARM_FARM=self.cfg.farm, FARM_UI="0",
+                       FARM_CONTAINER_NAME=os.environ.get("FARM_CONTAINER_NAME", "clodfarm"))
         return env
 
     def spawn(self, agent: dict):

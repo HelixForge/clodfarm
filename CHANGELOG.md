@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.2 (2026-09-26)
+
+- **Usage reads like Claude's own usage page:** "35% used", a bar that fills up to 100% (green, then amber, then red),
+  and when it resets. Everywhere: the Claude card, `clodfarm agents`, the guide and the docs.
+- **The farm's own Claude is named after its account,** not after the farm: on the farm `jestr`, the Claude logged in
+  as matan@… is `matan` (set `FARM_CLAUDE_NAME` to choose). Its Remote Control session is `[clodfarm] jestr · matan`.
+  Added Claudes keep the name you give them.
+
 ## 0.4.1 (2026-09-26)
 
 - **Every Claude session and its whole conversation are in the farm's store.** A Claude Code hook (`clodfarm hook`,

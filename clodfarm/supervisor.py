@@ -22,7 +22,9 @@ import threading
 import time
 
 from . import gitops, notify, prompts
-from .auth import accept_remote_control, auth_status, banner, install_guide, install_hooks, seat_id, trust_directory
+from .auth import (accept_remote_control, auth_status, banner, claude_name, install_guide, install_hooks, seat_id,
+                   trust_directory)
+from .config import primary_name_file
 from .config import Config, load
 from .governor import Snapshot, decide
 from .runner import build_cmd, run_agent, session_name
@@ -134,14 +136,36 @@ class Farm:
             st = auth_status(self.cfg.claude_bin)
             if st.get("loggedIn"):
                 self.seat = self.cfg.seat or seat_id(st)
-                print(f"authenticated: {st.get('authMethod')} ({st.get('subscriptionType') or 'token'}), seat {self.seat}",
-                      flush=True)
+                self.name_claude(st)
+                print(f"authenticated: {st.get('authMethod')} ({st.get('subscriptionType') or 'token'}), seat {self.seat}, "
+                      f"claude {self.cfg.name} on farm {self.cfg.farm}", flush=True)
                 return
             if now() - shown > 300:
                 print(banner(self.cfg), flush=True)
                 shown = now()
             self.stop.wait(5)
         raise SystemExit(0)
+
+    def name_claude(self, st: dict):
+        """The farm's own Claude is named after the account logged in to it (matan), not after the farm (jestr).
+        Everything it starts (Remote Control, sub-agents, hooks) inherits the name; a file keeps it for commands run
+        from outside (`docker exec clodfarm clodfarm ...`)."""
+        if os.environ.get("FARM_HATCHED") or os.environ.get("FARM_CLAUDE_NAME"):
+            return
+        name = claude_name(st) or self.cfg.farm
+        try:
+            taken = {a["id"] for a in json.load(open(os.path.join(self.cfg.workspace, ".farm", "agents.json"))).get("agents", [])}
+        except (OSError, ValueError):
+            taken = set()
+        if name in taken:  # an added Claude already has that name
+            name = f"{name}-{self.cfg.farm}"[:24]
+        self.cfg.name = name
+        os.environ["FARM_CLAUDE_NAME"] = name
+        path = primary_name_file(self.cfg.workspace)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".tmp", "w") as f:
+            json.dump({"farm": self.cfg.farm, "claude": name}, f)
+        os.replace(path + ".tmp", path)
 
     def print_status(self):
         d = decide(self.store.get_snapshot(self.seat), self.cfg.policy, now(), self.store.spent_today(self.seat))

@@ -5,7 +5,7 @@ user-level `CLAUDE.md` (between `clodfarm:guide` markers), so the conversations 
 the farm, and every sub-agent gets it appended to its system prompt plus a line naming its id, depth and worktree.
 
 The guide teaches them to:
-- **Know their budget:** `clodfarm agents` shows every Claude's 5-hour and 7-day budget left and how many more
+- **Know their budget:** `clodfarm agents` shows how much of every Claude's 5-hour and 7-day usage is used and how many more
   sub-agents it can start. The governor paces each account; they don't try to get around limits.
 - **Save budget:** a sub-agent without `--on` runs on whichever Claude has room, so a Claude that is running low
   hands big jobs to sub-agents instead of doing them in its conversation.

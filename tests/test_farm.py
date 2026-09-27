@@ -288,7 +288,7 @@ def test_a_new_claude_measures_its_usage_at_once_and_reads_its_messages(env, mon
         out = hook("UserPromptSubmit")
         assert "from gil" in out and "please review the importer" in out
         assert hook("UserPromptSubmit") == ""  # delivered once
-        assert "5h 58% left" in cli("agents").stdout
+        assert "5h 42% used" in cli("agents").stdout
     finally:
         stop_farm(farm, t)
 
@@ -344,3 +344,18 @@ def test_every_session_and_its_whole_conversation_is_recorded(env, tmp_path):
     hook("SessionEnd", FARM_TASK_ID="t9", FARM_OWNER="gil")  # the same hook inside a sub-agent run
     s = store.session("abc")
     assert s["ended"] and s["kind"] == "sub-agent" and s["claude"] == "gil" and s["task"] == "t9"
+
+
+def test_the_farms_claude_is_named_after_its_account(env, monkeypatch):
+    monkeypatch.setenv("FAKE_EMAIL", "matan@jestr.ai")
+    farm, t = start_farm()
+    try:
+        assert farm.cfg.name == "matan" and farm.cfg.farm == "test"  # the farm keeps its name
+        rc = wait_for(lambda: [c for c in calls(env) if c["cmd"] == "remote-control"])[0]["argv"]
+        assert rc[rc.index("--name") + 1] == "[clodfarm] test · matan"
+        wait_for(lambda: any(w["SK"].startswith("matan@") for w in farm.store.workers()))
+        assert "matan" in cli("agents").stdout and "(you)" in cli("agents").stdout  # commands from outside know it too
+        tid = json.loads(cli("spawn", "job", "--prompt", "COMMIT job", "--json").stdout)["id"]
+        assert farm.store.get_task(tid)["owner"] == "matan"
+    finally:
+        stop_farm(farm, t)

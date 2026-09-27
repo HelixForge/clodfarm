@@ -35,7 +35,8 @@ class RunResult:
 
 def session_name(cfg, what: str = "") -> str:
     """How a farm session is named in the Claude app and claude.ai/code: always marked [clodfarm]."""
-    return f"[clodfarm] {cfg.name}" + (f" · {what}" if what else "")
+    who = cfg.name if cfg.name == cfg.farm else f"{cfg.farm} · {cfg.name}"
+    return f"[clodfarm] {who}" + (f" · {what}" if what else "")
 
 
 def build_cmd(cfg, system_prompt: str, resume_session: str | None = None, name: str = "") -> list[str]:

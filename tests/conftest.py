@@ -73,6 +73,8 @@ def env(tmp_path, backend, request, monkeypatch):
         monkeypatch.delenv("FARM_DYNAMODB_ENDPOINT", raising=False)
     for k, v in values.items():
         monkeypatch.setenv(k, v)
+    for k in ("FARM_CLAUDE_NAME", "FARM_FARM_ID", "FARM_HATCHED", "FARM_FARM"):  # a daemon in a test exports these
+        monkeypatch.delenv(k, raising=False)
     for k in ("CLAUDE_CODE_OAUTH_TOKEN", "FARM_TASK_ID", "FARM_REPO_URL"):
         monkeypatch.delenv(k, raising=False)
     (tmp_path / "claude-home").mkdir()

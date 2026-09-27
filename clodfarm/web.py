@@ -215,7 +215,7 @@ class FarmUI:
                   if not t.get("parent") and now() - float(t.get("finished") or t.get("updated") or 0) < 6 * 3600]
         ctl = store.control()
         return {
-            "farm": self.cfg.name, "version": __version__, "now": now(),
+            "farm": self.cfg.farm, "version": __version__, "now": now(),
             "paused": bool(ctl.get("paused")), "pause_reason": ctl.get("reason") or "",
             "agents": agents, "subagents": subs, "recent": recent,
             "events": [{"at": e["at"], "type": e["type"], "msg": e["msg"][:240], "task": e.get("task"), "by": e.get("by")}
@@ -353,7 +353,7 @@ def make_handler(ui: FarmUI):
                     return self._static(path.lstrip("/"))
                 if path == "/api/me":
                     u = self._user()
-                    return self._json({"user": u, "farm": ui.cfg.name, "version": __version__}, 200 if u else 401)
+                    return self._json({"user": u, "farm": ui.cfg.farm, "version": __version__}, 200 if u else 401)
                 if not self._user():
                     return self._err(401, "log in first")
                 if path == "/api/state":

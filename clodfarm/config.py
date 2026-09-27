@@ -20,7 +20,8 @@ def _bool(name: str, default: bool) -> bool:
 
 @dataclass
 class Config:
-    name: str  # farm name: shown in the Claude app and in the logs
+    name: str  # this box's Claude: the person's account it runs (matan, gil, ...); see claude_name()
+    farm: str  # the farm's name (FARM_NAME), shared by every Claude on it
     store: str  # sqlite (one box, the default) | dynamodb (several boxes / accounts)
     db_path: str  # the SQLite file
     table: str
@@ -74,9 +75,33 @@ def _store_kind() -> str:
     return "dynamodb" if os.environ.get("FARM_DYNAMODB_ENDPOINT") or os.environ.get("FARM_TABLE") else "sqlite"
 
 
+def primary_name_file(workspace: str) -> str:
+    return os.path.join(workspace, ".farm", "claude-name.json")
+
+
+def _claude_name(farm: str, workspace: str) -> str:
+    """Who this box's Claude is. An added Claude gets its name from the UI (FARM_NAME, marked FARM_HATCHED). The farm's
+    own Claude is named after the account logged in to it (the daemon works that out at login and exports
+    FARM_CLAUDE_NAME, and remembers it for commands run from outside); FARM_CLAUDE_NAME set by hand wins."""
+    if os.environ.get("FARM_CLAUDE_NAME"):
+        return os.environ["FARM_CLAUDE_NAME"]
+    if not os.environ.get("FARM_HATCHED"):
+        try:
+            import json
+            d = json.load(open(primary_name_file(workspace)))
+            if d.get("farm") == farm and d.get("claude"):
+                return d["claude"]
+        except (OSError, ValueError):
+            pass
+    return farm
+
+
 def load() -> Config:
+    farm = _env("FARM_FARM", _env("FARM_NAME", "clodfarm"))  # an added Claude is told its farm's name
+    workspace = _env("FARM_WORKSPACE", "/workspace")
     return Config(
-        name=_env("FARM_NAME", "clodfarm"),
+        name=_claude_name(_env("FARM_NAME", "clodfarm"), workspace),
+        farm=farm,
         store=_store_kind(),
         db_path=_env("FARM_DB", os.path.join(_env("FARM_WORKSPACE", "/workspace"), ".farm", "farm.db")),
         table=_env("FARM_TABLE", "clodfarm"),

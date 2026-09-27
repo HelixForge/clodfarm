@@ -60,6 +60,13 @@ def auth_status(claude_bin: str = "claude", config_dir: str | None = None) -> di
     return st
 
 
+def claude_name(status: dict) -> str | None:
+    """A short name for the person behind a login: the part of its email before '@' (matan@jestr.ai -> matan)."""
+    who = (status.get("email") or "").split("@")[0]
+    slug = re.sub(r"[^a-z0-9]+", "-", who.lower()).strip("-")[:24].strip("-")
+    return slug or None
+
+
 def seat_id(status: dict) -> str:
     """A stable, readable id for the Claude account this box is logged in to (e.g. ``matan-3f2a``).
     Derived from what `claude auth status` reports; the full email is never stored. FARM_SEAT overrides it."""

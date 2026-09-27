@@ -3,7 +3,7 @@
     clodfarm run                      start the farm daemon (the container does this)
     clodfarm login | logout | whoami  Claude subscription login (see docs/auth.md)
     clodfarm status                   the Claudes, their budget and the sub-agents at work
-    clodfarm agents                   the Claudes on this farm and the budget each has left
+    clodfarm agents                   the Claudes on this farm, each one's usage (% used) and room for sub-agents
     clodfarm budget [--refresh]       every account's 5-hour and 7-day usage and what the governor allows
     clodfarm spawn TITLE [--prompt TEXT | --prompt-file F | -] [--on NAME]   start a sub-agent
     clodfarm subagents [--all] [--mine] | result ID [--wait] | cancel ID | retry ID
@@ -185,8 +185,8 @@ def _claudes(cfg, store) -> list[dict]:
         r = seats.get(c["seat"]) or {}
         snap, d = r.get("snapshot"), r.get("decision")
         c.update(boxes=sorted(c["boxes"]),
-                 five_hour_left=None if not (snap and snap.five_hour) else round(1 - snap.five_hour.utilization, 3),
-                 seven_day_left=None if not (snap and snap.seven_day) else round(1 - snap.seven_day.utilization, 3),
+                 five_hour_used=None if not (snap and snap.five_hour) else round(snap.five_hour.utilization, 3),
+                 seven_day_used=None if not (snap and snap.seven_day) else round(snap.seven_day.utilization, 3),
                  can_start=max(0, (d.workers if d else 0) - c["running"]), reason=d.reason if d else "",
                  resets=d.pause_until if d else None)
     return sorted(out.values(), key=lambda c: (not c["me"], c["name"]))
@@ -194,12 +194,12 @@ def _claudes(cfg, store) -> list[dict]:
 
 def _claude_line(c) -> str:
     pct = lambda x: "?" if x is None else f"{x:.0%}"  # noqa: E731
-    left = f"5h {pct(c['five_hour_left'])} left · 7d {pct(c['seven_day_left'])} left"
+    used = f"5h {pct(c['five_hour_used'])} used · 7d {pct(c['seven_day_used'])} used"
     busy = f"{c['running']} sub-agent{'s' if c['running'] != 1 else ''} running"
     room = f"can start {c['can_start']} more" if c["can_start"] else \
         f"{'no room for more' if c['running'] else 'resting'}: {c['reason']}" \
         + (f" (until {_until(c['resets'])})" if c.get("resets") else "")
-    return f"  {c['name']:<16}{'(you)' if c['me'] else '     '}  {left} · {busy} · {room}"
+    return f"  {c['name']:<16}{'(you)' if c['me'] else '     '}  {used} · {busy} · {room}"
 
 
 def cmd_agents(cfg, a):
@@ -578,7 +578,7 @@ def main(argv=None):
     ss.add_argument("-n", type=int, default=30)
     se = add("session", cmd_session, "one session's whole conversation")
     se.add_argument("id")
-    add("agents", cmd_agents, "the Claudes on this farm and the budget each has left")
+    add("agents", cmd_agents, "the Claudes on this farm and how much of its usage each has used")
     sc = add("schedule", cmd_schedule, "start a sub-agent on a schedule")
     scs = sc.add_subparsers(dest="sub", required=True)
     sa = scs.add_parser("add")

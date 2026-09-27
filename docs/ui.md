@@ -21,7 +21,7 @@ marks the cookie Secure), or use an SSH tunnel: `ssh -L 8080:localhost:8080 myse
 
 At night (your local time) the farm gets dark and the terminals glow.
 
-Click a Claude for its status, its budget left (5-hour and 7-day, measured the moment it logs in and kept current),
+Click a Claude for its status, its usage (5-hour and 7-day, % used as on Claude's usage page, measured the moment it logs in and kept current),
 its sub-agents (and the ones it runs for others), and **TALK TO IT**: the link to its Remote Control session in the
 Claude app. That's where you give it work. Under **SESSIONS** are its conversations and sub-agent runs; open one to
 read the whole conversation (every session is recorded by the farm's Claude Code hook). Click a mini Claude for that sub-agent's job, where it runs and its own

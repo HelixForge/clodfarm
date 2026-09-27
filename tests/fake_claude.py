@@ -39,7 +39,10 @@ def farm_cli(*args):
 
 def main(argv):
     if argv[:2] == ["auth", "status"]:
-        out({"loggedIn": os.environ.get("FAKE_LOGGED_IN", "1") == "1", "authMethod": "claude.ai", "subscriptionType": "max"})
+        st = {"loggedIn": os.environ.get("FAKE_LOGGED_IN", "1") == "1", "authMethod": "claude.ai", "subscriptionType": "max"}
+        if os.environ.get("FAKE_EMAIL"):
+            st["email"] = os.environ["FAKE_EMAIL"]
+        out(st)
         return 0
     if argv[:1] == ["--version"]:
         print("9.9.9 (Fake Claude)")
