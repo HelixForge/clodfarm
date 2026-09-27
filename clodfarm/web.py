@@ -32,6 +32,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import __version__
 from .agents import AgentManager
+from .slack import SlackBridge
 from .store import Store, now
 
 BASE = "/" + os.environ.get("FARM_UI_BASE", "").strip("/") if os.environ.get("FARM_UI_BASE", "").strip("/") else ""
@@ -154,6 +155,7 @@ class FarmUI:
         self.store = store or Store.from_config(cfg)
         self.manager = manager or AgentManager(cfg)
         self.auth = Auth(os.path.join(cfg.workspace, ".farm", "ui-auth.json"))
+        self.slack = SlackBridge(cfg, self.store)
         self._state_cache: tuple[float, dict] | None = None
         self._lock = threading.Lock()
 
@@ -217,6 +219,7 @@ class FarmUI:
         return {
             "farm": self.cfg.farm, "version": __version__, "now": now(),
             "paused": bool(ctl.get("paused")), "pause_reason": ctl.get("reason") or "",
+            "slack": {"state": self.slack.state, "team": (self.slack.info or {}).get("team")},
             "agents": agents, "subagents": subs, "recent": recent,
             "events": [{"at": e["at"], "type": e["type"], "msg": e["msg"][:240], "task": e.get("task"), "by": e.get("by")}
                        for e in events[-40:]],
@@ -358,6 +361,8 @@ def make_handler(ui: FarmUI):
                     return self._err(401, "log in first")
                 if path == "/api/state":
                     return self._json(ui.state())
+                if path == "/api/slack":
+                    return self._json(ui.slack.view())
                 if path == "/api/sessions":  # every Claude session on the farm, newest first
                     q = {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()}
                     keep = ("id", "claude", "runs_on", "kind", "task", "title", "turns", "started", "last_at", "ended")
@@ -418,6 +423,18 @@ def make_handler(ui: FarmUI):
             if path == "/api/resume":
                 store.set_paused(False, "resumed from the farm UI", by="ui")
                 return self._json({"ok": True})
+            if path == "/api/slack":  # connect: check both tokens with Slack, keep them, open the connection
+                allow = [x.strip() for x in re.split(r"[,\s]+", str(data.get("allow") or "")) if x.strip()][:200]
+                origin = self.headers.get("Origin") or ""
+                ui_url = origin + BASE + "/" if re.fullmatch(r"https?://[A-Za-z0-9.:-]+", origin) else ""
+                return self._json(ui.slack.connect(str(data.get("bot_token", ""))[:300],
+                                                   str(data.get("app_token", ""))[:300], allow, ui_url))
+            if path == "/api/slack/allow":
+                ui.slack.set_allow([x.strip() for x in re.split(r"[,\s]+", str(data.get("allow") or "")) if x.strip()][:200])
+                return self._json(ui.slack.view())
+            if path == "/api/slack/disconnect":
+                ui.slack.disconnect()
+                return self._json(ui.slack.view())
             if path == "/api/agents":
                 a = mgr.create(str(data.get("name", "")))
                 store.event("agent.added", f"{a['id']} hatched from the farm UI; waiting for its login", by="ui")
@@ -459,6 +476,7 @@ def serve(cfg, store: Store | None = None, manager: AgentManager | None = None, 
     httpd.daemon_threads = True
     httpd.ui = ui
     threading.Thread(target=ui.manager.keep_alive, name="agents", daemon=True).start()
+    ui.slack.start()  # talk to the farm from Slack, once it's connected (the SLACK button)
     print(f"farm UI on http://{'localhost' if host in ('0.0.0.0', '::') else host}:{port}", flush=True)
     if ui.auth.generated:
         print("+----------------------------------------------------------------+\n"
@@ -471,5 +489,6 @@ def serve(cfg, store: Store | None = None, manager: AgentManager | None = None, 
     try:
         httpd.serve_forever()
     finally:
+        ui.slack.stop()
         ui.manager.shutdown()
     return httpd

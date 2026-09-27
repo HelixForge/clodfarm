@@ -186,6 +186,8 @@ const ICONS = {
     { o: "#5a3d1e", p: "#f6ecd0", y: "#c9964a", r: "#d97757" }],
   swords: [["o........o", ".o......o.", "..o....o..", "...o..o...", "....oo....", "....oo....", "...o..o...", ".bo....ob.", "bb......bb", "b........b"],
     { o: "#9aa3b2", b: "#6b4a2b" }],
+  chat: [["..........", ".oooooooo.", "owwwwwwwwo", "owwwwwwwwo", "owdwdwdwwo", "owwwwwwwwo", ".oooooooo.", "..oow.....", "..ow......", "..o......."],
+    { o: "#3c4a6b", w: "#fff8e8", d: "#d97757" }],
   heart: [["..........", ".rr...rr..", "rllr.rrrr.", "rlrrrrrrr.", "rrrrrrrrr.", ".rrrrrrr..", "..rrrrr...", "...rrr....", "....r.....", ".........."],
     { r: "#e0513c", l: "#f7a296" }],
   egg: [["...oooo...", "..occcco..", ".occsccco.", ".occcccco.", "occccccsco", "ocscccccco", "occcccccco", "oddcccccdo", ".oddcccdo.", "..oooooo.."],
@@ -757,6 +759,8 @@ const EVENT_TEXT = {
   "budget.rejected": () => "A Claude hit its usage limit. It rests until the window resets; the others carry on.",
   "rc.connected": (e) => `${((e.msg.match(/'([^']+)'/) || [])[1] || "A Claude").toUpperCase()} is live in the Claude app: talk to it from your phone.`,
   "agent.added": (e) => `A new egg for ${e.msg.split(" ")[0].toUpperCase()}. Finish its login to hatch it.`,
+  "slack.received": (e) => `FROM SLACK · ${e.msg.slice(0, 120)}`,
+  "slack.connected": () => "The farm is on Slack! DM it or @mention it in a channel, and a sub-agent answers in the thread.",
   "agent.removed": (e) => `${e.msg.split(" ")[0].toUpperCase()} left the farm.`,
 };
 
@@ -831,6 +835,9 @@ const UI = {
     $("#talk-name").textContent = sessionName(st, me?.name || st.farm);
     $("#talk-hint").href = me?.remote_control || "https://claude.ai/code";
     $("#talk-hint").hidden = !st.agents.some(a => a.loggedIn); // first log a Claude in (the egg)
+    const sl = $("#slack-tool"), ss = st.slack?.state;
+    if (ss && ss !== "off") sl.dataset.state = ss === "live" ? "live" : ss === "error" ? "error" : "wait"; else delete sl.dataset.state;
+    sl.title = ss === "live" ? `On Slack (${st.slack.team || "connected"}): DM it or @mention it (S)` : "Give the farm work from Slack (S)";
     if (st.paused) chips.push(h("span", { class: "chip warn" }, "⏸ PAUSED: " + (st.pause_reason || "").slice(0, 40).toUpperCase()));
     fill($("#chips"), ...chips);
   },
@@ -879,16 +886,17 @@ const UI = {
         const r = d.getBoundingClientRect();
         if (e.target === d && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) d.close();
       });
-      d.addEventListener("close", () => { if (d.id === "dlg-hatch") this.stopHatchPoll(); if (d.id === "dlg-summary") { this.summaryKey = null; Scene.selected = null; } });
+      d.addEventListener("close", () => { if (d.id === "dlg-slack") clearTimeout(this.slackPoll); if (d.id === "dlg-hatch") this.stopHatchPoll(); if (d.id === "dlg-summary") { this.summaryKey = null; Scene.selected = null; } });
     }
     addEventListener("keydown", (e) => {
       if ($("#hud").hidden || $$("dialog[open]").length || /INPUT|TEXTAREA/.test(document.activeElement?.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
-      const k = { c: "hatch", h: "hatch", n: "hatch" }[e.key.toLowerCase()];
+      const k = { c: "hatch", h: "hatch", n: "hatch", s: "slack" }[e.key.toLowerCase()];
       if (k) { e.preventDefault(); this.act(k); }
     });
   },
   act(a) {
     if (a === "hatch") return this.openHatch(null, true);
+    if (a === "slack") return this.openSlack();
   },
 
   // ----------------------------------------------------------------- dialogs
@@ -1011,6 +1019,94 @@ const UI = {
     const who = (t) => t.kind === "tool_result" ? "TOOL" : t.role === "assistant" ? String(s.claude || "CLAUDE").toUpperCase() : s.kind === "conversation" ? "YOU" : "THE FARM";
     fill($("#talk-body"), s.conversation.length ? s.conversation.map(t => h("div", { class: `turn ${t.role} k-${t.kind}` },
       h("b", { text: who(t) + (t.kind === "tool" ? " · TOOL CALL" : "") }), h("div", { text: t.text }))) : h("p", { class: "muted", text: "Nothing said yet." }));
+  },
+
+  // -------------------------------------------------------------------- slack
+  /** Give the farm work from Slack: one Slack app made from a prefilled manifest, two tokens pasted back. */
+  async openSlack() {
+    for (const d of $$("dialog[open]")) d.close();
+    fill($("#slack-body"), h("p", { class: "muted", text: "Loading…" }));
+    $("#dlg-slack").showModal();
+    await this.loadSlack();
+  },
+  async loadSlack() {
+    clearTimeout(this.slackPoll);
+    if (!$("#dlg-slack").open) return;
+    let s;
+    try { s = await api("api/slack"); } catch (x) { fill($("#slack-body"), h("p", { class: "form-error", text: x.message })); return; }
+    this.renderSlack(s);
+    if (s.configured && !["live", "error", "off"].includes(s.state)) this.slackPoll = setTimeout(() => this.loadSlack(), 1500);
+  },
+  renderSlack(s) {
+    const body = $("#slack-body"), key = JSON.stringify([s.configured, s.state, s.error, s.team, s.allow, s.last?.at]);
+    if (body.dataset.key === key && body.contains(document.activeElement)) return; // don't wipe what's being typed
+    body.dataset.key = key;
+    const splitAllow = (v) => String(v || "").split(/[\s,]+/).filter(Boolean);
+    const allowInput = (value) => h("input", { name: "allow", autocomplete: "off", spellcheck: "false", value: (value || []).join(", "),
+      placeholder: "everyone in the workspace (no guests)" });
+    if (s.configured) {
+      const cls = s.state === "live" ? "live" : s.state === "error" ? "error" : "wait";
+      const status = { live: `● CONNECTED TO ${String(s.team || "SLACK").toUpperCase()}`, error: "● NOT CONNECTED", wait: "● CONNECTING…" }[cls];
+      const bot = s.bot ? "@" + s.bot : "the farm's app";
+      const allowForm = h("form", { class: "slack-form" },
+        h("div", { class: "row" }, h("label", {}, "WHO CAN GIVE IT WORK", allowInput(s.allow)), h("button", { class: "btn", type: "submit" }, "SAVE")),
+        h("p", { class: "muted small", text: "Emails or Slack member IDs, separated by commas. Empty: every full member of the workspace. Guests, bots and people from other companies in shared channels never can." }),
+        h("p", { class: "form-error", role: "alert" }));
+      allowForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const btn = allowForm.querySelector("button"); btn.disabled = true;
+        try { const r = await api("api/slack/allow", { allow: new FormData(allowForm).get("allow") }); btn.textContent = "SAVED ✓"; setTimeout(() => this.renderSlack(r), 900); }
+        catch (x) { allowForm.querySelector(".form-error").textContent = x.message; btn.disabled = false; }
+      });
+      const acts = [];
+      if (!s.from_env) {
+        const off = h("button", { class: "btn danger", type: "button" }, "DISCONNECT");
+        off.addEventListener("click", async () => {
+          if (off.dataset.sure !== "1") { off.dataset.sure = "1"; off.textContent = "SURE? IT STOPS LISTENING"; return; }
+          off.disabled = true;
+          try { const r = await api("api/slack/disconnect", {}); this.say("The farm left Slack."); body.dataset.key = ""; this.renderSlack(r); this.refresh(); }
+          catch (x) { off.textContent = x.message.slice(0, 40); }
+        });
+        acts.push(off);
+      }
+      if (cls === "error") acts.push(h("button", { class: "btn primary", type: "button", onclick: () => { body.dataset.key = ""; this.renderSlack({ ...s, configured: false }); } }, "ENTER NEW TOKENS"));
+      fill(body,
+        h("p", { class: `slack-status ${cls}`, text: status }),
+        s.error && cls !== "live" ? h("p", { class: "form-error", text: s.error }) : null,
+        h("p", { text: `DM ${bot} in Slack, or @mention it in a channel (invite it there first: /invite ${bot}). A sub-agent does the job and answers in the thread. Type “status” for the farm.` }),
+        s.dm_url ? h("a", { class: "btn primary login-link", href: s.dm_url, target: "_blank", rel: "noopener noreferrer" }, "OPEN IN SLACK ↗") : null,
+        s.last ? h("p", { class: "muted small", text: `Last message: ${s.last.from}, ${ago(s.last.at)}: “${s.last.text}”` }) : null,
+        allowForm,
+        s.from_env ? h("p", { class: "muted small", text: "The tokens come from the environment (FARM_SLACK_BOT_TOKEN, FARM_SLACK_APP_TOKEN): change them there." }) : null,
+        h("div", { class: "dlg-actions" }, acts));
+      return;
+    }
+    const tok = (name, prefix) => h("input", { name, type: "password", autocomplete: "off", spellcheck: "false", required: true, placeholder: prefix + "…",
+      oninput: (e) => e.target.closest("li").classList.toggle("done", e.target.value.trim().startsWith(prefix)) });
+    const form = h("form", { class: "slack-form" },
+      h("ol", { class: "hatch-steps" },
+        h("li", {}, "Create the farm's Slack app. On the Slack page: Create an App → From a manifest → Continue. Everything is filled in: Next → Create (pick your workspace if it asks).",
+          h("a", { class: "btn primary login-link", href: s.manifest_url, target: "_blank", rel: "noopener noreferrer",
+            onclick: (e) => e.target.closest("li").classList.add("done") }, "CREATE THE SLACK APP ↗")),
+        h("li", {}, "On the app's page: Install to Workspace → Allow. Then open OAuth & Permissions and copy the Bot User OAuth Token.",
+          h("label", {}, "BOT TOKEN", tok("bot_token", "xoxb-"))),
+        h("li", {}, "Open Basic Information → App-Level Tokens → Generate Token and Scopes. Any name, add the scope connections:write, Generate, and copy it.",
+          h("label", {}, "APP-LEVEL TOKEN", tok("app_token", "xapp-"))),
+        h("li", {}, h("label", {}, "WHO CAN GIVE IT WORK ", h("span", { class: "muted", text: "(optional)" }), allowInput(s.allow)),
+          h("p", { class: "muted small", text: "Emails or Slack member IDs. Empty: every full member of the workspace (never guests)." }))),
+      h("p", { class: "muted small", text: "The farm connects out to Slack (Socket Mode): no public URL, no open port. The tokens stay on the farm and are never shown again." }),
+      h("p", { class: "form-error", role: "alert" }),
+      h("div", { class: "dlg-actions" }, h("button", { class: "btn primary", type: "submit" }, "▶ CONNECT")));
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const f = new FormData(form), btn = form.querySelector("button[type=submit]"), err = form.querySelector(".form-error");
+      btn.disabled = true; btn.textContent = "CHECKING WITH SLACK…"; err.textContent = "";
+      try {
+        const r = await api("api/slack", { bot_token: f.get("bot_token"), app_token: f.get("app_token"), allow: splitAllow(f.get("allow")).join(",") });
+        body.dataset.key = ""; this.renderSlack(r); this.loadSlack(); this.refresh();
+      } catch (x) { err.textContent = x.message; btn.disabled = false; btn.textContent = "▶ CONNECT"; }
+    });
+    fill(body, h("p", { text: "Give the farm work from Slack: DM it or @mention it, and a sub-agent does the job and answers in the thread. About two minutes, once." }), form);
   },
 
   // ----------------------------------------------------------------- hatching
