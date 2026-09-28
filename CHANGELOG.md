@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 (2026-09-28)
+
+A TASKS page to see and manage every sub-agent and schedule, and a toolbar that says what each button is.
 
 - **A TASKS page: every sub-agent and schedule, and what you can do to them.** The new clipboard button on the farm
   (or J) opens `/tasks`:
