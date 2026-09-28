@@ -8,7 +8,10 @@
   box and it stays on across restarts; the profile lives in the workspace volume, so a new container is still logged
   in. The screen comes over the UI's own WebSocket behind the farm password (noVNC); paste and copy work, and ⌘
   shortcuts on a Mac. The guide tells the Claudes to use their own tab, never type passwords (they ask you to log in
-  instead) and act on your accounts only as asked. `clodfarm browser [start|stop|open URL]`. The image gains
+  instead) and act on your accounts only as asked. **Profiles**: each its own Chromium with its own logins (two
+  LinkedIn accounts: two profiles), added with + PROFILE, up to 8; any Claude can use any of them
+  (`mcp__browser__*` for `default`, `mcp__browser-<name>__*` for the others).
+  `clodfarm browser [start|stop [PROFILE] | open URL [--profile P] | add|remove NAME]`. The image gains
   Chromium, Xvfb, x11vnc, noVNC and Node; `--build-arg BROWSER=0` builds without them, `FARM_BROWSER=0` turns it off.
 
 ## 0.7.0 (2026-09-27)

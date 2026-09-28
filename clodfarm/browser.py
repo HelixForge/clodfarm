@@ -1,21 +1,28 @@
-"""The farm's browser: one Chromium on this box that you drive from the farm UI (BROWSER, or B) and every Claude
-drives with its `browser` MCP tools. Log in to a site in it once (LinkedIn, a dashboard, an admin panel) and the
-Claudes work in that login, in the same window you watch.
+"""The farm's browser: Chromium on this box that you drive from the farm UI (BROWSER, or B) and every Claude drives
+with its browser MCP tools. Log in to a site in it once (LinkedIn, a dashboard, an admin panel) and the Claudes work
+in that login, in the same window you watch.
 
-    clodfarm browser [status] | start | stop | open URL
+It has profiles: each one its own Chromium with its own logins (``default``, ``linkedin-work``, ...), shared by
+everyone on the box. Any Claude can use any of them: the ``default`` profile's tools are ``mcp__browser__*``, another
+profile's ``mcp__browser-<name>__*``.
 
-Xvfb draws Chromium on a virtual screen; x11vnc shares that screen on 127.0.0.1 only, and the farm UI bridges it to
-your browser over its own password-protected WebSocket (noVNC draws it). Chromium's DevTools port is 127.0.0.1 only
-too: the Claudes reach it through Playwright's MCP server (``playwright-mcp --cdp-endpoint``). The profile,
-with its cookies and logins, is kept in the workspace volume (``.farm/browser``), so a new container is still logged in.
+    clodfarm browser [status] | start [PROFILE] | stop [PROFILE] | open URL [--profile P] | add NAME | remove NAME
 
-Whether it should run is a file (``.farm/browser.json``): START in the UI or ``clodfarm browser start`` turns it on,
-and it stays on across restarts until someone stops it. The farm UI's process keeps it running.
+Xvfb draws each profile's Chromium on its own virtual screen; x11vnc shares that screen on 127.0.0.1 only, and the
+farm UI bridges it to your browser over its own password-protected WebSocket (noVNC draws it). Chromium's DevTools
+port is 127.0.0.1 only too: the Claudes reach it through Playwright's MCP server (``playwright-mcp --cdp-endpoint``).
+Profile slot N uses DevTools port 9222+N, VNC port 5900+N and display :99+N. Logins are kept in the workspace volume
+(``.farm/browser`` for ``default``, ``.farm/browsers/<name>`` for the others), so a new container is still logged in.
+
+The profiles and which are on are a file (``.farm/browsers.json``): START in the UI or ``clodfarm browser start``
+turns one on, and it stays on across restarts until someone stops it. The farm UI's process keeps them running.
 """
 
 from __future__ import annotations
 
 import base64
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -30,8 +37,11 @@ import time
 import urllib.parse
 import urllib.request
 
-MCP_NAME = "browser"  # the MCP server's name in each Claude's config: its tools are mcp__browser__*
+DEFAULT = "default"
+MCP_NAME = "browser"  # the default profile's MCP server in each Claude's config (mcp__browser__*); others browser-<name>
 MCP_BIN = "playwright-mcp"
+MAX_PROFILES = 8
+NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,23}")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_FRAME = 1 << 20  # a client (keyboard, mouse, clipboard) never needs a bigger WebSocket frame
 BROWSERS = ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable")
@@ -51,16 +61,16 @@ def chromium_bin() -> str | None:
     return next((p for p in map(shutil.which, BROWSERS) if p), None)
 
 
-def cdp_port() -> int:
-    return int(_env("FARM_BROWSER_CDP_PORT", "9222"))
+def cdp_port(slot: int = 0) -> int:
+    return int(_env("FARM_BROWSER_CDP_PORT", "9222")) + slot
 
 
-def vnc_port() -> int:
-    return int(_env("FARM_BROWSER_VNC_PORT", "5900"))
+def vnc_port(slot: int = 0) -> int:
+    return int(_env("FARM_BROWSER_VNC_PORT", "5900")) + slot
 
 
-def cdp_url() -> str:
-    return f"http://127.0.0.1:{cdp_port()}"
+def cdp_url(slot: int = 0) -> str:
+    return f"http://127.0.0.1:{cdp_port(slot)}"
 
 
 def novnc_dir() -> str:
@@ -88,24 +98,28 @@ def available() -> bool:
     return enabled() and not missing()
 
 
-def _get(path: str, method: str = "GET", timeout: float = 2.0):
-    req = urllib.request.Request(cdp_url() + path, method=method)
+def mcp_name(profile: str) -> str:
+    return MCP_NAME if profile == DEFAULT else f"{MCP_NAME}-{profile}"
+
+
+def _get(port: int, path: str, method: str = "GET", timeout: float = 2.0):
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method=method)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read() or b"null")
 
 
-def cdp_up() -> bool:
+def cdp_up(slot: int = 0) -> bool:
     try:
-        return bool(_get("/json/version", timeout=1.0))
+        return bool(_get(cdp_port(slot), "/json/version", timeout=1.0))
     except (OSError, ValueError):
         return False
 
 
-def tabs() -> list[dict]:
-    """The pages open in the browser: what you and the Claudes are looking at."""
+def tabs(slot: int = 0) -> list[dict]:
+    """The pages open in a profile's browser: what you and the Claudes are looking at."""
     try:
         return [{"id": t.get("id"), "title": (t.get("title") or "")[:200], "url": (t.get("url") or "")[:500]}
-                for t in _get("/json/list") or [] if t.get("type") == "page"]
+                for t in _get(cdp_port(slot), "/json/list") or [] if t.get("type") == "page"]
     except (OSError, ValueError):
         return []
 
@@ -125,46 +139,118 @@ def normalize_url(url: str) -> str:
     return url
 
 
-def open_url(url: str) -> dict:
-    """Open ``url`` in a new tab of the running browser."""
-    t = _get("/json/new?" + urllib.parse.quote(normalize_url(url), safe=":/?&=%#@+,;~"), method="PUT", timeout=10)
+def open_url(url: str, slot: int = 0) -> dict:
+    """Open ``url`` in a new tab of a running profile's browser."""
+    t = _get(cdp_port(slot), "/json/new?" + urllib.parse.quote(normalize_url(url), safe=":/?&=%#@+,;~"),
+             method="PUT", timeout=10)
     return {"id": t.get("id"), "url": t.get("url")}
 
 
-# ---------------------------------------------------------------- the keeper
+# ------------------------------------------------------------ the profiles
+class Registry:
+    """``.farm/browsers.json``: every profile, its slot (its ports and screen) and whether it should run. Written by
+    the farm UI and by `clodfarm browser` (a CLI in the same container), so every change holds a file lock."""
+
+    def __init__(self, workspace: str):
+        self.farm = os.path.join(workspace, ".farm")
+        self.path = os.path.join(self.farm, "browsers.json")
+
+    @contextlib.contextmanager
+    def _locked(self):
+        os.makedirs(self.farm, exist_ok=True)
+        with open(self.path + ".lock", "a") as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lk, fcntl.LOCK_UN)
+
+    def _read(self) -> list[dict]:
+        try:
+            profiles = json.load(open(self.path)).get("profiles") or []
+        except (OSError, ValueError):
+            profiles = []
+        if not any(p.get("name") == DEFAULT for p in profiles):
+            try:  # the one browser of 0.7's first build: its on/off becomes the default profile's
+                on = bool(json.load(open(os.path.join(self.farm, "browser.json"))).get("on"))
+            except (OSError, ValueError):
+                on = False
+            profiles.insert(0, {"name": DEFAULT, "slot": 0, "on": on, "created": 0})
+        return profiles
+
+    def _write(self, profiles: list[dict]):
+        tmp = self.path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"profiles": profiles}, f, indent=1)
+        os.replace(tmp, self.path)
+
+    def all(self) -> list[dict]:
+        return self._read()
+
+    def get(self, name: str) -> dict | None:
+        return next((p for p in self._read() if p["name"] == name), None)
+
+    def dir(self, name: str) -> str:
+        if name == DEFAULT:
+            return _env("FARM_BROWSER_PROFILE", os.path.join(self.farm, "browser"))
+        return os.path.join(self.farm, "browsers", name)
+
+    def add(self, name: str, by: str = "") -> dict:
+        name = (name or "").strip().lower()
+        if not NAME_RE.fullmatch(name):
+            raise ValueError("a profile name is up to 24 lowercase letters, digits or -")
+        with self._locked():
+            profiles = self._read()
+            if any(p["name"] == name for p in profiles):
+                raise ValueError(f"there is already a profile named {name}")
+            if len(profiles) >= MAX_PROFILES:
+                raise ValueError(f"at most {MAX_PROFILES} profiles; remove one first")
+            used = {int(p["slot"]) for p in profiles}
+            p = {"name": name, "slot": min(set(range(MAX_PROFILES)) - used), "on": False, "created": time.time(),
+                 "by": by}
+            self._write(profiles + [p])
+        return p
+
+    def remove(self, name: str) -> bool:
+        """Forget a profile and delete its logins (the default profile stays)."""
+        if name == DEFAULT:
+            raise ValueError("the default profile can't be removed (stop it, or log out of its sites)")
+        with self._locked():
+            profiles = self._read()
+            if not any(p["name"] == name for p in profiles):
+                return False
+            self._write([p for p in profiles if p["name"] != name])
+        shutil.rmtree(self.dir(name), ignore_errors=True)
+        return True
+
+    def want(self, name: str, on: bool, by: str = "") -> bool:
+        """Turn a profile on or off; returns whether that changed anything."""
+        with self._locked():
+            profiles = self._read()
+            p = next((x for x in profiles if x["name"] == name), None)
+            if not p:
+                raise ValueError(f"no browser profile named {name}")
+            if bool(p.get("on")) == on:
+                return False
+            p.update(on=on, by=by, at=time.time())
+            self._write(profiles)
+        return True
+
+
 class Browser:
-    """Keeps Xvfb, x11vnc and Chromium running while the browser is on, and stops them when it is turned off."""
+    """One profile's Chromium: keeps its Xvfb, x11vnc and Chromium running while it is on."""
 
     ORDER = ("xvfb", "vnc", "chromium")
 
-    def __init__(self, workspace: str):
-        farm = os.path.join(workspace, ".farm")
-        self.state_path = os.path.join(farm, "browser.json")
-        self.profile = _env("FARM_BROWSER_PROFILE", os.path.join(farm, "browser"))
-        self.log_path = os.path.join(farm, "browser.log")
-        self.display = _env("FARM_BROWSER_DISPLAY", ":99")
+    def __init__(self, name: str, slot: int, profile: str, log_path: str):
+        self.name, self.slot, self.profile, self.log_path = name, slot, profile, log_path
+        self.display = f":{int(_env('FARM_BROWSER_DISPLAY', ':99').lstrip(':').split('.')[0]) + slot}"
         self.procs: dict[str, subprocess.Popen] = {}
         self.started: dict[str, list[float]] = {}  # recent start times per process, for the crash back-off
         self.error = ""
         self.hold_until = 0.0
         self.since = 0.0
         self._lock = threading.RLock()
-
-    # ------------------------------------------------------------ wanted state
-    def wanted(self) -> bool:
-        try:
-            return bool(json.load(open(self.state_path)).get("on"))
-        except (OSError, ValueError):
-            return False
-
-    def want(self, on: bool, by: str = ""):
-        os.makedirs(os.path.dirname(self.state_path), exist_ok=True)
-        tmp = self.state_path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump({"on": bool(on), "by": by, "at": time.time()}, f)
-        os.replace(tmp, self.state_path)
-        if on:
-            self.error, self.hold_until, self.started = "", 0.0, {}  # a new START gets a fresh try
 
     def alive(self, name: str) -> bool:
         p = self.procs.get(name)
@@ -173,28 +259,12 @@ class Browser:
     def running(self) -> bool:
         return all(self.alive(n) for n in self.ORDER)
 
-    def status(self) -> dict:
-        lack = missing() if enabled() else ["FARM_BROWSER=0"]
-        up = not lack and cdp_up()
-        w, h = size()
-        return {"available": not lack, "missing": lack, "on": self.wanted(), "running": self.running() or up,
-                "ready": up, "size": f"{w}x{h}", "tabs": tabs() if up else [], "error": self.error,
-                "since": self.since or None}
+    def fresh(self):
+        self.error, self.hold_until, self.started = "", 0.0, {}  # a new START gets a fresh try
 
-    # ------------------------------------------------------------------ keep
-    def keep(self, stop: threading.Event, every: float = 2.0):
-        while True:
-            try:
-                self.sync()
-            except Exception as e:  # noqa: BLE001 - the browser must never take the farm down
-                self.error = f"{type(e).__name__}: {str(e)[:200]}"
-            if stop.wait(every):
-                break
-        self.shutdown()
-
-    def sync(self):
+    def sync(self, on: bool):
         with self._lock:
-            if not (self.wanted() and available()):
+            if not (on and available()):
                 if self.procs:
                     self.shutdown()
                 return
@@ -206,7 +276,7 @@ class Browser:
             for name in self.ORDER[1:]:
                 if self.alive("xvfb") and not self.alive(name):
                     self._start(name)
-            if self.running() and cdp_up():
+            if self.running() and cdp_up(self.slot):
                 self.error = ""
                 self.since = self.since or time.time()
 
@@ -239,15 +309,14 @@ class Browser:
             self.since = 0.0
             self._wait(lambda: os.path.exists(self._socket()), p, 10)
         elif name == "chromium":
-            self._wait(cdp_up, p, 30)
+            self._wait(lambda: cdp_up(self.slot), p, 30)
 
     def _socket(self) -> str:
-        return f"/tmp/.X11-unix/X{self.display.lstrip(':').split('.')[0]}"
+        return f"/tmp/.X11-unix/X{self.display.lstrip(':')}"
 
     def _clear_display(self):
         """An X lock and socket left by a previous container (or a killed Xvfb) would stop Xvfb from starting."""
-        n = self.display.lstrip(":").split(".")[0]
-        for f in (f"/tmp/.X{n}-lock", self._socket()):
+        for f in (f"/tmp/.X{self.display.lstrip(':')}-lock", self._socket()):
             try:
                 os.remove(f)
             except OSError:
@@ -260,10 +329,10 @@ class Browser:
         if name == "vnc":
             # localhost only: the farm UI is the one way in, behind its password. CLIPBOARD (not every selection)
             # goes to the viewer, so what you copy in the farm's browser lands on your own clipboard.
-            return ["x11vnc", "-display", self.display, "-rfbport", str(vnc_port()), "-localhost", "-forever",
-                    "-shared", "-nopw", "-quiet", "-xkb", "-noprimary", "-noxrecord"]
+            return ["x11vnc", "-display", self.display, "-rfbport", str(vnc_port(self.slot)), "-localhost",
+                    "-forever", "-shared", "-nopw", "-quiet", "-xkb", "-noprimary", "-noxrecord"]
         return [chromium_bin() or "chromium", f"--user-data-dir={self.profile}",
-                f"--remote-debugging-port={cdp_port()}", "--remote-debugging-address=127.0.0.1",
+                f"--remote-debugging-port={cdp_port(self.slot)}", "--remote-debugging-address=127.0.0.1",
                 "--no-first-run", "--no-default-browser-check", "--password-store=basic",
                 "--disable-dev-shm-usage",  # Docker's /dev/shm is 64 MB
                 "--no-sandbox",  # the container is the sandbox (docs/security.md); Chromium's needs user namespaces
@@ -330,16 +399,92 @@ class Browser:
             self.since = 0.0
 
 
+class Browsers:
+    """Every profile on this box: the registry, and one keeper per profile (run by the farm UI's process)."""
+
+    def __init__(self, workspace: str):
+        self.workspace = workspace
+        self.registry = Registry(workspace)
+        self.running: dict[str, Browser] = {}
+        self._lock = threading.RLock()
+
+    def _browser(self, p: dict) -> Browser:
+        b = self.running.get(p["name"])
+        if b is None or b.slot != int(p["slot"]):
+            if b:
+                b.shutdown()
+            log = os.path.join(self.registry.farm, "browser.log" if p["name"] == DEFAULT else f"browsers/{p['name']}.log")
+            b = self.running[p["name"]] = Browser(p["name"], int(p["slot"]), self.registry.dir(p["name"]), log)
+        return b
+
+    def slot(self, name: str) -> int:
+        p = self.registry.get(name)
+        if not p:
+            raise ValueError(f"no browser profile named {name}")
+        return int(p["slot"])
+
+    def want(self, name: str, on: bool, by: str = "") -> bool:
+        changed = self.registry.want(name, on, by)
+        if on:
+            with self._lock:
+                p = self.registry.get(name)
+                if p:
+                    self._browser(p).fresh()
+        return changed
+
+    def sync(self):
+        with self._lock:
+            profiles = self.registry.all()
+            for p in profiles:
+                self._browser(p).sync(bool(p.get("on")))
+            for name in set(self.running) - {p["name"] for p in profiles}:  # removed: stop it
+                self.running.pop(name).shutdown()
+
+    def keep(self, stop: threading.Event, every: float = 2.0):
+        while True:
+            try:
+                self.sync()
+            except Exception as e:  # noqa: BLE001 - the browser must never take the farm down
+                print(f"browser: {type(e).__name__}: {str(e)[:200]}", flush=True)
+            if stop.wait(every):
+                break
+        self.shutdown()
+
+    def shutdown(self):
+        with self._lock:
+            for b in self.running.values():
+                b.shutdown()
+
+    def status(self) -> dict:
+        lack = missing() if enabled() else ["FARM_BROWSER=0"]
+        w, h = size()
+        out = []
+        for p in self.registry.all():
+            b = self.running.get(p["name"])
+            up = not lack and cdp_up(int(p["slot"]))
+            out.append({"name": p["name"], "on": bool(p.get("on")), "ready": up,
+                        "running": bool(b and b.running()) or up, "tabs": tabs(int(p["slot"])) if up else [],
+                        "error": b.error if b else "", "since": (b.since or None) if b else None,
+                        "tools": f"mcp__{mcp_name(p['name'])}__*"})
+        return {"available": not lack, "missing": lack, "size": f"{w}x{h}", "profiles": out,
+                "max": MAX_PROFILES}
+
+
 # ------------------------------------------------------- the Claudes' tools
-def mcp_server() -> dict | None:
-    """The `browser` MCP server every Claude gets: Playwright, attached to the farm's Chromium over DevTools, so it
-    works in the logins you made from the farm UI. None when this image has no browser."""
+def mcp_servers(workspace: str | None = None) -> dict[str, dict]:
+    """The MCP servers every Claude gets, one per profile: Playwright attached to that profile's Chromium over
+    DevTools, so it works in the logins made from the farm UI. Empty when this image has no browser."""
     exe = shutil.which(MCP_BIN)
     if not (enabled() and exe and chromium_bin()):
-        return None
-    # its screenshots and logs go to the farm's folder, not into the Claude's worktree (where they'd be committed)
-    out = os.path.join(_env("FARM_WORKSPACE", "/workspace"), ".farm", "browser-files")
-    return {"type": "stdio", "command": exe, "args": ["--cdp-endpoint", cdp_url(), "--output-dir", out], "env": {}}
+        return {}
+    workspace = workspace or _env("FARM_WORKSPACE", "/workspace")
+    out = {}
+    for p in Registry(workspace).all():
+        # its screenshots and logs go to the farm's folder, not into the Claude's worktree (where they'd be committed)
+        files = os.path.join(workspace, ".farm", "browser-files", p["name"])
+        out[mcp_name(p["name"])] = {"type": "stdio", "command": exe, "env": {},
+                                    "args": ["--cdp-endpoint", cdp_url(int(p["slot"])), "--output-dir", files]}
+    return out
 
 
 def is_ours(server: dict) -> bool:

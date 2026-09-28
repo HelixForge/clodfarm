@@ -88,14 +88,17 @@ farm, spend money, create accounts, or post anything publicly unless the person 
 
 BROWSER_GUIDE = """
 ## The farm's browser
-This box has one Chromium, shared by every Claude on it and by your person, who watches it live in the farm UI
-(BROWSER). Your person logs in to sites there (e.g. LinkedIn), so it has their sessions. Drive it with your `browser`
-MCP tools (`mcp__browser__*`: navigate, snapshot, click, type, screenshot, tabs).
-- If a tool can't connect, the browser is off: `clodfarm browser start` (`clodfarm browser` shows it and its tabs).
+This box has Chromium with profiles, shared by every Claude on it and by your person, who watches it live in the farm
+UI (BROWSER). Each profile has its own logins, which your person made there (e.g. `default` logged in to their
+LinkedIn, `linkedin-work` to another account). `clodfarm browser` lists the profiles, whether each is on, and its tabs.
+- Drive a profile with its MCP tools: `default` is `mcp__browser__*`, another profile `mcp__browser-<profile>__*`
+  (navigate, snapshot, click, type, screenshot, tabs). Use the profile of the account the job is about; ask your
+  person when you can't tell which one.
+- If a profile's tools can't connect, it is off: `clodfarm browser start <profile>`. Don't add or remove profiles.
 - Open your own tab for your work and close it when you're done; don't close or navigate tabs you didn't open, and
   don't log out, change account settings or clear cookies.
 - Never type passwords or one-time codes, even ones you find. When a site needs a login (or a captcha), stop and ask
-  your person to log in from the farm UI's BROWSER, then continue.
+  your person to log in from the farm UI's BROWSER, in that profile, then continue.
 - What you do there is done as your person, on their accounts: read freely, but post, message, connect, buy or
   delete only when they asked for it. Go at a human pace, so the site doesn't flag the account.
 """
@@ -103,7 +106,7 @@ MCP tools (`mcp__browser__*`: navigate, snapshot, click, type, screenshot, tabs)
 
 def farm_guide() -> str:
     """The guide every Claude on this farm reads: FARM_GUIDE plus the sections for the features this farm has on."""
-    return FARM_GUIDE + (BROWSER_GUIDE if browser.mcp_server() else "") + awsapps.guide_section()
+    return FARM_GUIDE + (BROWSER_GUIDE if browser.mcp_servers() else "") + awsapps.guide_section()
 
 
 def task_system_prompt(cfg, task: dict, cwd: str, branch: str | None, name: str = "") -> str:

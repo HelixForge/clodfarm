@@ -70,9 +70,10 @@ def cookie(host) -> str:
     return headers["Set-Cookie"].split(";", 1)[0]
 
 
-def upgrade(host, headers: dict):
-    s = socket.create_connection(tuple(host.split(":")[0:1]) + (int(host.split(":")[1]),), timeout=5)
-    lines = ["GET /api/browser/screen HTTP/1.1", f"Host: {host}", "Upgrade: websocket", "Connection: Upgrade",
+def upgrade(host, headers: dict, profile: str = ""):
+    h, port = host.split(":")
+    s = socket.create_connection((h, int(port)), timeout=5)
+    lines = [f"GET /api/browser/screen{'?profile=' + profile if profile else ''} HTTP/1.1", f"Host: {host}", "Upgrade: websocket", "Connection: Upgrade",
              "Sec-WebSocket-Key: " + base64.b64encode(os.urandom(16)).decode(), "Sec-WebSocket-Version: 13",
              "Sec-WebSocket-Protocol: binary"] + [f"{k}: {v}" for k, v in headers.items()]
     s.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
@@ -148,17 +149,53 @@ def test_status_start_and_stop(farm, monkeypatch):
     assert call(base + "/api/browser")[0] == 401
     login(call, base)
     code, st, _ = call(base + "/api/browser")
-    assert code == 200 and not st["available"] and "chromium" in st["missing"] and not st["on"]
+    assert code == 200 and not st["available"] and "chromium" in st["missing"]
+    assert [(p["name"], p["on"], p["tools"]) for p in st["profiles"]] == [("default", False, "mcp__browser__*")]
     code, body, _ = call(base + "/api/browser/start", {})
     assert code == 400 and "no browser" in body["error"]
     monkeypatch.setattr(browser, "missing", lambda: [])  # as in the image
-    monkeypatch.setattr(ui.browser, "sync", lambda: None)
+    monkeypatch.setattr(ui.browsers, "sync", lambda: None)
     code, st, _ = call(base + "/api/browser/start", {})
-    assert code == 200 and st["on"] and ui.browser.wanted()
+    assert code == 200 and st["profiles"][0]["on"] and ui.browsers.registry.get("default")["on"]
     assert any(e["type"] == "browser.started" for e in ui.store.events(0, 50))
-    code, st, _ = call(base + "/api/browser/stop", {})
-    assert code == 200 and not st["on"] and not ui.browser.wanted()
+    code, st, _ = call(base + "/api/browser/stop", {"profile": "default"})
+    assert code == 200 and not st["profiles"][0]["on"]
     assert call(base + "/api/browser/open", {"url": "javascript:alert(1)"})[0] == 400
+    assert call(base + "/api/browser/start", {"profile": "nope"})[0] == 400
+
+
+def test_profiles_from_the_ui(farm, monkeypatch):
+    host, ui = farm
+    base, call = f"http://{host}", client()
+    login(call, base)
+    given = []
+    monkeypatch.setattr(ui.manager, "share_browser_tools", lambda: given.append(1))
+    monkeypatch.setattr(ui.browsers, "sync", lambda: None)
+    code, st, _ = call(base + "/api/browser/add", {"profile": "linkedin-work"})
+    assert code == 200 and [p["name"] for p in st["profiles"]] == ["default", "linkedin-work"] and given
+    assert st["profiles"][1]["tools"] == "mcp__browser-linkedin-work__*"
+    assert ui.browsers.slot("linkedin-work") == 1  # its own ports and screen
+    assert call(base + "/api/browser/add", {"profile": "linkedin-work"})[0] == 400  # taken
+    assert call(base + "/api/browser/add", {"profile": "Bad Name"})[0] == 400
+    assert call(base + "/api/browser/remove", {"profile": "default"})[0] == 400  # the default one stays
+    os.makedirs(ui.browsers.registry.dir("linkedin-work"))
+    code, st, _ = call(base + "/api/browser/remove", {"profile": "linkedin-work"})
+    assert code == 200 and [p["name"] for p in st["profiles"]] == ["default"]
+    assert not os.path.exists(ui.browsers.registry.dir("linkedin-work"))  # its logins are gone with it
+    assert any(e["type"] == "browser.removed" for e in ui.store.events(0, 50))
+
+
+def test_the_screen_of_another_profile(farm, vnc, monkeypatch):
+    host, ui = farm
+    ui.browsers.registry.add("second")
+    port = int(os.environ["FARM_BROWSER_VNC_PORT"])
+    monkeypatch.setenv("FARM_BROWSER_VNC_PORT", str(port - 1))  # slot 1 is the stand-in's port
+    s, f, status, _ = upgrade(host, {"Origin": f"http://{host}", "Cookie": cookie(host)}, "second")
+    assert status == 101 and browser.ws_read(f, masked=False) == (2, b"RFB 003.008\n")
+    s.close()
+    s, _, status, _ = upgrade(host, {"Origin": f"http://{host}", "Cookie": cookie(host)}, "nope")
+    s.close()
+    assert status == 404
 
 
 def test_the_page_and_novnc_are_served(farm):
@@ -175,26 +212,45 @@ def test_the_page_and_novnc_are_served(farm):
     assert e.value.code == 404
 
 
-def test_the_wanted_state_survives_and_nothing_starts_without_a_browser(tmp_path, monkeypatch):
+def test_profiles_survive_and_nothing_starts_without_a_browser(tmp_path, monkeypatch):
     monkeypatch.setenv("FARM_BROWSER_BIN", "no-such-chromium")
-    b = browser.Browser(str(tmp_path))
-    assert not b.wanted()
-    b.want(True, by="test")
-    assert browser.Browser(str(tmp_path)).wanted()  # a restarted farm starts it again
-    b.sync()
-    assert not b.procs  # this box has no chromium: nothing is started
-    b.want(False)
-    assert not b.wanted()
+    bs = browser.Browsers(str(tmp_path))
+    assert [p["name"] for p in bs.registry.all()] == ["default"] and not bs.registry.get("default")["on"]
+    assert bs.want("default", True, by="test") and not bs.want("default", True)
+    bs.registry.add("b")
+    bs.registry.add("c")
+    bs.registry.remove("b")
+    assert bs.registry.add("d")["slot"] == 1  # a freed slot is reused
+    again = browser.Browsers(str(tmp_path))  # a restarted farm
+    assert again.registry.get("default")["on"] and [p["name"] for p in again.registry.all()] == ["default", "c", "d"]
+    again.sync()
+    assert not any(b.procs for b in again.running.values())  # this box has no chromium: nothing is started
+    for i in range(browser.MAX_PROFILES - 3):
+        again.registry.add(f"x{i}")
+    with pytest.raises(ValueError):
+        again.registry.add("one-too-many")
 
 
-def test_the_mcp_server_keeps_its_files_out_of_the_repo(env, monkeypatch):
+def test_the_first_build_s_browser_is_the_default_profile(tmp_path):
+    os.makedirs(tmp_path / ".farm")
+    json.dump({"on": True}, open(tmp_path / ".farm" / "browser.json", "w"))
+    reg = browser.Registry(str(tmp_path))
+    assert reg.get("default")["on"] and reg.dir("default") == str(tmp_path / ".farm" / "browser")
+
+
+def test_each_profile_has_its_own_ports_screen_and_files(env, monkeypatch):
     monkeypatch.setattr(browser.shutil, "which", lambda b: f"/usr/bin/{b}")
-    s = browser.mcp_server()
-    assert s["args"][:2] == ["--cdp-endpoint", "http://127.0.0.1:9222"] and browser.is_ours(s)
-    assert s["args"][s["args"].index("--output-dir") + 1] == os.path.join(os.environ["FARM_WORKSPACE"], ".farm",
-                                                                          "browser-files")
+    reg = browser.Registry(os.environ["FARM_WORKSPACE"])
+    reg.add("work")
+    servers = browser.mcp_servers()
+    assert list(servers) == ["browser", "browser-work"]
+    assert servers["browser-work"]["args"][:2] == ["--cdp-endpoint", "http://127.0.0.1:9223"]
+    out = servers["browser-work"]["args"][servers["browser-work"]["args"].index("--output-dir") + 1]
+    assert out == os.path.join(os.environ["FARM_WORKSPACE"], ".farm", "browser-files", "work")  # not the worktree
+    b = browser.Browser("work", 1, reg.dir("work"), "/dev/null")
+    assert b.display == ":100" and "5901" in b._cmd("vnc") and "--remote-debugging-port=9223" in b._cmd("chromium")
     monkeypatch.setenv("FARM_BROWSER", "0")
-    assert browser.mcp_server() is None
+    assert browser.mcp_servers() == {}
 
 
 def test_urls():
@@ -206,22 +262,40 @@ def test_urls():
             browser.normalize_url(bad)
 
 
-def test_every_claude_gets_the_browser_mcp_server(env, monkeypatch):
+def server(port):
+    return {"type": "stdio", "command": "/usr/local/bin/playwright-mcp", "env": {},
+            "args": ["--cdp-endpoint", f"http://127.0.0.1:{port}"]}
+
+
+def test_every_claude_gets_a_server_per_profile(env, monkeypatch):
     path = auth.claude_json_path()
-    server = {"type": "stdio", "command": "/usr/local/bin/playwright-mcp",
-              "args": ["--cdp-endpoint", "http://127.0.0.1:9222"], "env": {}}
-    monkeypatch.setattr(browser, "mcp_server", lambda: server)
+    want = {"browser": server(9222), "browser-work": server(9223)}
+    monkeypatch.setattr(browser, "mcp_servers", lambda workspace=None: dict(want))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     json.dump({"mcpServers": {"github": {"command": "gh-mcp"}}, "keep": 1}, open(path, "w"))
     assert auth.install_browser_mcp()
     cfg = json.load(open(path))
-    assert cfg["mcpServers"]["browser"] == server and cfg["mcpServers"]["github"] and cfg["keep"] == 1
+    assert cfg["mcpServers"]["browser-work"] == want["browser-work"] and cfg["mcpServers"]["github"] and cfg["keep"] == 1
     assert not auth.install_browser_mcp()  # already there
     assert "## The farm's browser" in prompts.farm_guide()
-    monkeypatch.setattr(browser, "mcp_server", lambda: None)  # an image without the browser
+    del want["browser-work"]  # the profile was removed
     assert auth.install_browser_mcp()
-    assert "browser" not in json.load(open(path))["mcpServers"]
+    assert set(json.load(open(path))["mcpServers"]) == {"github", "browser"}
+    want.clear()  # an image without the browser
+    assert auth.install_browser_mcp()
+    assert set(json.load(open(path))["mcpServers"]) == {"github"}
     assert "## The farm's browser" not in prompts.farm_guide()
+
+
+def test_every_claude_on_the_box_gets_them(farm, monkeypatch, tmp_path):
+    _, ui = farm
+    monkeypatch.setattr(browser, "mcp_servers", lambda workspace=None: {"browser": server(9222)})
+    other = tmp_path / "gil"
+    other.mkdir()
+    monkeypatch.setattr(ui.manager, "_load", lambda: [{"id": "gil", "name": "gil", "config_dir": str(other)}])
+    ui.manager.share_browser_tools()
+    for p in (auth.claude_json_path(), other / ".claude.json"):
+        assert json.load(open(p))["mcpServers"]["browser"] == server(9222)
 
 
 def test_a_browser_server_set_up_by_hand_is_kept(env, monkeypatch):
@@ -229,8 +303,7 @@ def test_a_browser_server_set_up_by_hand_is_kept(env, monkeypatch):
     mine = {"command": "npx", "args": ["@playwright/mcp@latest"]}
     os.makedirs(os.path.dirname(path), exist_ok=True)
     json.dump({"mcpServers": {"browser": mine}}, open(path, "w"))
-    monkeypatch.setattr(browser, "mcp_server", lambda: {"command": "playwright-mcp",
-                                                        "args": ["--cdp-endpoint", "x"]})
+    monkeypatch.setattr(browser, "mcp_servers", lambda workspace=None: {"browser": server(9222)})
     assert not auth.install_browser_mcp()
     assert json.load(open(path))["mcpServers"]["browser"] == mine
 
@@ -242,3 +315,10 @@ def test_the_cli(env, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out)["available"] is False
     assert cli.main(["browser", "start"]) == 1
     assert "no browser" in capsys.readouterr().err
+    assert cli.main(["browser", "add", "work"]) == 0
+    assert "mcp__browser-work__*" in capsys.readouterr().out
+    assert cli.main(["browser", "--json"]) == 0
+    assert [p["name"] for p in json.loads(capsys.readouterr().out)["profiles"]] == ["default", "work"]
+    assert cli.main(["browser", "open", "x.com", "--profile", "work"]) == 1  # it's off
+    assert cli.main(["browser", "remove", "work"]) == 0
+    assert cli.main(["browser", "remove", "work"]) == 1  # gone already

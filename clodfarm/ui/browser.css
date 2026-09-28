@@ -49,3 +49,23 @@
   .screen { height: 56vh; }
   .top-actions .chip { display: none; }
 }
+
+/* profiles: one tab per profile, its dot green when it runs */
+.profiles { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 14px; }
+.profile-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.ptab {
+  display: inline-flex; align-items: center; gap: 8px; font: 9px/1 var(--font-px); padding: 9px 12px; color: var(--ink);
+  background: var(--tan-2); border: 3px solid var(--ink); border-radius: 6px; box-shadow: 0 3px 0 var(--ink);
+}
+.ptab:hover { background: var(--paper); }
+.ptab[aria-selected="true"] { background: var(--paper); border-color: var(--clay-2); box-shadow: 0 3px 0 var(--clay-2); color: var(--clay-2); }
+.ptab .dot { width: 8px; height: 8px; background: #9aa3b2; }
+.ptab.up .dot { background: var(--hp-good); box-shadow: 0 0 6px var(--hp-good); }
+.ptab.wait .dot { background: var(--hp-mid); }
+.add-form { display: inline-flex; gap: 8px; align-items: center; }
+.add-form input { font: 20px/1 var(--font-body); padding: 6px 10px; width: 14em; border: 3px solid var(--ink); border-radius: 6px; background: var(--white); color: var(--ink); }
+.bar-error:empty { display: none; }
+.bar-error { color: #fff; background: rgba(122, 42, 29, .85); padding: 6px 10px; border-radius: 4px; margin: -4px 0 12px; }
+.profile-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 24px; }
+.btn.danger { background: #f6d8d1; border-color: #7a2a1d; box-shadow: 0 3px 0 #7a2a1d; color: #7a2a1d; }
+.confirm { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; color: #fff; text-shadow: 1px 1px 0 #1b2410; }

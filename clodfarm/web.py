@@ -158,7 +158,7 @@ class FarmUI:
         self.auth = Auth(os.path.join(cfg.workspace, ".farm", "ui-auth.json"))
         self.slack = SlackBridge(cfg, self.store)
         self.oauth = mcp.OAuthStore(mcp.oauth_path(cfg.workspace))
-        self.browser = browser.Browser(cfg.workspace)  # the farm's Chromium: BROWSER on the farm, /browser
+        self.browsers = browser.Browsers(cfg.workspace)  # the farm's Chromium profiles: BROWSER on the farm, /browser
         self.stopping = threading.Event()
         self._state_cache: tuple[float, dict] | None = None
         self._lock = threading.Lock()
@@ -515,8 +515,13 @@ def make_handler(ui: FarmUI):
                 return self._err(403, "origin not allowed")
             if not self._user():
                 return self._err(401, "log in first")
+            q = {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()}
             try:
-                vnc = socket.create_connection(("127.0.0.1", browser.vnc_port()), timeout=3)
+                slot = ui.browsers.slot(q.get("profile") or browser.DEFAULT)
+            except ValueError as e:
+                return self._err(404, str(e))
+            try:
+                vnc = socket.create_connection(("127.0.0.1", browser.vnc_port(slot)), timeout=3)
             except OSError:
                 return self._err(503, "the browser is not running: start it first")
             self.send_response(101, "Switching Protocols")
@@ -575,7 +580,7 @@ def make_handler(ui: FarmUI):
                 if path == "/api/slack":
                     return self._json(ui.slack.view())
                 if path == "/api/browser":
-                    return self._json(ui.browser.status())
+                    return self._json(ui.browsers.status())
                 m = re.fullmatch(r"/api/agents/([a-z0-9@._-]+)/tools", path)
                 if m:  # what that Claude can use, as its last run saw it
                     t = ui.store.tools().get(m.group(1))
@@ -659,21 +664,32 @@ def make_handler(ui: FarmUI):
                 return self._json(ui.slack.connect(str(data.get("bot_token", ""))[:300],
                                                    str(data.get("app_token", ""))[:300], allow, ui_url))
             if path in ("/api/browser/start", "/api/browser/stop"):
-                on = path.endswith("start")
+                on, name = path.endswith("start"), str(data.get("profile") or browser.DEFAULT)
                 if on and not browser.available():
                     raise ValueError("this image has no browser: " + ", ".join(browser.missing() or ["FARM_BROWSER=0"]))
-                if on != ui.browser.wanted():
-                    ui.browser.want(on, by="ui")
+                if ui.browsers.want(name, on, by="ui"):
                     store.event("browser.started" if on else "browser.stopped",
-                                f"the farm's browser was {'started' if on else 'stopped'} from the farm UI", by="ui")
-                threading.Thread(target=ui.browser.sync, name="browser-sync", daemon=True).start()
-                return self._json(ui.browser.status())
+                                f"browser profile {name} {'started' if on else 'stopped'} from the farm UI", by="ui")
+                threading.Thread(target=ui.browsers.sync, name="browser-sync", daemon=True).start()
+                return self._json(ui.browsers.status())
             if path == "/api/browser/open":
                 url = browser.normalize_url(str(data.get("url", ""))[:2000])
+                slot = ui.browsers.slot(str(data.get("profile") or browser.DEFAULT))
                 try:
-                    return self._json(browser.open_url(url))
+                    return self._json(browser.open_url(url, slot))
                 except OSError:
-                    return self._err(503, "the browser is not running: start it first")
+                    return self._err(503, "that profile's browser is not running: start it first")
+            if path in ("/api/browser/add", "/api/browser/remove"):
+                name = str(data.get("profile") or "")
+                if path.endswith("add"):
+                    ui.browsers.registry.add(name, by="ui")
+                    store.event("browser.added", f"browser profile {name} added from the farm UI", by="ui")
+                elif ui.browsers.registry.remove(name):
+                    store.event("browser.removed", f"browser profile {name} and its logins removed from the farm UI",
+                                by="ui")
+                ui.manager.share_browser_tools()
+                threading.Thread(target=ui.browsers.sync, name="browser-sync", daemon=True).start()
+                return self._json(ui.browsers.status())
             if path == "/api/slack/allow":
                 ui.slack.set_allow([x.strip() for x in re.split(r"[,\s]+", str(data.get("allow") or "")) if x.strip()][:200])
                 return self._json(ui.slack.view())
@@ -721,7 +737,7 @@ def serve(cfg, store: Store | None = None, manager: AgentManager | None = None, 
     httpd.daemon_threads = True
     httpd.ui = ui
     threading.Thread(target=ui.manager.keep_alive, name="agents", daemon=True).start()
-    threading.Thread(target=ui.browser.keep, args=(ui.stopping,), name="browser", daemon=True).start()
+    threading.Thread(target=ui.browsers.keep, args=(ui.stopping,), name="browser", daemon=True).start()
     ui.slack.start()  # talk to the farm from Slack, once it's connected (the SLACK button)
     print(f"farm UI on http://{'localhost' if host in ('0.0.0.0', '::') else host}:{port}", flush=True)
     if ui.auth.generated:
@@ -737,6 +753,6 @@ def serve(cfg, store: Store | None = None, manager: AgentManager | None = None, 
     finally:
         ui.slack.stop()
         ui.stopping.set()
-        ui.browser.shutdown()
+        ui.browsers.shutdown()
         ui.manager.shutdown()
     return httpd

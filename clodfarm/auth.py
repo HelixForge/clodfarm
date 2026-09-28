@@ -239,26 +239,29 @@ def install_model(model: str):
     _atomic_write(path, json.dumps(cfg, indent=2))
 
 
-def install_browser_mcp() -> bool:
-    """Give this Claude the farm's browser as MCP tools (the `browser` server: Playwright attached to the farm's
-    Chromium, so it works in the logins made from the farm UI). A `browser` server set up by hand is kept; ours is
-    removed when this image has no browser. Returns True if the config changed."""
+def install_browser_mcp(path: str | None = None) -> bool:
+    """Give this Claude the farm's browser profiles as MCP tools: one server per profile (``browser`` for the default
+    one, ``browser-<name>`` for the others), each Playwright attached to that profile's Chromium, so it works in the
+    logins made from the farm UI. Servers of removed profiles go; a server of the same name set up by hand is kept.
+    ``path``: another Claude's .claude.json (the farm UI updates every Claude when a profile is added or removed).
+    Returns True if the config changed."""
     from . import browser
-    p = claude_json_path()
+    p = path or claude_json_path()
     try:
         cfg = json.load(open(p))
     except (OSError, ValueError):
         cfg = {}
-    servers = cfg.get("mcpServers") or {}
-    cur, want = servers.get(browser.MCP_NAME), browser.mcp_server()
-    if cur is not None and not browser.is_ours(cur):
+    servers = dict(cfg.get("mcpServers") or {})
+    want = browser.mcp_servers()
+    for name, server in list(servers.items()):
+        if (name == browser.MCP_NAME or name.startswith(browser.MCP_NAME + "-")) and browser.is_ours(server) \
+                and name not in want:
+            del servers[name]
+    for name, server in want.items():
+        if servers.get(name) is None or browser.is_ours(servers[name]):
+            servers[name] = server
+    if servers == (cfg.get("mcpServers") or {}):
         return False
-    if cur == want:
-        return False
-    if want:
-        servers[browser.MCP_NAME] = want
-    else:
-        servers.pop(browser.MCP_NAME, None)
     cfg["mcpServers"] = servers
     os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
     _atomic_write(p, json.dumps(cfg, indent=2))

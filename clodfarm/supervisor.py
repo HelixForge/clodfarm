@@ -148,7 +148,7 @@ class Farm:
         if self.ui:
             self.ui.ui.manager.shutdown()  # the agents added in the UI hand their tasks back too
             self.ui.ui.stopping.set()
-            self.ui.ui.browser.shutdown()  # Chromium saves its cookies on the way out
+            self.ui.ui.browsers.shutdown()  # Chromium saves its cookies on the way out
         for p in list(self.procs.values()):
             try:
                 os.killpg(p.pid, signal.SIGTERM)

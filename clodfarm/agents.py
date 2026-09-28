@@ -163,6 +163,15 @@ class AgentManager:
     def all(self) -> list[dict]:
         return [self.primary()] + self._load()
 
+    def share_browser_tools(self):
+        """Every Claude on this box gets the MCP tools of every browser profile (their new sessions see a change)."""
+        from .auth import install_browser_mcp
+        for a in self.all():
+            try:
+                install_browser_mcp(os.path.join(a["config_dir"], ".claude.json") if not a.get("primary") else None)
+            except (OSError, KeyError) as e:
+                print(f"browser: tools not given to {a.get('id')}: {e}", flush=True)
+
     def get(self, aid: str) -> dict | None:
         return next((a for a in self.all() if a["id"] == aid), None)
 
