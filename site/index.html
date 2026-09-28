@@ -29,9 +29,10 @@
 <meta name="twitter:image" content="https://clod.farm/og.png">
 
 <link rel="preload" href="/fonts/PressStart2P.ttf" as="font" type="font/ttf" crossorigin>
-<link rel="stylesheet" href="/style.css?v=202609260310">
+<link rel="stylesheet" href="/style.css?v=202609281400">
 <script src="/farm.js?v=202609261720" defer></script>
 <script src="/copy.js" defer></script>
+<script src="/site.js?v=202609281200" defer></script>
 
 <script type="application/ld+json">
 {
@@ -87,6 +88,14 @@
   },
   {
    "@type": "Question",
+   "name": "Can you run a farm for my business?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "Yes. Leave your email under Get your own farm and we'll set up a farm online for you, on its own address, with a dashboard of what the agents shipped. You don't need to run Docker yourself."
+   }
+  },
+  {
+   "@type": "Question",
    "name": "Is clodfarm made by Anthropic?",
    "acceptedAnswer": {
     "@type": "Answer",
@@ -118,20 +127,39 @@
     <div class="install">
       <span class="prompt" aria-hidden="true">$</span>
       <code id="cmd">curl -fsSL https://raw.githubusercontent.com/matank001/clodfarm/main/scripts/install.sh | sh</code>
-      <button class="copy-btn" type="button" data-copy="#cmd" aria-label="Copy install command" title="Copy">
+      <button class="copy-btn" type="button" data-copy="#cmd" data-event="copy_install" aria-label="Copy install command" title="Copy">
         <svg class="i-copy" viewBox="0 0 12 12" width="24" height="24" shape-rendering="crispEdges" aria-hidden="true"><path fill="currentColor" d="M4 0h7v1H4zM3 1h1v2H3zM11 1h1v7h-1zM4 8h7v1H4zM0 3h7v1H0zM0 4h1v8H0zM7 4h1v8H7zM1 11h6v1H1z"/><path fill="#d97757" d="M1 4h6v7H1z"/></svg>
         <svg class="i-done" viewBox="0 0 12 12" width="24" height="24" shape-rendering="crispEdges" aria-hidden="true"><path fill="#1f7a45" d="M10 2h2v2h-2zM8 4h2v2H8zM6 6h2v2H6zM4 8h2v2H4zM2 6h2v2H2zM0 4h2v2H0z"/></svg>
       </button>
     </div>
 
     <div class="actions">
-      <a class="btn primary" href="https://github.com/matank001/clodfarm/tree/main/docs">▶ DOCS</a>
-      <a class="btn" href="https://github.com/matank001/clodfarm"><svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.87.31-1.59.83-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.08-1.87 3.76-3.66 3.96.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg> GITHUB</a>
+      <a class="btn primary" href="https://github.com/matank001/clodfarm/tree/main/docs" data-event="docs">▶ DOCS</a>
+      <a class="btn" href="https://github.com/matank001/clodfarm" data-event="github"><svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.87.31-1.59.83-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.08-1.87 3.76-3.66 3.96.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg> GITHUB</a>
     </div>
     <p class="note">Open source, MIT. Runs anywhere Docker does.</p>
+    <a class="btn cta" href="#get-farm" data-event="get_farm"><span class="cta-main">▶ GET YOUR OWN FARM</span><span class="cta-sub">We set it up and run it for your business</span></a>
     </section>
   </div>
 </main>
+
+<section id="get-farm" class="get panel" aria-labelledby="get-h">
+  <h2 id="get-h">GET YOUR OWN FARM</h2>
+  <p class="get-lead">Don't want to run Docker yourself? Leave your email and we'll set up a farm for your business:
+    online, on its own address, with a dashboard that shows what your agents shipped.</p>
+  <form id="farm-form" class="get-form" novalidate>
+    <label for="f-email">Work email</label>
+    <input id="f-email" name="email" type="email" required maxlength="254" autocomplete="email" inputmode="email" placeholder="you@company.com">
+    <label for="f-business">Business <span class="opt">(optional)</span></label>
+    <input id="f-business" name="business" type="text" maxlength="120" autocomplete="organization" placeholder="Acme Inc.">
+    <label for="f-note">What should your farm do? <span class="opt">(optional)</span></label>
+    <textarea id="f-note" name="note" rows="3" maxlength="1000" placeholder="Fix our bug backlog, keep the docs up to date, build the admin panel..."></textarea>
+    <div class="hp" aria-hidden="true"><label for="f-website">Website</label><input id="f-website" name="website" type="text" tabindex="-1" autocomplete="off"></div>
+    <button class="btn primary cta-submit" type="submit">▶ CREATE MY FARM</button>
+  </form>
+  <p id="farm-status" class="farm-status" role="status" aria-live="polite" tabindex="-1"></p>
+  <p class="get-fine">We only use your email to set up your farm and to write to you about it.</p>
+</section>
 
 <section class="faq panel" aria-labelledby="faq-h">
   <h2 id="faq-h">QUESTIONS</h2>
@@ -152,6 +180,10 @@
       <p>Yes. Point several boxes at one shared DynamoDB table and git repo. They share one queue, and each Claude account is paced on its own budget. For people working together, use Team or Enterprise seats, each person on their own login.</p>
     </details>
     <details>
+      <summary>Can you run a farm for my business?</summary>
+      <p>Yes. Leave your email under Get your own farm and we&#x27;ll set up a farm online for you, on its own address, with a dashboard of what the agents shipped. You don&#x27;t need to run Docker yourself.</p>
+    </details>
+    <details>
       <summary>Is clodfarm made by Anthropic?</summary>
       <p>No. It is an independent open-source project, not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC.</p>
     </details>
@@ -160,6 +192,7 @@
 <footer class="foot">
   <p>clodfarm is an independent open-source project, not affiliated with Anthropic. Claude and Claude Code are
     trademarks of Anthropic, PBC.</p>
+  <p class="foot-stats">Site stats are cookieless: we count visits without storing who you are.</p>
 </footer>
 </body>
 </html>
