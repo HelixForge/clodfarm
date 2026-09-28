@@ -30,7 +30,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import __version__, dashboards
+from . import __version__, browser, dashboards
 from . import mcp
 from .agents import AgentManager
 from .slack import SlackBridge
@@ -158,6 +158,8 @@ class FarmUI:
         self.auth = Auth(os.path.join(cfg.workspace, ".farm", "ui-auth.json"))
         self.slack = SlackBridge(cfg, self.store)
         self.oauth = mcp.OAuthStore(mcp.oauth_path(cfg.workspace))
+        self.browsers = browser.Browsers(cfg.workspace)  # the farm's Chromium profiles: BROWSER on the farm, /browser
+        self.stopping = threading.Event()
         self._state_cache: tuple[float, dict] | None = None
         self._lock = threading.Lock()
 
@@ -200,12 +202,14 @@ class FarmUI:
             name = box.split("@")[0]
             if name not in ids and not box.endswith(here) and all(c[0]["id"] != name for c in claudes):
                 claudes.append(({"id": name, "name": name, "remote": True, "hat": "cap"}, True))
+        talking = self._talking(store)
         agents = []
         for a, remote in claudes:
             ws = by_name.get(a["id"], [])
             seat = next((w.get("seat") for w in ws if w.get("seat")), None)
             agents.append(self._agent_view(a, {"loggedIn": True} if remote else self.manager.auth(a), ws, seat,
                                            seats, stats, rc.get(a["id"]) or rc.get(a.get("name"))))
+            agents[-1]["talking"] = talking.get(a["id"])
         primary = self.cfg.name
         subs = []
         for s in ("running", "waiting", "queued"):
@@ -226,6 +230,26 @@ class FarmUI:
             "events": [{"at": e["at"], "type": e["type"], "msg": e["msg"][:240], "task": e.get("task"), "by": e.get("by")}
                        for e in events[-40:]],
         }
+
+    TURN_QUIET = 600  # a turn whose transcript is silent this long was interrupted (no Stop comes then)
+
+    def _talking(self, store) -> dict[str, dict]:
+        """Per Claude, its conversations in the middle of a turn: how many, since when, and the newest one's title."""
+        out: dict[str, dict] = {}
+        for s in store.sessions(None, 200):
+            if s.get("kind") != "conversation" or not s.get("busy") or s.get("ended"):
+                continue
+            seen = float(s.get("last_at") or 0)
+            try:  # the transcript grows while the turn runs (same box); a Claude on another box: its last hook
+                seen = max(seen, os.path.getmtime(s["transcript"]))
+            except (KeyError, TypeError, OSError):
+                pass
+            if now() - seen > self.TURN_QUIET:
+                continue
+            t = out.setdefault(s.get("claude") or self.cfg.name, {"n": 0, "since": now(), "title": s.get("title") or ""})
+            t["n"] += 1
+            t["since"] = min(t["since"], float(s.get("last_at") or now()))
+        return out
 
     def _agent_view(self, a, st, ws, seat, seats, stats, link) -> dict:
         r = seats.get(seat) if seat else None
@@ -325,9 +349,9 @@ def make_handler(ui: FarmUI):
                 raise ValueError("expected a JSON object")
             return data
 
-        def _static(self, rel: str):
-            path = os.path.realpath(os.path.join(UI_DIR, rel))
-            if not path.startswith(os.path.realpath(UI_DIR) + os.sep) or not os.path.isfile(path):
+        def _static(self, rel: str, root: str = UI_DIR):
+            path = os.path.realpath(os.path.join(root, rel))
+            if not path.startswith(os.path.realpath(root) + os.sep) or not os.path.isfile(path):
                 return self._err(404, "not found")
             ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
             if ctype.startswith("text/") or ctype in ("application/javascript",):
@@ -492,11 +516,51 @@ def make_handler(ui: FarmUI):
             self._headers(405, "application/json", {"Allow": "POST"}, 2)
             self.wfile.write(b"{}")
 
-        def _page(self, rel: str):
+        def _page(self, rel: str, csp: str = CSP):
             """An HTML page at a nested path: its asset links are written against the UI's base, not relative."""
             data = open(os.path.join(UI_DIR, rel), "rb").read().replace(b"{{BASE}}", BASE.encode())
-            self._headers(200, "text/html; charset=utf-8", {"Cache-Control": "no-cache"}, len(data))
+            self._headers(200, "text/html; charset=utf-8", {"Cache-Control": "no-cache"}, len(data), csp=csp)
             self.wfile.write(data)
+
+        # -------------------------------------------------------- the browser
+        def _same_origin(self) -> bool:
+            """A WebSocket has no CORS: only a page of this farm may open one (the cookie alone is not enough)."""
+            origin = urlsplit(self.headers.get("Origin") or "")
+            hosts = {self.headers.get("Host"), self.headers.get("X-Forwarded-Host"), urlsplit(self._pub()).netloc}
+            return origin.scheme in ("http", "https") and bool(origin.netloc) and origin.netloc in hosts - {None, ""}
+
+        def _browser_screen(self):
+            """The farm's browser screen: a WebSocket bridged to its VNC server, for noVNC on /browser."""
+            if (self.headers.get("Upgrade") or "").lower() != "websocket" or not self.headers.get("Sec-WebSocket-Key"):
+                return self._err(400, "a WebSocket upgrade is expected here")
+            if not self._same_origin():
+                return self._err(403, "origin not allowed")
+            if not self._user():
+                return self._err(401, "log in first")
+            q = {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()}
+            try:
+                slot = ui.browsers.slot(q.get("profile") or browser.DEFAULT)
+            except ValueError as e:
+                return self._err(404, str(e))
+            try:
+                vnc = socket.create_connection(("127.0.0.1", browser.vnc_port(slot)), timeout=3)
+            except OSError:
+                return self._err(503, "the browser is not running: start it first")
+            self.send_response(101, "Switching Protocols")
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", browser.ws_accept(self.headers["Sec-WebSocket-Key"].strip()))
+            protos = [p.strip() for p in (self.headers.get("Sec-WebSocket-Protocol") or "").split(",") if p.strip()]
+            if "binary" in protos:
+                self.send_header("Sec-WebSocket-Protocol", "binary")
+            self.end_headers()
+            self.close_connection = True
+            browser.bridge(self.rfile, self.wfile, self.connection, vnc)
+
+        def _browser_csp(self) -> str:
+            host = self.headers.get("Host") or ""
+            ws = f" ws://{host} wss://{host}" if re.fullmatch(r"[A-Za-z0-9.:\[\]-]{1,200}", host) else ""
+            return CSP.replace("connect-src 'self'", "connect-src 'self'" + ws)
 
         # ----------------------------------------------------------- GET
         def do_GET(self):
@@ -520,6 +584,12 @@ def make_handler(ui: FarmUI):
                     return self._json({"ok": True, "version": __version__})
                 if path in ("/dashboards", "/dashboards/") or re.fullmatch(r"/dashboards/[a-z0-9-]{1,48}", path):
                     return self._page("dash.html")  # the list and each dashboard: one page, routed by dash.js
+                if path in ("/browser", "/browser/"):
+                    return self._page("browser.html", self._browser_csp())
+                if path.startswith("/browser/novnc/"):  # noVNC, the VNC client the browser page draws with
+                    return self._static(path[len("/browser/novnc/"):], browser.novnc_dir())
+                if path == "/api/browser/screen":
+                    return self._browser_screen()
                 if not path.startswith("/api/"):
                     return self._static(path.lstrip("/"))
                 if path == "/api/me":
@@ -531,6 +601,8 @@ def make_handler(ui: FarmUI):
                     return self._json(ui.state())
                 if path == "/api/slack":
                     return self._json(ui.slack.view())
+                if path == "/api/browser":
+                    return self._json(ui.browsers.status())
                 m = re.fullmatch(r"/api/agents/([a-z0-9@._-]+)/tools", path)
                 if m:  # what that Claude can use, as its last run saw it
                     t = ui.store.tools().get(m.group(1))
@@ -613,6 +685,33 @@ def make_handler(ui: FarmUI):
                 ui_url = origin + BASE + "/" if re.fullmatch(r"https?://[A-Za-z0-9.:-]+", origin) else ""
                 return self._json(ui.slack.connect(str(data.get("bot_token", ""))[:300],
                                                    str(data.get("app_token", ""))[:300], allow, ui_url))
+            if path in ("/api/browser/start", "/api/browser/stop"):
+                on, name = path.endswith("start"), str(data.get("profile") or browser.DEFAULT)
+                if on and not browser.available():
+                    raise ValueError("this image has no browser: " + ", ".join(browser.missing() or ["FARM_BROWSER=0"]))
+                if ui.browsers.want(name, on, by="ui"):
+                    store.event("browser.started" if on else "browser.stopped",
+                                f"browser profile {name} {'started' if on else 'stopped'} from the farm UI", by="ui")
+                threading.Thread(target=ui.browsers.sync, name="browser-sync", daemon=True).start()
+                return self._json(ui.browsers.status())
+            if path == "/api/browser/open":
+                url = browser.normalize_url(str(data.get("url", ""))[:2000])
+                slot = ui.browsers.slot(str(data.get("profile") or browser.DEFAULT))
+                try:
+                    return self._json(browser.open_url(url, slot))
+                except OSError:
+                    return self._err(503, "that profile's browser is not running: start it first")
+            if path in ("/api/browser/add", "/api/browser/remove"):
+                name = str(data.get("profile") or "")
+                if path.endswith("add"):
+                    ui.browsers.registry.add(name, by="ui")
+                    store.event("browser.added", f"browser profile {name} added from the farm UI", by="ui")
+                elif ui.browsers.registry.remove(name):
+                    store.event("browser.removed", f"browser profile {name} and its logins removed from the farm UI",
+                                by="ui")
+                ui.manager.share_browser_tools()
+                threading.Thread(target=ui.browsers.sync, name="browser-sync", daemon=True).start()
+                return self._json(ui.browsers.status())
             if path == "/api/slack/allow":
                 ui.slack.set_allow([x.strip() for x in re.split(r"[,\s]+", str(data.get("allow") or "")) if x.strip()][:200])
                 return self._json(ui.slack.view())
@@ -660,6 +759,7 @@ def serve(cfg, store: Store | None = None, manager: AgentManager | None = None, 
     httpd.daemon_threads = True
     httpd.ui = ui
     threading.Thread(target=ui.manager.keep_alive, name="agents", daemon=True).start()
+    threading.Thread(target=ui.browsers.keep, args=(ui.stopping,), name="browser", daemon=True).start()
     ui.slack.start()  # talk to the farm from Slack, once it's connected (the SLACK button)
     print(f"farm UI on http://{'localhost' if host in ('0.0.0.0', '::') else host}:{port}", flush=True)
     if ui.auth.generated:
@@ -674,5 +774,7 @@ def serve(cfg, store: Store | None = None, manager: AgentManager | None = None, 
         httpd.serve_forever()
     finally:
         ui.slack.stop()
+        ui.stopping.set()
+        ui.browsers.shutdown()
         ui.manager.shutdown()
     return httpd

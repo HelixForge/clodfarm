@@ -239,6 +239,35 @@ def install_model(model: str):
     _atomic_write(path, json.dumps(cfg, indent=2))
 
 
+def install_browser_mcp(path: str | None = None) -> bool:
+    """Give this Claude the farm's browser profiles as MCP tools: one server per profile (``browser`` for the default
+    one, ``browser-<name>`` for the others), each Playwright attached to that profile's Chromium, so it works in the
+    logins made from the farm UI. Servers of removed profiles go; a server of the same name set up by hand is kept.
+    ``path``: another Claude's .claude.json (the farm UI updates every Claude when a profile is added or removed).
+    Returns True if the config changed."""
+    from . import browser
+    p = path or claude_json_path()
+    try:
+        cfg = json.load(open(p))
+    except (OSError, ValueError):
+        cfg = {}
+    servers = dict(cfg.get("mcpServers") or {})
+    want = browser.mcp_servers()
+    for name, server in list(servers.items()):
+        if (name == browser.MCP_NAME or name.startswith(browser.MCP_NAME + "-")) and browser.is_ours(server) \
+                and name not in want:
+            del servers[name]
+    for name, server in want.items():
+        if servers.get(name) is None or browser.is_ours(servers[name]):
+            servers[name] = server
+    if servers == (cfg.get("mcpServers") or {}):
+        return False
+    cfg["mcpServers"] = servers
+    os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+    _atomic_write(p, json.dumps(cfg, indent=2))
+    return True
+
+
 def trust_directory(path: str):
     """Mark a folder as trusted and onboarding as done, so unattended sessions
     (Remote Control, headless workers) never stop at a first-run dialog."""

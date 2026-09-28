@@ -53,6 +53,7 @@ through your limits. clodfarm is the operations layer it's missing:
 | <img src="assets/icons/shield-check.svg" width="18" height="18" align="top" alt=""> **Nothing lands untested** | Work reaches main only when your tests pass. |
 | <img src="assets/icons/clock.svg" width="18" height="18" align="top" alt=""> **Schedules** | "Every weekday at 9, triage new issues." Cron, intervals or one-offs. |
 | <img src="assets/icons/chart-column.svg" width="18" height="18" align="top" alt=""> **Dashboards** | The Claudes keep live pages that show what is improving ([docs](docs/dashboards.md)). |
+| <img src="assets/icons/globe.svg" width="18" height="18" align="top" alt=""> **A browser, logged in** | Log in to a site once in the farm's browser (LinkedIn, an admin panel) and every Claude works there as you, in the window you watch ([docs](docs/browser.md)). |
 | <img src="assets/icons/slack.svg" width="18" height="18" align="top" alt=""> **Slack** | DM or @mention the farm and a sub-agent answers in the thread. Two-minute setup ([docs](docs/slack.md)). |
 | <img src="assets/icons/modelcontextprotocol.svg" width="18" height="18" align="top" alt=""> **Claude Code on your laptop** | Connect over MCP and hand the farm work without leaving your editor. |
 | <img src="assets/icons/aws.svg" width="18" height="18" align="top" alt=""> **Builds apps on AWS (optional)** | The Claudes ship their own serverless apps inside a fenced role with a hard budget cap ([details](#let-the-farm-build-apps-on-aws-optional)). |

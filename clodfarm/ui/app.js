@@ -194,6 +194,8 @@ const ICONS = {
     { o: "#6b5a3a", c: "#f6eed8", s: "#e2875f", d: "#d8c9a3" }],
   chart: [["o.........", "o.......gg", "o.......gg", "o....bb.gg", "o....bb.gg", "o.rr.bb.gg", "o.rr.bb.gg", "o.rr.bb.gg", "o.rr.bb.gg", "oooooooooo"],
     { o: "#3c4a6b", b: "#1c9fd6", g: "#3cc36b", r: "#d97757" }],
+  globe: [["...oooo...", "..obwbbo..", ".obwbbwbo.", "obbwbbwbbo", "owwwwwwwwo", "obbwbbwbbo", "owwwwwwwwo", ".obwbbwbo.", "..obwbbo..", "...oooo..."],
+    { o: "#1b3a5a", b: "#1c9fd6", w: "#d8eef8" }],
   quill: [["........oo", ".......owo", "......owwo", ".....owwo.", "....owwo..", "...owwo...", "..oowo....", "..ooo.....", ".ooo......", "oo........"],
     { o: "#3a2a1a", w: "#f6ecd0" }],
 };
@@ -498,7 +500,7 @@ class Critter {
 
 // ======================================================================= scene
 const Scene = {
-  cv: $("#world"), ctx: null, S: 3, world: null, critters: new Map(), sparkles: [], fireflies: [],
+  cv: $("#world"), ctx: null, S: 3, world: null, critters: new Map(), sparkles: [],
   labels: $("#labels"), selected: null, hover: null, plotTasks: [], boardCount: 0, demo: false, t: 0,
   init() {
     this.ctx = this.cv.getContext("2d");
@@ -566,14 +568,6 @@ const Scene = {
     for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, s = 10 + Math.random() * 26;
       this.sparkles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 12, life: 0.7 + Math.random() * 0.5, c: color || ["#fff4c2", "#ffd59e", "#f2a07a", "#ffffff"][i % 4] }); }
   },
-  darkness() {
-    const d = new Date(), hr = d.getHours() + d.getMinutes() / 60;
-    const N = 0.36;
-    if (hr >= 20.5 || hr < 5.5) return N;
-    if (hr >= 18.5) return (hr - 18.5) / 2 * N;
-    if (hr < 7) return (7 - hr) / 1.5 * N;
-    return 0;
-  },
   frame(dt) {
     const g = this.ctx, W = this.cv.width, H = this.cv.height, w = this.world, L = w.L, t = this.t;
     g.drawImage(w.bg, 0, 0);
@@ -623,15 +617,6 @@ const Scene = {
     }
     for (const c of list) if (c.gone && performance.now() - c.gone > 520) { this.critters.delete(c.key); c.el?.remove(); c.tagEl?.remove(); }
     g.drawImage(w.fg, 0, 0);
-    // night: a blue wash, glowing terminals and fireflies
-    const dk = this.darkness();
-    if (dk > 0) {
-      g.fillStyle = `rgba(16,22,58,${dk})`; g.fillRect(0, 0, W, H);
-      for (const c of list) if (c.mode === "work" && !c.moving && !c.mini) { g.fillStyle = "rgba(124,252,154,.25)"; g.fillRect(Math.round(c.x + 2), Math.round(c.y - 9), 12, 9); g.drawImage(LAPTOP_ON, Math.round(c.x + 4), Math.round(c.y - 6)); }
-      if (this.fireflies.length < 18) this.fireflies.push({ x: Math.random() * W, y: Math.random() * H, p: Math.random() * 9 });
-      for (const f of this.fireflies) { f.p += dt; f.x += Math.sin(f.p * 0.7) * 0.2; f.y += Math.cos(f.p * 0.5) * 0.15;
-        if (Math.sin(f.p * 2) > 0.2) { g.fillStyle = "#fff6a8"; g.fillRect(Math.round(f.x), Math.round(f.y), 1, 1); g.fillStyle = "rgba(255,246,168,.25)"; g.fillRect(Math.round(f.x) - 1, Math.round(f.y) - 1, 3, 3); } }
-    }
     // sparkles
     this.sparkles = this.sparkles.filter(p => (p.life -= dt) > 0);
     for (const p of this.sparkles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 40 * dt; g.fillStyle = p.c; g.fillRect(Math.round(p.x), Math.round(p.y), 1, 1); }
@@ -681,7 +666,7 @@ function reconcile(st) {
   const want = new Map(), L = Scene.world.L, subs = st.subagents || [];
   const ids = new Set(st.agents.map(a => a.id)), home = (st.agents.find(a => a.primary) || st.agents[0] || {}).id;
   const ownerOf = (t) => ids.has(t.owner) ? t.owner : home;
-  const active = st.agents.filter(a => subs.some(t => ownerOf(t) === a.id));
+  const active = st.agents.filter(a => a.talking || subs.some(t => ownerOf(t) === a.id)); // at work: a turn or sub-agents
   const plotOf = new Map(active.map((a, i) => [a.id, L.plots[i % L.plots.length]]));
   const used = new Map();
   const spotFor = (plot) => {
@@ -725,14 +710,14 @@ function reconcile(st) {
     c.label = d.mini ? "" : d.agent.name;
     c.bubble = c.kind === "egg" ? { icon: d.agent.login?.state === "waiting_code" ? "dots" : "ask" }
       : d.mini ? (d.mode === "work" ? { icon: "terminal", title: d.sub.title } : { icon: "dots", title: d.sub.title })
-      : c.mode === "work" ? { icon: "terminal", title: `${n} SUB-AGENT${n === 1 ? "" : "S"}` }
+      : c.mode === "work" ? { icon: "terminal", title: n ? `${n} SUB-AGENT${n === 1 ? "" : "S"}` : "TALKING: " + (d.agent.talking?.title || "a conversation").toUpperCase() }
       : c.mode === "sleep" ? { icon: "zzz" } : c.mode === "rest" ? { icon: "pause" } : c.mode === "error" ? { icon: "alert", alert: true }
       : c.mode === "starting" ? { icon: "dots" } : c.mode === "offline" ? { icon: "alert", alert: true } : null;
   }
   for (const [key, c] of Scene.critters) if (!want.has(key) && !c.gone) { c.gone = performance.now(); if (c.kind !== "egg") Scene.sparkle(c.x, c.y - 8, 8, "#d8e6c4"); }
   for (const a of st.agents) App.seenAgents.add(a.id);
   // the field: one plot growing per Claude with sub-agents at work, then the latest harvest
-  const since = (a) => Math.min(...subs.filter(t => ownerOf(t) === a.id).map(t => t.started || t.created || nowS()));
+  const since = (a) => Math.min(a.talking?.since || nowS(), ...subs.filter(t => ownerOf(t) === a.id).map(t => t.started || t.created || nowS()));
   Scene.plotTasks = [...active.map(a => ({ id: "claude:" + a.id, status: "running", started: since(a) })), ...(st.recent || [])].slice(0, L.plots.length);
 }
 
@@ -777,10 +762,10 @@ const UI = {
     try { const me = await api("api/me"); App.user = me.user; if (!this.goNext()) this.showFarm(); }
     catch { this.showTitle(); }
   },
-  /** Back to the dashboard page that sent you to log in (?next=dashboards/<name>); only farm-local paths. */
+  /** Back to the page that sent you to log in (?next=dashboards/<name>, ?next=browser); only farm-local paths. */
   goNext() {
     const next = new URLSearchParams(location.search).get("next") || "";
-    if (!/^dashboards(\/[a-z0-9-]{1,48})?$/.test(next)) return false;
+    if (!/^(dashboards(\/[a-z0-9-]{1,48})?|browser)$/.test(next)) return false;
     location.replace(next);
     return true;
   },
@@ -898,7 +883,7 @@ const UI = {
     }
     addEventListener("keydown", (e) => {
       if ($("#hud").hidden || $$("dialog[open]").length || /INPUT|TEXTAREA/.test(document.activeElement?.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
-      const k = { c: "hatch", h: "hatch", n: "hatch", s: "slack", t: "talk", d: "dashboards" }[e.key.toLowerCase()];
+      const k = { c: "hatch", h: "hatch", n: "hatch", s: "slack", t: "talk", d: "dashboards", b: "browser" }[e.key.toLowerCase()];
       if (k) { e.preventDefault(); this.act(k); }
     });
   },
@@ -907,6 +892,7 @@ const UI = {
     if (a === "slack") return this.openSlack();
     if (a === "talk") return this.openClaude();
     if (a === "dashboards") location.href = "dashboards";
+    if (a === "browser") location.href = "browser";
   },
 
   // ------------------------------------------------------ talk to your Claude
@@ -974,6 +960,7 @@ const UI = {
     if (a.error) return a.error.toUpperCase();
     const n = App.state.subagents.filter(t => t.owner === a.id).length;
     if (n) return `${n} SUB-AGENT${n === 1 ? "" : "S"} AT WORK`;
+    if (a.talking) return a.talking.n > 1 ? `WORKING IN ${a.talking.n} CONVERSATIONS` : "WORKING IN A CONVERSATION";
     if (a.resting) return "RESTING: " + (a.budget?.reason || "paced by its budget").toUpperCase();
     return "READY: TALK TO IT";
   },

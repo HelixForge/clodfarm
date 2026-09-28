@@ -29,6 +29,15 @@ clodfarm gives autonomous agents a shell. Be deliberate about what that shell ca
 6. **Token hygiene:** if you use `CLAUDE_CODE_OAUTH_TOKEN`, keep `.env` out of git and prefer a secret store.
    Revoke tokens you no longer use.
 
+## The farm's browser
+
+Every site you log in to in the farm's browser ([browser.md](browser.md)) is open to every Claude on that box and to
+anyone with the farm UI password, and a web page the agents read could try a prompt injection with those sessions
+in reach. Log in only to accounts you want the farm to act on (a separate account where the site allows it), and
+log out there, or remove that profile, to take access back. Its DevTools and VNC ports
+listen on 127.0.0.1 inside the container only; the screen reaches you only through the farm UI, behind its
+password. Chromium runs with `--no-sandbox`: the container is its sandbox.
+
 ## The optional apps role
 
 With [`deploy.sh apps-role`](deploy-aws.md#let-the-farm-build-apps-on-aws-optional) the agents can create real AWS

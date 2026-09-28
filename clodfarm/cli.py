@@ -15,6 +15,7 @@
     clodfarm pause [REASON] | resume  stop or restart new sub-agents on every box
     clodfarm ui | ui-passwd           serve the farm UI on its own | set its password
     clodfarm slack                    Slack: connected or not, and how to connect it (the UI's SLACK button is easier)
+    clodfarm browser [status] | start|stop [PROFILE] | open URL [--profile P] | add|remove NAME   the farm's browser
     clodfarm init                     create the DynamoDB table
     clodfarm doctor                   check claude, login, the store, git and the workspace
 
@@ -421,7 +422,9 @@ def cmd_hook(cfg, a):
             store.record_session(sid, transcript=ev.get("transcript_path"), claude=owner or cfg.name, runs_on=cfg.name, kind=kind, box=cfg.farm_id, cwd=ev.get("cwd"),
                                  task=os.environ.get("FARM_TASK_ID") if kind == "sub-agent" else None,
                                  ended=True if name == "SessionEnd" else None,
-                                 end_reason=ev.get("reason") if name == "SessionEnd" else None)
+                                 end_reason=ev.get("reason") if name == "SessionEnd" else None,
+                                 # mid-turn: the farm shows the Claude at work while a conversation's turn runs
+                                 busy=True if name == "UserPromptSubmit" else False if name == "SessionEnd" else None)
         if name == "SessionEnd" and sid and os.environ.get("FARM_MAIL_FLAG"):  # its listener stops too
             try:
                 os.remove(_listener_file(os.environ["FARM_MAIL_FLAG"], sid))
@@ -438,6 +441,8 @@ def cmd_hook(cfg, a):
             if msgs:
                 print(json.dumps({"decision": "block", "reason": mail_text(msgs)}))
                 store.record_session(sid, mail_blocks=blocks + 1)
+            else:  # the turn ends
+                store.record_session(sid, busy=False)
     except Exception as e:  # noqa: BLE001
         print(f"clodfarm hook: {e!r}"[:300], file=sys.stderr)
     return 0
@@ -755,6 +760,60 @@ def cmd_doctor(cfg, a):
     return 0 if ok else 1
 
 
+def cmd_browser(cfg, a):
+    from . import browser
+    bs = browser.Browsers(cfg.workspace)
+    name = getattr(a, "profile", None) or browser.DEFAULT
+    try:
+        if a.sub in ("add", "remove"):
+            if a.sub == "add":
+                bs.registry.add(name, by=cfg.name)
+            elif not bs.registry.remove(name):
+                raise ValueError(f"no browser profile named {name}")
+            done = {"add": "added", "remove": "removed"}[a.sub]
+            _store(cfg).event(f"browser.{done}", f"browser profile {name} {done} by {cfg.name}", by=cfg.name)
+            from .agents import AgentManager
+            AgentManager(cfg).share_browser_tools()
+            print(f"browser profile {name} {done}" + (f"; its tools are mcp__{browser.mcp_name(name)}__*, in the "
+                                                      "Claudes' new sessions" if a.sub == "add" else ""))
+            return 0
+        if a.sub in ("start", "stop"):
+            on = a.sub == "start"
+            if on and not browser.available():
+                raise ValueError("this image has no browser (" + ", ".join(browser.missing() or ["FARM_BROWSER=0"]) + ")")
+            slot = bs.slot(name)
+            if bs.want(name, on, by=cfg.name):
+                _store(cfg).event("browser.started" if on else "browser.stopped",
+                                  f"browser profile {name} {'started' if on else 'stopped'} by {cfg.name}", by=cfg.name)
+            end = time.time() + (40 if on else 20)
+            while time.time() < end and browser.cdp_up(slot) != on:  # the farm UI's process starts and stops it
+                time.sleep(0.5)
+            if browser.cdp_up(slot) != on:
+                print(f"clodfarm: profile {name} is {'not up' if on else 'still up'} yet: the farm (its UI process) "
+                      "runs the browser; is `clodfarm run` up with FARM_UI=1? See `clodfarm browser`.", file=sys.stderr)
+                return 1
+        if a.sub == "open":
+            slot = bs.slot(name)
+            if not browser.cdp_up(slot):
+                raise ValueError(f"profile {name} is off: `clodfarm browser start {name}` first")
+            t = browser.open_url(a.url, slot)
+            return _out(t, a.json, f"opened {t['url']} in a new tab of profile {name}") or 0
+    except ValueError as e:
+        print(f"clodfarm: {e}", file=sys.stderr)
+        return 1
+    st = bs.status()
+    if not st["available"]:
+        text = "no browser in this image (" + ", ".join(st["missing"]) + ")"
+    else:
+        lines = []
+        for p in st["profiles"]:
+            state = "up" if p["ready"] else "starting" if p["on"] else "off"
+            lines.append(f"{p['name']:24} {state:9} tools {p['tools']}" + (f"  error: {p['error']}" if p["error"] else ""))
+            lines += [f"    {t['title'][:56] or '(untitled)':56}  {t['url'][:90]}" for t in p["tabs"]]
+        text = "the farm's browser profiles (the person logs in to sites in the farm UI's BROWSER):\n  " + "\n  ".join(lines)
+    return _out(st, a.json, text) or 0
+
+
 def cmd_ui(cfg, a):
     from .web import serve
     serve(cfg)
@@ -886,6 +945,19 @@ def main(argv=None):
     for q in dbs.choices.values():
         q.add_argument("--json", action="store_true")
     add("slack", cmd_slack, "give the farm work from Slack: status, or how to connect it")
+    br = add("browser", cmd_browser, "the farm's browser: you log in to sites in the UI, the Claudes use it")
+    brs = br.add_subparsers(dest="sub")
+    brs.add_parser("status", help="every profile: on or off, and its tabs")
+    for verb, help_ in (("start", "start a profile (it stays on until stopped)"), ("stop", "stop a profile (its logins "
+                        "are kept)"), ("add", "add a profile: its own Chromium with its own logins"),
+                        ("remove", "remove a profile and delete its logins")):
+        brs.add_parser(verb, help=help_).add_argument("profile", nargs="?" if verb in ("start", "stop") else None,
+                                                      help="the profile (default: default)")
+    bo = brs.add_parser("open", help="open an address in a new tab")
+    bo.add_argument("url")
+    bo.add_argument("--profile", help="the profile (default: default)")
+    for q in brs.choices.values():
+        q.add_argument("--json", action="store_true")
     e = add("events", cmd_events, "the event log")
     e.add_argument("-n", type=int, default=30)
     e.add_argument("-f", "--follow", action="store_true")

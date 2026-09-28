@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.8.0 (2026-09-27)
+
+The farm's browser, a Claude that works in a conversation shows it on the farm, and a farm that stays bright.
+
+- **The farm's browser.** One Chromium in the container that you see and use in the farm UI (the globe button, or
+  B, at `/browser`): log in to a site there once (LinkedIn, an admin panel) and every Claude works in that login with
+  its new `browser` MCP tools (Playwright attached over DevTools), in the window you watch. START turns it on for the
+  box and it stays on across restarts; the profile lives in the workspace volume, so a new container is still logged
+  in. The screen comes over the UI's own WebSocket behind the farm password (noVNC); paste and copy work, and ⌘
+  shortcuts on a Mac. The guide tells the Claudes to use their own tab, never type passwords (they ask you to log in
+  instead) and act on your accounts only as asked. **Profiles**: each its own Chromium with its own logins (two
+  LinkedIn accounts: two profiles), added with + PROFILE, up to 8; any Claude can use any of them
+  (`mcp__browser__*` for `default`, `mcp__browser-<name>__*` for the others).
+  `clodfarm browser [start|stop [PROFILE] | open URL [--profile P] | add|remove NAME]`. The image gains
+  Chromium, Xvfb, x11vnc, noVNC and Node; `--build-arg BROWSER=0` builds without them, `FARM_BROWSER=0` turns it off.
+- **A Claude at work in a conversation shows it.** While a conversation's turn runs (you asked it something from
+  the Claude app, in any session, new or old), its Claude gets a plot, grows crops and works at its laptop, with
+  "TALKING: <the conversation>" over its head, like a Claude with sub-agents. The farm's hooks mark a conversation
+  busy from its prompt until its turn ends (kept busy while a Stop keeps it going for mail); a turn whose transcript
+  goes quiet for 10 minutes (interrupted, so no Stop came) counts as over. `/api/state` gives each Claude `talking`.
+- **No night.** The farm no longer darkens in the evening: the blue night wash and the fireflies are gone.
+- **Node and the AWS CLI on every box.** The image has Node 22 (npm, npx) and the AWS CLI v2 whatever the build
+  args (Node came only with the browser before, and `aws` was downloaded at startup only with the apps role on). `aws`
+  has no credentials unless you give the box some (the apps role does).
+- **The guide explains the dashboards.** Every Claude's guide now has the dashboard spec and its widgets, says the
+  page's link goes to the person, and tells them to use the farm's dashboards instead of building their own.
+
 ## 0.7.0 (2026-09-27)
 
 Dashboards that show what is improving, each Claude's tools on its card, and an optional AWS role so the farm can

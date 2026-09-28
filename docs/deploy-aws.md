@@ -76,9 +76,9 @@ deploy/aws/deploy.sh apps-down     # remove it (apps the farm deployed are their
 On start, the farm writes an `apps` profile into the container's AWS CLI config (`role_arn` plus
 `credential_source = Ec2InstanceMetadata`) and adds an **AWS** section to the guide every Claude reads: use
 `aws --profile apps ...`, one CloudFormation stack per app, the naming rule, the budget and the domain. clodfarm itself
-keeps using the default credentials, so its store isn't affected. The image itself is unchanged: when the apps role is
-on and there's no `aws` yet, the farm installs the AWS CLI v2 into the farm user's `~/.local` at startup (in the
-background, about a minute).
+keeps using the default credentials, so its store isn't affected. The image has the AWS CLI v2 (since 0.8.0); on an
+older image without `aws`, the farm installs it into the farm user's `~/.local` at startup (in the background, about a
+minute).
 
 ### What the stack creates
 
