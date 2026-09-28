@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 (2026-09-28)
+
+Bots on other models, a proxy for the farm's browser, a Claude you can talk to while its sub-agents work, and a
+cancel that stops them.
 
 - **Bots: other models on the farm** (#9). A bot is Claude Code on another model, through any provider that speaks
   Anthropic's API: OpenRouter's free models, a local Ollama, a LiteLLM gateway. Add one in the farm UI (+ NEW CLAUDE,
