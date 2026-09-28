@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>clodfarm: a farm of Claude Code agents</title>
-<meta name="description" content="clodfarm runs a farm of Claude Code agents in one container. They split work into sub-agents, test it before it lands, pace themselves on your real usage limits, and you watch them work in a pixel farm. Open source, MIT.">
+<title>clodfarm: a farm of Claude Code agents that work 24/7</title>
+<meta name="description" content="Open-source Claude Code agents that split work into sub-agents, test it before it lands and pace on your real limits. Or we run a farm for your business.">
 <link rel="canonical" href="https://clod.farm/">
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
 <meta name="theme-color" content="#4f6b25">
@@ -17,96 +17,183 @@
 <meta property="og:locale" content="en_US">
 <meta property="og:site_name" content="clodfarm">
 <meta property="og:url" content="https://clod.farm/">
-<meta property="og:title" content="clodfarm: a farm of Claude Code agents">
-<meta property="og:description" content="Plant a mission tonight, harvest the work in the morning. Open source, MIT.">
+<meta property="og:title" content="clodfarm: a farm of Claude Code agents that work 24/7">
+<meta property="og:description" content="Plant a mission tonight, harvest the work in the morning. Open source, or we run a farm for your business.">
 <meta property="og:image" content="https://clod.farm/og.png">
+<meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
 <meta property="og:image:alt" content="The clodfarm UI: a pixel-art farm where Claude Code agents work at terminals, sub-agents help, and some nap while the budget paces them">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="clodfarm: a farm of Claude Code agents">
-<meta name="twitter:description" content="Plant a mission tonight, harvest the work in the morning.">
+<meta name="twitter:title" content="clodfarm: a farm of Claude Code agents that work 24/7">
+<meta name="twitter:description" content="Plant a mission tonight, harvest the work in the morning. Open source, or we run a farm for your business.">
 <meta name="twitter:image" content="https://clod.farm/og.png">
+<meta name="twitter:image:alt" content="The clodfarm UI: a pixel-art farm where Claude Code agents work at terminals">
 
 <link rel="preload" href="/fonts/PressStart2P.ttf" as="font" type="font/ttf" crossorigin>
-<link rel="stylesheet" href="/style.css?v=202609281400">
-<script src="/farm.js?v=202609261720" defer></script>
-<script src="/copy.js" defer></script>
-<script src="/site.js?v=202609281200" defer></script>
+<link rel="preload" href="/fonts/VT323.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="/style.css?v=202609281800">
+<script src="/farm.js?v=202609281800" defer></script>
+<script src="/copy.js?v=202609281800" defer></script>
+<script src="/site.js?v=202609281800" defer></script>
+<script src="/faller.js?v=202609281800" defer></script>
 
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  "name": "clodfarm",
-  "url": "https://clod.farm/",
-  "description": "Open-source tool that runs a farm of Claude Code agents in a container: a shared task queue, sub-agents that merge their work, a test gate before anything lands, Remote Control from the Claude app, and a budget governor that paces each account on its real 5-hour and weekly usage.",
-  "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "Linux, macOS (Docker)",
-  "license": "https://opensource.org/licenses/MIT",
-  "softwareRequirements": "Docker, a Claude subscription or an Anthropic API key",
-  "codeRepository": "https://github.com/matank001/clodfarm",
-  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
-}
-</script>
 <script type="application/ld+json">
 {
  "@context": "https://schema.org",
- "@type": "FAQPage",
- "mainEntity": [
+ "@graph": [
   {
-   "@type": "Question",
-   "name": "What is clodfarm?",
-   "acceptedAnswer": {
-    "@type": "Answer",
-    "text": "An open-source program (MIT) that runs Claude Code agents around the clock in one Docker container. You give it a mission or tasks; agents take work from a queue, split big jobs into sub-agents, test the result, and land passing work in your git repo."
+   "@type": "Organization",
+   "@id": "https://clod.farm/#org",
+   "name": "clodfarm",
+   "url": "https://clod.farm/",
+   "logo": "https://clod.farm/logo.svg",
+   "sameAs": [
+    "https://github.com/matank001/clodfarm"
+   ]
+  },
+  {
+   "@type": "WebSite",
+   "@id": "https://clod.farm/#website",
+   "name": "clodfarm",
+   "alternateName": "clod.farm",
+   "url": "https://clod.farm/",
+   "inLanguage": "en",
+   "publisher": {
+    "@id": "https://clod.farm/#org"
    }
   },
   {
-   "@type": "Question",
-   "name": "How does it avoid using up my Claude limits?",
-   "acceptedAnswer": {
-    "@type": "Answer",
-    "text": "Every agent run reports your account's real 5-hour and weekly usage from Claude Code itself. By default the agents stop at 80% of the week and 85% of any 5-hour window, and those numbers include your own chats. On a usage limit it waits for the reset."
+   "@type": "WebPage",
+   "@id": "https://clod.farm/#page",
+   "url": "https://clod.farm/",
+   "name": "clodfarm: a farm of Claude Code agents that work 24/7",
+   "description": "Open-source Claude Code agents that split work into sub-agents, test it before it lands and pace on your real limits. Or we run a farm for your business.",
+   "isPartOf": {
+    "@id": "https://clod.farm/#website"
+   },
+   "about": {
+    "@id": "https://clod.farm/#app"
+   },
+   "primaryImageOfPage": "https://clod.farm/og.png",
+   "dateModified": "2026-09-28",
+   "inLanguage": "en"
+  },
+  {
+   "@type": "SoftwareApplication",
+   "@id": "https://clod.farm/#app",
+   "name": "clodfarm",
+   "url": "https://clod.farm/",
+   "description": "Open-source tool that runs a farm of Claude Code agents in a container: a shared task queue, sub-agents that merge their work, a test gate before anything lands, Remote Control from the Claude app, schedules, live dashboards, and a budget governor that paces each account on its real 5-hour and weekly usage.",
+   "applicationCategory": "DeveloperApplication",
+   "operatingSystem": "Linux, macOS (Docker)",
+   "softwareVersion": "0.9.0",
+   "license": "https://opensource.org/licenses/MIT",
+   "softwareRequirements": "Docker, a Claude subscription or an Anthropic API key",
+   "codeRepository": "https://github.com/matank001/clodfarm",
+   "screenshot": "https://clod.farm/og.png",
+   "installUrl": "https://raw.githubusercontent.com/matank001/clodfarm/main/scripts/install.sh",
+   "publisher": {
+    "@id": "https://clod.farm/#org"
+   },
+   "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
    }
   },
   {
-   "@type": "Question",
-   "name": "How do I install it?",
-   "acceptedAnswer": {
-    "@type": "Answer",
-    "text": "Run the one-line installer on any machine with Docker. It starts the container and asks you to log in to your Claude account: open the link on any device and paste the code back. On AWS, one command deploys it with no open ports."
+   "@type": "Service",
+   "@id": "https://clod.farm/#hosted",
+   "name": "A clodfarm run for your business",
+   "serviceType": "Managed Claude Code agent farm",
+   "description": "We set up and run a clodfarm for your business: online, on its own address, with a dashboard of what the agents shipped. Leave your email to get one.",
+   "provider": {
+    "@id": "https://clod.farm/#org"
+   },
+   "areaServed": "Worldwide",
+   "url": "https://clod.farm/#get-farm",
+   "potentialAction": {
+    "@type": "Action",
+    "name": "Request a farm",
+    "target": "https://clod.farm/#get-farm"
    }
   },
   {
-   "@type": "Question",
-   "name": "Can several machines or accounts share one farm?",
-   "acceptedAnswer": {
-    "@type": "Answer",
-    "text": "Yes. Point several boxes at one shared DynamoDB table and git repo. They share one queue, and each Claude account is paced on its own budget. For people working together, use Team or Enterprise seats, each person on their own login."
-   }
-  },
-  {
-   "@type": "Question",
-   "name": "Can you run a farm for my business?",
-   "acceptedAnswer": {
-    "@type": "Answer",
-    "text": "Yes. Leave your email under Get your own farm and we'll set up a farm online for you, on its own address, with a dashboard of what the agents shipped. You don't need to run Docker yourself."
-   }
-  },
-  {
-   "@type": "Question",
-   "name": "Is clodfarm made by Anthropic?",
-   "acceptedAnswer": {
-    "@type": "Answer",
-    "text": "No. It is an independent open-source project, not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC."
-   }
+   "@type": "FAQPage",
+   "@id": "https://clod.farm/#faq",
+   "isPartOf": {
+    "@id": "https://clod.farm/#page"
+   },
+   "mainEntity": [
+    {
+     "@type": "Question",
+     "name": "What is clodfarm?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "An open-source program (MIT) that runs Claude Code agents around the clock in one Docker container. You give it a mission or tasks; agents take work from a queue, split big jobs into sub-agents, test the result, and land passing work in your git repo."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "How does it avoid using up my Claude limits?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Every agent run reports your account's real 5-hour and weekly usage from Claude Code itself. By default the agents stop at 80% of the week and 85% of any 5-hour window, and those numbers include your own chats. On a usage limit it waits for the reset."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "How do I install it?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Run the one-line installer on any machine with Docker. It starts the container and asks you to log in to your Claude account: open the link on any device and paste the code back. On AWS, one command deploys it with no open ports."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "Can several machines or accounts share one farm?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Yes. Point several boxes at one shared DynamoDB table and git repo. They share one queue, and each Claude account is paced on its own budget. For people working together, use Team or Enterprise seats, each person on their own login."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "Can you run a farm for my business?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Yes. Leave your email under Get your own farm and we'll set up a farm online for you, on its own address, with a dashboard of what the agents shipped. You don't need to run Docker yourself."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "What can a farm do for my business?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "Anything Claude Code can do in a repo or a browser: fix bugs and build features, with your tests deciding what lands; triage new issues on a schedule; answer in Slack; work in websites through the farm's logged-in browser; and keep live dashboards of what improved."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "What does it cost?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "clodfarm is free and open source (MIT). The agents run on your Claude subscription or an Anthropic API key, and never use paid overage unless you allow it. For a farm we run for your business, leave your email and we'll reply with what it takes."
+     }
+    },
+    {
+     "@type": "Question",
+     "name": "Is clodfarm made by Anthropic?",
+     "acceptedAnswer": {
+      "@type": "Answer",
+      "text": "No. It is an independent open-source project, not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC."
+     }
+    }
+   ]
   }
  ]
 }
-</script>
-<script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "WebSite", "name": "clodfarm", "alternateName": "clod.farm", "url": "https://clod.farm/", "inLanguage": "en"}
 </script>
 </head>
 <body data-page="landing">
@@ -182,6 +269,14 @@
     <details>
       <summary>Can you run a farm for my business?</summary>
       <p>Yes. Leave your email under Get your own farm and we&#x27;ll set up a farm online for you, on its own address, with a dashboard of what the agents shipped. You don&#x27;t need to run Docker yourself.</p>
+    </details>
+    <details>
+      <summary>What can a farm do for my business?</summary>
+      <p>Anything Claude Code can do in a repo or a browser: fix bugs and build features, with your tests deciding what lands; triage new issues on a schedule; answer in Slack; work in websites through the farm&#x27;s logged-in browser; and keep live dashboards of what improved.</p>
+    </details>
+    <details>
+      <summary>What does it cost?</summary>
+      <p>clodfarm is free and open source (MIT). The agents run on your Claude subscription or an Anthropic API key, and never use paid overage unless you allow it. For a farm we run for your business, leave your email and we&#x27;ll reply with what it takes.</p>
     </details>
     <details>
       <summary>Is clodfarm made by Anthropic?</summary>
