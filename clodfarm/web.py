@@ -812,6 +812,14 @@ def make_handler(ui: FarmUI):
                 if not ok:
                     raise ValueError("it already finished" if action == "cancel" else "it is still at work")
                 return self._json(ui.tasks_view())
+            m = re.fullmatch(r"/api/dashboards/([a-z0-9-]{1,48})/move", path)
+            if m or path == "/api/dashboards/rename-folder":  # organizing the dashboards list
+                if m:
+                    dashboards.move(store, m.group(1), str(data.get("folder") or "")[:200], by="ui")
+                else:
+                    dashboards.rename_folder(store, str(data.get("from") or "")[:200], str(data.get("to") or "")[:200],
+                                             by="ui")
+                return self._json([dashboards.summary(store, d) for d in dashboards.all_(store)])
             if path == "/api/schedules":  # a new schedule from the TASKS page
                 from .schedule import parse_at, parse_every
                 title, prompt = str(data.get("title") or "").strip()[:200], str(data.get("prompt") or "").strip()

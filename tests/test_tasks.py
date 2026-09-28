@@ -70,7 +70,7 @@ def test_the_tasks_page_lists_and_manages_everything(ui):  # noqa: F811
     assert active[busy["id"]]["status"] == "running" and active[busy["id"]]["on"] == "gil"
     assert active[waiting["id"]]["status"] == "queued" and active[waiting["id"]]["on"] == "sahar"
     assert [t["id"] for t in v["finished"]] == [gone["id"]]
-    assert v["schedules"][0]["id"] == sch["id"] and v["schedules"][0]["when"] == "cron '0 9 * * 1-5' (Asia/Jerusalem)"
+    assert v["schedules"][0]["id"] == sch["id"] and v["schedules"][0]["when"] == "weekdays at 9am, Jerusalem time"
     assert "prompt" not in active[busy["id"]], "the list is light; one sub-agent's details come on their own"
     code, d, _ = call(base + f"/api/tasks/{busy['id']}")
     assert code == 200 and d["prompt"] == "do it" and d["on"] == "gil"
@@ -96,7 +96,7 @@ def test_the_tasks_page_lists_and_manages_everything(ui):  # noqa: F811
                                                 "tz": "Europe/Berlin", "on": "gil"})
     assert code == 200
     new = next(s for s in v["schedules"] if s["title"] == "weekly review")
-    assert new["to"] == "gil" and new["owner"] == "gil" and new["created_by"] == "ui" and new["when"] == "every 1w"
+    assert new["to"] == "gil" and new["owner"] == "gil" and new["created_by"] == "ui" and new["when"] == "every week"
     code, v, _ = call(base + f"/api/schedules/{new['id']}/pause", {})
     assert code == 200 and next(s for s in v["schedules"] if s["id"] == new["id"])["paused"]
     assert store.b.get("SCHEDULE", new["id"])["paused"]
@@ -108,3 +108,18 @@ def test_the_tasks_page_lists_and_manages_everything(ui):  # noqa: F811
     assert call(base + "/api/schedules/snope123/run", {})[0] == 404
     by_ui = [e for e in store.events() if e["type"] in ("schedule.paused", "schedule.resumed", "schedule.run")]
     assert len(by_ui) == 3 and all(e["by"] == "ui" for e in by_ui)
+
+
+def test_a_schedule_says_when_it_runs_in_plain_words():
+    from clodfarm.schedule import describe
+    said = {c: describe({"cron": c, "tz": "Asia/Jerusalem"}) for c in
+            ("30 7 * * 1-5", "0 6,18 * * *", "0 14 * * 5", "0 12 * * 1,4", "*/15 * * * *", "0 0 1 * *", "0 9-17 * * 1-5")}
+    assert said == {"30 7 * * 1-5": "weekdays at 7:30am, Jerusalem time",
+                    "0 6,18 * * *": "every day at 6am and 6pm, Jerusalem time",
+                    "0 14 * * 5": "every Friday at 2pm, Jerusalem time",
+                    "0 12 * * 1,4": "Mondays and Thursdays at noon, Jerusalem time",
+                    "*/15 * * * *": "every 15 minutes, Jerusalem time",
+                    "0 0 1 * *": "the 1st of every month at midnight, Jerusalem time",
+                    "0 9-17 * * 1-5": "cron '0 9-17 * * 1-5' (Asia/Jerusalem)"}  # too unusual to say simply
+    assert describe({"cron": "0 9 * * *"}) == "every day at 9am, UTC"
+    assert [describe({"every": s}) for s in (3600, 7200, 86400)] == ["every hour", "every 2 hours", "every day"]

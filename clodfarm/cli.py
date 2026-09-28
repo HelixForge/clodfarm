@@ -670,7 +670,8 @@ def cmd_dashboard(cfg, a):
         if a.sub == "list":
             rows = [dash.summary(store, d, 7) for d in dash.all_(store)]
             _out(rows, a.json, "\n".join(
-                f"  {r['slug']:<24} {r['title'][:40]:<40} {_ago(r['updated']):>6} ago  by {r['owner'] or '-'}"
+                f"  {r['slug']:<24} {r['title'][:40]:<40} {(r['folder'] or '-')[:24]:<24} {_ago(r['updated']):>6} ago"
+                f"  by {r['owner'] or '-'}"
                 + (f"  live every {r['every'] // 60}m" + ("" if r["ok"] is not False else " (last refresh FAILED)")
                    if r["live"] else "") for r in rows) or "(no dashboards yet: `clodfarm dashboard push <name> --file spec.json`)")
             return 0
@@ -689,13 +690,15 @@ def cmd_dashboard(cfg, a):
                 if every < dash.MIN_EVERY:
                     raise ValueError(f"refresh at most every {dash.MIN_EVERY // 60} minutes")
                 cwd = git(os.getcwd(), "rev-parse", "--show-toplevel", check=False).strip() or os.getcwd()
-                d = dash.push(store, a.name, dash.run_refresh(a.run, cwd, a.name), by=by, owner=owner)
+                d = dash.push(store, a.name, dash.run_refresh(a.run, cwd, a.name), by=by, owner=owner, folder=a.folder)
                 d = dash.set_refresh(store, a.name, a.run, every, by=by)
             elif a.no_refresh and not a.file:
                 d = dash.set_refresh(store, a.name, None, by=by)
+                if a.folder is not None:
+                    d = dash.move(store, a.name, a.folder, by=by)
             else:
                 d = dash.push(store, a.name, open(a.file).read() if a.file not in (None, "-") else sys.stdin.read(),
-                              by=by, owner=owner)
+                              by=by, owner=owner, folder=a.folder)
                 if a.no_refresh:
                     d = dash.set_refresh(store, a.name, None, by=by)
             live = d.get("refresh")
@@ -705,9 +708,18 @@ def cmd_dashboard(cfg, a):
             return 0
         if a.sub == "metric":
             d = dash.set_metric(store, a.name, a.key, dash._num(a.value, a.key, True), a.label, a.unit, a.good, by=by,
-                                owner=owner)
+                                owner=owner, folder=a.folder)
             _out(d, a.json, f"{d['slug']}/{a.key} = {a.value}{a.unit or ''}  {_farm_url()}/dashboards/{d['slug']}")
             return 0
+        if a.sub == "move":
+            d = dash.move(store, a.name, a.folder, by=by)
+            _out(d, a.json, f"{d['slug']} is in {d['folder'] or 'the top level'}  {_farm_url()}/dashboards/{d['slug']}")
+            return 0
+        if a.sub == "rename-folder":
+            n = dash.rename_folder(store, a.old, a.new, by=by)
+            _out({"moved": n}, a.json, f"{n} dashboard(s) moved to {dash.clean_folder(a.new) or 'the top level'}"
+                 if n else f"no dashboards in {a.old}")
+            return 0 if n else 1
         if a.sub == "refresh":
             d = dash.get(store, a.name)
             if not d or not d.get("refresh"):
@@ -1024,6 +1036,7 @@ def main(argv=None):
                     "'python3 dashboards/tests.py'); commit that code so the farm can run it")
     dp.add_argument("--every", help="with --run: how often the farm runs it (default 1h, at least 5m)")
     dp.add_argument("--no-refresh", action="store_true", help="stop refreshing a live dashboard")
+    dp.add_argument("--folder", help="put it in a folder (nest with '/', e.g. 'Growth/Leads'); left out, it stays put")
     dm = dbs.add_parser("metric", help="set one stat (adds the dashboard and the stat when new)")
     dm.add_argument("name")
     dm.add_argument("key")
@@ -1031,6 +1044,13 @@ def main(argv=None):
     dm.add_argument("--label")
     dm.add_argument("--unit")
     dm.add_argument("--good", choices=["up", "down"], help="which way is better (colors the change)")
+    dm.add_argument("--folder", help="put it in a folder (nest with '/'); left out, it stays put")
+    dmv = dbs.add_parser("move", help="put a dashboard in a folder ('' for the top level)")
+    dmv.add_argument("name")
+    dmv.add_argument("folder", help="e.g. 'Growth/Leads' (at most 3 deep); '' for the top level")
+    drf = dbs.add_parser("rename-folder", help="rename a folder, with its subfolders (an existing name merges them)")
+    drf.add_argument("old")
+    drf.add_argument("new")
     dbs.add_parser("refresh", help="run a live dashboard's command now").add_argument("name")
     dbs.add_parser("remove", help="delete a dashboard and its history").add_argument("name")
     for q in dbs.choices.values():

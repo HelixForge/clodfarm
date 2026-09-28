@@ -1,4 +1,5 @@
-/* clodfarm dashboards. /dashboards lists them; /dashboards/<name> draws one from the spec its Claude pushed:
+/* clodfarm dashboards. /dashboards lists them, by folder (/dashboards?folder=Growth/Leads), and lets you move them
+ * between folders; /dashboards/<name> draws one from the spec its Claude pushed:
  * stat tabs over one big chart of the selected stat's history, then charts, bar lists, tables, progress and notes.
  * Plain JS, no dependencies; the farm never runs agent-written code in your browser, only this renderer. */
 "use strict";
@@ -81,6 +82,14 @@ async function api(path) {
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw Object.assign(new Error(body.error || r.statusText), { status: r.status });
   return body;
+}
+
+async function post(path, body) {
+  const r = await fetch(`${BASE}/api/${path}`, { method: "POST", credentials: "same-origin", body: JSON.stringify(body),
+    headers: { Accept: "application/json", "Content-Type": "application/json", "X-Clodfarm": "1" } });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(out.error || r.statusText);
+  return out;
 }
 
 // ------------------------------------------------------------------ charts
@@ -267,35 +276,42 @@ function widget(w, ctx) {
 }
 
 // -------------------------------------------------------------------- pages
-const App = { days: 30, selected: null, key: "", timer: null, slug: null };
+const App = { days: 30, selected: null, key: "", timer: null, slug: null, folder: "", editing: null };
 try { App.days = Number(localStorage.getItem("clodfarm.dash.days")) || 30; } catch { /* storage may be blocked */ }
 const RANGE_LABEL = { 1: "vs 24h ago", 7: "vs 7d ago", 30: "vs 30d ago", 90: "vs 90d ago" };
 
-function crumbs(title) {
+const folderHref = f => `${BASE}/dashboards${f ? `?folder=${encodeURIComponent(f)}` : ""}`;
+const parts = f => (f ? f.split("/") : []);
+
+/** The breadcrumb: Dashboards / each folder above this page / this page (a dashboard, or the open folder). */
+function crumbs(title, folder = "") {
+  const up = parts(folder);
+  fill($("#crumb-folders"), up.map((name, i) => [h("span", { class: "sep", "aria-hidden": "true", text: "/" }),
+    h("a", { href: folderHref(up.slice(0, i + 1).join("/")), text: name })]));
   $("#crumb-here").textContent = title || "";
   $("#crumb-sep").hidden = !title;
-  $("#crumb-all").toggleAttribute("aria-current", !title);
-  document.title = title ? `${title} · Dashboards · clodfarm` : "Dashboards · clodfarm";
+  $("#crumb-all").toggleAttribute("aria-current", !title && !up.length);
+  document.title = [title, ...up.reverse(), "Dashboards", "clodfarm"].filter(Boolean).join(" · ");
 }
 
-async function listPage(quiet) {
-  crumbs(null);
-  $("#range").hidden = true;
-  let rows;
-  try { rows = await api("dashboards"); } catch (e) { if (!quiet) fill($("#main"), h("p", { class: "muted", text: e.message })); return; }
-  const key = JSON.stringify(rows);
-  if (key === App.key) return;
-  App.key = key;
-  const head = h("div", { class: "page-head" }, h("h1", { text: "DASHBOARDS" }),
-    h("p", { class: "lede", text: "Pages the Claudes on this farm build and keep up to date, so you can see what is getting better." }));
-  if (!rows.length) {
-    return fill($("#main"), head, h("section", { class: "card empty" },
-      h("h2", { text: "No dashboards yet" }),
-      h("p", { class: "muted", text: "Ask your Claude for one, for example: “Keep a dashboard of the test suite: pass rate, run time and the slowest tests, refreshed every hour.”" }),
-      h("p", { class: "muted", text: "Or log a number yourself from the farm's shell:" }),
-      h("pre", { text: "clodfarm dashboard metric tests pass_rate 97.2 --unit % --good up\nclodfarm dashboard push tests --run \"python3 dashboards/tests.py\" --every 1h" })));
-  }
-  fill($("#main"), head, h("div", { class: "list" }, rows.map(r => h("a", { class: "card dash-card", href: `${BASE}/dashboards/${r.slug}` },
+/** An inline one-field form (moving a dashboard, renaming a folder): Enter saves, Escape or CANCEL closes. */
+function inlineForm({ value, label, hint, names, save }) {
+  const list = "folders-" + Math.random().toString(36).slice(2, 8), err = h("span", { class: "form-error", role: "alert" });
+  const input = h("input", { value, "aria-label": label, placeholder: hint, list, autocomplete: "off", spellcheck: "false" });
+  const close = () => { App.editing = null; App.key = ""; route(); };
+  const form = h("form", { class: "inline-form", onsubmit: async (e) => {
+      e.preventDefault(); err.textContent = "";
+      try { await save(input.value.trim()); close(); } catch (x) { err.textContent = x.message; }
+    }, onkeydown: e => { if (e.key === "Escape") close(); }, onclick: e => e.stopPropagation() },
+    h("label", { class: "lbl", text: label }), input, h("datalist", { id: list }, names.map(n => h("option", { value: n }))),
+    h("div", { class: "row" }, h("button", { type: "submit", class: "btn primary", text: "SAVE" }),
+      h("button", { type: "button", class: "btn", text: "CANCEL", onclick: close })), err);
+  requestAnimationFrame(() => { input.focus(); input.select(); });
+  return form;
+}
+
+function dashCard(r, folders) {
+  const card = h("a", { class: "card dash-card", href: `${BASE}/dashboards/${r.slug}` },
     h("div", {}, h("h2", { text: r.title }), r.description ? h("p", { class: "lede", text: r.description }) : null),
     r.stats.length ? h("div", { class: "mini-stats" }, r.stats.map(st => h("div", { class: "mini-stat" },
       h("div", { class: "lbl", text: st.label || st.key }),
@@ -304,8 +320,60 @@ async function listPage(quiet) {
       sparkline(st.points)))) : h("p", { class: "muted small", text: `${r.widgets} widget${r.widgets === 1 ? "" : "s"}` }),
     h("div", { class: "card-foot" },
       h("span", { text: `Updated ${ago(r.updated)}` }), r.owner ? h("span", { text: `by ${r.owner}` }) : null,
-      r.live ? h("span", { class: `badge${r.ok === false ? " bad" : ""}` }, h("i", { class: "dot" }), r.ok === false ? "REFRESH FAILING" : `LIVE · EVERY ${every(r.every).toUpperCase()}`) : null)))));
+      r.live ? h("span", { class: `badge${r.ok === false ? " bad" : ""}` }, h("i", { class: "dot" }), r.ok === false ? "REFRESH FAILING" : `LIVE · EVERY ${every(r.every).toUpperCase()}`) : null));
+  const moving = App.editing === `move:${r.slug}`;
+  return h("div", { class: "dash-slot" }, card,
+    moving ? h("div", { class: "card slot-form" }, inlineForm({ value: r.folder, label: `MOVE “${r.title}” TO`, hint: "Folder, e.g. Growth/Leads (empty: top level)",
+      names: folders, save: folder => post(`dashboards/${r.slug}/move`, { folder }) }))
+      : h("button", { type: "button", class: "btn small move", title: "Move it to another folder, or a new one",
+        text: "MOVE", onclick: () => { App.editing = `move:${r.slug}`; App.key = ""; route(); } }));
 }
+
+async function listPage(quiet) {
+  const here = App.folder;
+  crumbs(parts(here).at(-1) || null, parts(here).slice(0, -1).join("/"));
+  $("#range").hidden = true;
+  let rows;
+  try { rows = await api("dashboards"); } catch (e) { if (!quiet) fill($("#main"), h("p", { class: "muted", text: e.message })); return; }
+  const key = JSON.stringify([rows, here, App.editing]);
+  if (key === App.key || (quiet && App.editing)) return; // never redraw under a half-typed folder name
+  App.key = key;
+
+  // every folder that has a dashboard somewhere under it, and this folder's own subfolders with how much is in them
+  const folders = [...new Set(rows.flatMap(r => parts(r.folder).map((_, i, a) => a.slice(0, i + 1).join("/"))))].sort();
+  const inside = f => f === here || (here ? f.startsWith(here + "/") : true);
+  const subs = new Map();
+  for (const r of rows.filter(r => r.folder && r.folder !== here && inside(r.folder))) {
+    const name = parts(r.folder)[parts(here).length], sub = [...parts(here), name].join("/"), x = subs.get(sub) || { n: 0, updated: 0 };
+    subs.set(sub, { n: x.n + 1, updated: Math.max(x.updated, r.updated || 0) });
+  }
+  const mine = rows.filter(r => (r.folder || "") === here);
+
+  const renaming = App.editing === `rename:${here}`;
+  const head = h("div", { class: "page-head" },
+    h("div", { class: "head-row" }, h("h1", { text: here ? upperName(parts(here).at(-1)) : "DASHBOARDS" }),
+      here && !renaming ? h("button", { type: "button", class: "btn small", text: "RENAME FOLDER", title: "Rename it (its dashboards and subfolders go along)",
+        onclick: () => { App.editing = `rename:${here}`; App.key = ""; route(); } }) : null),
+    renaming ? h("div", { class: "card slot-form" }, inlineForm({ value: here, label: "RENAME THIS FOLDER TO", hint: "e.g. Growth/Leads; an existing folder's name merges them",
+      names: folders, save: async to => { await post("dashboards/rename-folder", { from: here, to }); App.folder = to; history.replaceState(null, "", folderHref(to)); } })) : null,
+    h("p", { class: "lede", text: here ? `${mine.length} dashboard${mine.length === 1 ? "" : "s"} here${subs.size ? ` and ${subs.size} folder${subs.size === 1 ? "" : "s"}` : ""}. Move a dashboard with its MOVE button; a new folder name makes the folder.`
+      : "Pages the Claudes on this farm build and keep up to date, so you can see what is getting better." }));
+  if (!rows.length) {
+    return fill($("#main"), head, h("section", { class: "card empty" },
+      h("h2", { text: "No dashboards yet" }),
+      h("p", { class: "muted", text: "Ask your Claude for one, for example: “Keep a dashboard of the test suite: pass rate, run time and the slowest tests, refreshed every hour.”" }),
+      h("p", { class: "muted", text: "Or log a number yourself from the farm's shell:" }),
+      h("pre", { text: "clodfarm dashboard metric tests pass_rate 97.2 --unit % --good up\nclodfarm dashboard push tests --run \"python3 dashboards/tests.py\" --every 1h" })));
+  }
+  const tiles = [...subs].sort(([a], [b]) => a.localeCompare(b)).map(([f, x]) => h("a", { class: "card folder-tile", href: folderHref(f) },
+    h("span", { class: "folder-icon", "aria-hidden": "true" }), h("h2", { text: parts(f).at(-1) }),
+    h("span", { class: "muted", text: `${x.n} dashboard${x.n === 1 ? "" : "s"} · updated ${ago(x.updated)}` })));
+  fill($("#main"), head,
+    tiles.length ? h("section", { "aria-label": "Folders" }, h("div", { class: "folders" }, tiles)) : null,
+    mine.length ? h("div", { class: "list" }, mine.map(r => dashCard(r, folders)))
+      : here && !tiles.length ? h("p", { class: "muted", text: "Nothing in this folder any more." }) : null);
+}
+const upperName = n => String(n || "").toUpperCase();
 
 async function dashPage(slug, quiet) {
   $("#range").hidden = false;
@@ -321,7 +389,7 @@ async function dashPage(slug, quiet) {
   const key = JSON.stringify([d, App.selected]);
   if (key === App.key) return;
   App.key = key;
-  crumbs(d.title);
+  crumbs(d.title, d.folder);
   const now = Date.now() / 1000, from = now - d.days * 86400;
   const stats = Object.fromEntries(d.widgets.filter(w => w.type === "stat").map(w => [w.key, w]));
   const hist = k => d.history.filter(p => p.values[k] != null).map(p => [p.at, p.values[k]]);
@@ -365,6 +433,7 @@ function route(quiet = false) {
   const rel = location.pathname.slice(BASE.length).replace(/\/+$/, "");
   const m = rel.match(/^\/dashboards\/([a-z0-9-]{1,48})$/);
   App.slug = m ? m[1] : null;
+  App.folder = new URLSearchParams(location.search).get("folder") || "";
   return App.slug ? dashPage(App.slug, quiet) : listPage(quiet);
 }
 

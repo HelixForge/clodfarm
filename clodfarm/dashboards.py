@@ -12,6 +12,10 @@ A dashboard is a JSON spec of widgets that the farm UI draws (no agent-written H
        {"type": "progress", "label": "Migration", "value": 42, "max": 100},
        {"type": "text", "label": "Notes", "text": "**Next:** split the slow suite. See [the PR](https://...)."}]}
 
+Dashboards can sit in folders (nested with "/", e.g. "Growth/Leads"): the list page shows a folder's dashboards and
+its subfolders. Set one with `folder` when pushing, or move a dashboard later (the page, `clodfarm dashboard move`); a
+push without a folder keeps where it is.
+
 Every push records the value of each stat (by its key) in the dashboard's history, one point per hour, so stats show
 how they moved (the improvement) without the agent keeping any history itself. A dashboard can also be *live*: give
 it a command (code in the repo, e.g. `python3 dashboards/tests.py`) and an interval, and the farm runs it in the repo
@@ -19,7 +23,7 @@ and pushes what it prints. The code lives in git, so the Claudes maintain it lik
 
 Items (PK / SK):
 
-    DASH           / <slug>              the dashboard: title, widgets, owner, refresh command and its last outcome
+    DASH           / <slug>              the dashboard: title, folder, widgets, owner, refresh command and its last outcome
     DASHH#<slug>   / <yyyy-mm-ddThh>     the stats' values in that hour (expire after 400 days)
 """
 
@@ -185,6 +189,17 @@ def normalize(spec) -> dict:
     return out
 
 
+def clean_folder(folder) -> str:
+    """'  Growth / Leads/ ' -> 'Growth/Leads'; '' is the top level. At most 3 levels of 40 characters."""
+    parts = [" ".join(p.split()) for p in str(folder or "").split("/")]
+    parts = [p for p in parts if p]
+    if len(parts) > 3:
+        raise SpecError("folders go at most 3 deep (e.g. 'Growth/Leads/EU')")
+    if any(len(p) > 40 for p in parts):
+        raise SpecError("a folder's name is at most 40 characters")
+    return "/".join(parts)
+
+
 def _slug(slug: str) -> str:
     slug = (slug or "").strip().lower()
     if not SLUG.fullmatch(slug):
@@ -209,15 +224,19 @@ def _record(store: Store, slug: str, widgets: list[dict], t: float):
                                                          "expires_at": int(t + HISTORY_TTL)}, create=True)
 
 
-def push(store: Store, slug: str, spec, by: str = "human", owner: str | None = None) -> dict:
-    """Create or replace a dashboard's widgets (keeping its refresh command), and record its stats."""
+def push(store: Store, slug: str, spec, by: str = "human", owner: str | None = None, folder: str | None = None) -> dict:
+    """Create or replace a dashboard's widgets (keeping its refresh command, and its folder unless given), and record
+    its stats."""
     slug, clean, t = _slug(slug), normalize(spec), now()
+    folder = None if folder is None else clean_folder(folder)
 
     def fn(x):
         new = not x
         x.update(slug=slug, title=clean.get("title") or x.get("title") or slug, widgets=clean["widgets"], updated=t,
                  updated_by=by, pushes=int(x.get("pushes", 0)) + 1)
         x["description"] = clean.get("description", x.get("description", ""))
+        if folder is not None:
+            x["folder"] = folder
         if new:
             x.update(created=t, owner=owner or by)
         return x
@@ -229,7 +248,7 @@ def push(store: Store, slug: str, spec, by: str = "human", owner: str | None = N
 
 
 def set_metric(store: Store, slug: str, key: str, value, label: str | None = None, unit: str | None = None,
-               good: str | None = None, by: str = "human", owner: str | None = None) -> dict:
+               good: str | None = None, by: str = "human", owner: str | None = None, folder: str | None = None) -> dict:
     """Set one stat (adding it, and the dashboard, when new): the quick way to log a number after a change."""
     slug = _slug(slug)
     d = get(store, slug) or {}
@@ -240,7 +259,35 @@ def set_metric(store: Store, slug: str, key: str, value, label: str | None = Non
         widgets.insert(sum(x["type"] == "stat" for x in widgets), w)
     w.update(value=value, **{k: v for k, v in {"label": label or w.get("label") or key, "unit": unit, "good": good}.items() if v})
     return push(store, slug, {"title": d.get("title") or slug, "description": d.get("description", ""), "widgets": widgets},
-                by=by, owner=owner)
+                by=by, owner=owner, folder=folder)
+
+
+def move(store: Store, slug: str, folder: str, by: str = "human") -> dict:
+    """Put a dashboard in a folder ('' for the top level)."""
+    slug, folder = _slug(slug), clean_folder(folder)
+    it = store._update("DASH", slug, lambda x: {**x, "folder": folder})
+    if not it:
+        raise SpecError(f"no dashboard {slug}")
+    store.event("dashboard.moved", f"{slug} to {folder or 'the top level'}", by=by)
+    return it
+
+
+def rename_folder(store: Store, old: str, new: str, by: str = "human") -> int:
+    """Rename a folder (moving its subfolders along; into another folder's name merges them). How many moved."""
+    old, new = clean_folder(old), clean_folder(new)
+    if not old:
+        raise SpecError("name the folder to rename")
+    if new == old or new.startswith(old + "/"):
+        raise SpecError("a folder can't move into itself")
+    n = 0
+    for d in store.b.query("DASH"):
+        f = d.get("folder") or ""
+        if f == old or f.startswith(old + "/"):
+            store._update("DASH", d["SK"], lambda x, f=f: {**x, "folder": clean_folder(new + f[len(old):])})
+            n += 1
+    if n:
+        store.event("dashboard.folder", f"{old} renamed {new or 'the top level'}", by=by)
+    return n
 
 
 def set_refresh(store: Store, slug: str, cmd: str | None, every: int | None = None, by: str = "human") -> dict:
@@ -350,7 +397,7 @@ def summary(store: Store, d: dict, days: int = 30) -> dict:
         stats.append({**{k: w.get(k) for k in ("key", "label", "value", "unit", "good")}, "points": pts[-60:]})
     r = d.get("refresh") or {}
     return {"slug": d["slug"], "title": d.get("title") or d["slug"], "description": d.get("description", ""),
-            "owner": d.get("owner"), "updated": d.get("updated"), "widgets": len(d.get("widgets") or []), "stats": stats,
+            "folder": d.get("folder") or "", "owner": d.get("owner"), "updated": d.get("updated"), "widgets": len(d.get("widgets") or []), "stats": stats,
             "live": bool(r.get("cmd")), "every": r.get("every"), "ok": r.get("ok", True) if r.get("last_at") else None}
 
 
@@ -358,7 +405,7 @@ def view(store: Store, d: dict, days: int = 30) -> dict:
     """A whole dashboard for its page: the widgets plus the history of every stat."""
     r = d.get("refresh") or {}
     return {"slug": d["slug"], "title": d.get("title") or d["slug"], "description": d.get("description", ""),
-            "owner": d.get("owner"), "created": d.get("created"), "updated": d.get("updated"),
+            "folder": d.get("folder") or "", "owner": d.get("owner"), "created": d.get("created"), "updated": d.get("updated"),
             "updated_by": d.get("updated_by"), "widgets": d.get("widgets") or [], "days": days,
             "history": history(store, d["slug"], now() - days * 86400),
             "refresh": {k: r.get(k) for k in ("cmd", "every", "next_at", "last_at", "ok", "error")} if r.get("cmd") else None}

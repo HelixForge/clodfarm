@@ -87,6 +87,9 @@ progress), give it a dashboard so the progress is visible, and keep it up to dat
   and `clodfarm dashboard push <name> --run "python3 dashboards/<name>.py" --every 1h`. The farm runs it in the repo on
   main on schedule; a failed run shows on the page and you get a message to fix it. Keep that code working when you
   change what it measures. `clodfarm dashboard refresh <name>` runs it now.
+- Folders keep the list tidy: `--folder "Growth/Leads"` on push or metric files a dashboard (nest with "/", at most 3
+  deep), `clodfarm dashboard move <name> <folder>` moves one. Put a new dashboard next to its relatives; leave a
+  folder the person chose alone.
 - `clodfarm dashboard list` shows them, `show <name>` one's spec. Reuse and update an existing dashboard rather than
   making a near-duplicate; `remove <name>` only when the person asks.
 

@@ -156,3 +156,41 @@ def test_tools_record_and_api(ui):  # noqa: F811
     code, t, _ = call(base + "/api/agents/gil/tools")
     assert code == 200 and t["tools"] == ["Bash", "mcp__x__y"] and "PK" not in t
     assert call(base + "/api/agents/nobody/tools")[1] == {"tools": None}
+
+
+def test_folders_file_move_and_rename(store):
+    assert dash.clean_folder("  Growth / Leads/ ") == "Growth/Leads" and dash.clean_folder("") == ""
+    with pytest.raises(dash.SpecError, match="3 deep"):
+        dash.clean_folder("a/b/c/d")
+    dash.push(store, "leads", SPEC, folder="Growth/Leads")
+    dash.push(store, "signups", SPEC, folder="Growth")
+    dash.push(store, "tests", SPEC)
+    assert dash.push(store, "leads", SPEC)["folder"] == "Growth/Leads", "a push without a folder keeps it"
+    assert dash.set_metric(store, "tests", "pass_rate", 99, folder="Eng")["folder"] == "Eng"
+    assert dash.move(store, "tests", "")["folder"] == ""
+    with pytest.raises(dash.SpecError, match="no dashboard"):
+        dash.move(store, "nope", "Growth")
+    assert dash.rename_folder(store, "Growth", "Marketing") == 2
+    assert {d["slug"]: d.get("folder") for d in dash.all_(store)} == {"leads": "Marketing/Leads", "signups": "Marketing",
+                                                                       "tests": ""}
+    with pytest.raises(dash.SpecError, match="into itself"):
+        dash.rename_folder(store, "Marketing", "Marketing/Old")
+    assert dash.summary(store, dash.get(store, "leads"))["folder"] == "Marketing/Leads"
+
+
+def test_folders_from_the_cli_and_the_page(env, store, tmp_path, capsys, ui):  # noqa: F811
+    spec = tmp_path / "spec.json"
+    spec.write_text(json.dumps(SPEC))
+    assert cli(["dashboard", "push", "tests", "--file", str(spec), "--folder", "Eng"]) == 0
+    assert cli(["dashboard", "move", "tests", "Eng/CI"]) == 0 and "Eng/CI" in capsys.readouterr().out
+    assert cli(["dashboard", "rename-folder", "Eng", "Engineering"]) == 0
+    assert dash.get(store, "tests")["folder"] == "Engineering/CI"
+    base, farm_ui = ui
+    call = client()
+    login(call, base)
+    dash.push(farm_ui.store, "perf", SPEC)
+    code, rows, _ = call(base + "/api/dashboards/perf/move", {"folder": "Ops / Speed"})
+    assert code == 200 and rows[0]["folder"] == "Ops/Speed"
+    code, rows, _ = call(base + "/api/dashboards/rename-folder", {"from": "Ops", "to": "Platform"})
+    assert code == 200 and [r["folder"] for r in rows if r["slug"] == "perf"] == ["Platform/Speed"]
+    assert call(base + "/api/dashboards/perf/move", {"folder": "a/b/c/d"})[0] == 400

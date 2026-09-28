@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Schedules say when they run in plain words.** `30 7 * * 1-5` in Jerusalem now reads "weekdays at 7:30am,
+  Jerusalem time", and the next run reads "next tomorrow at 12:30 AM your time, in 6h 10m" (on TASKS, in
+  `clodfarm schedule list` and over MCP). An unusual cron line still shows as cron; a row's details show the raw line.
+- **Dashboard folders.** Put dashboards in folders, nested with "/" (e.g. `Growth/Leads`): the list page shows folder
+  tiles you open and a breadcrumb back up; MOVE on a card files it (a new name makes the folder) and RENAME FOLDER
+  renames one with everything under it. From a shell: `--folder` on `dashboard push` / `metric`,
+  `clodfarm dashboard move <name> <folder>` and `clodfarm dashboard rename-folder <old> <new>`; over MCP, `folder`
+  on `farm_dashboard_push`. A push without a folder leaves the dashboard where it is.
+
 ## 0.10.0 (2026-09-28)
 
 A TASKS page to see and manage every sub-agent and schedule, and a toolbar that says what each button is.

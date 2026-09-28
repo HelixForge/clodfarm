@@ -40,7 +40,7 @@ function span(sec) {
   sec = Math.max(0, Math.round(sec));
   if (sec < 60) return `${sec}s`;
   if (sec < 3600) return `${Math.round(sec / 60)}m`;
-  if (sec < 86400) { const hh = Math.floor(sec / 3600), mm = Math.round((sec % 3600) / 60); return mm ? `${hh}h ${mm}m` : `${hh}h`; }
+  if (sec < 86400) { const m = Math.round(sec / 60), hh = Math.floor(m / 60), mm = m % 60; return mm ? `${hh}h ${mm}m` : `${hh}h`; }
   return `${Math.round(sec / 86400)}d`;
 }
 const ago = t => (t ? `${span(now() - t)} ago` : "");
@@ -49,6 +49,17 @@ function clock(t) {
   if (!t) return "";
   const d = new Date(t * 1000), same = d.toDateString() === new Date().toDateString();
   return d.toLocaleString([], same ? { hour: "2-digit", minute: "2-digit" } : { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+// a schedule's next time, in the viewer's own clock: "tomorrow at 12:30 AM your time, in 6h 10m"
+function nextRun(s) {
+  if (s.paused) return "paused";
+  if (!(s.next_at > 0)) return "won't run again";
+  const d = new Date(s.next_at * 1000), days = Math.round((new Date(d).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 864e5);
+  const day = days === 0 ? "today" : days === 1 ? "tomorrow" : days < 7 ? d.toLocaleDateString([], { weekday: "long" })
+    : d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const yours = (s.tz || "UTC") !== ZONE ? " your time" : "";
+  return `next ${until(s.next_at) === "now" ? "now" : `${day} at ${time}${yours}, ${until(s.next_at)}`}`;
 }
 const upper = s => String(s || "").toUpperCase();
 
@@ -138,13 +149,12 @@ function finishedRow(t) {
 
 function scheduleRow(s) {
   const key = `s:${s.id}`;
-  const next = s.paused ? "paused" : `${until(s.next_at)}${s.next_at > 0 ? ` · ${clock(s.next_at)}` : ""}`;
   return [h("tr", {},
     h("td", {}, status(s.paused ? "paused" : "on", s.paused ? "PAUSED" : "ON")),
     h("td", { class: "title" },
       h("button", { type: "button", class: "open", "aria-expanded": String(open.has(key)), onclick: () => toggle(key, s.id) }, s.title),
       h("span", { class: "sub", text: [s.id, `for ${s.owner || st.me}`, s.runs ? `ran ${s.runs}× · last ${ago(s.last_at)}` : "hasn't run yet"].join(" · ") })),
-    h("td", { class: "when" }, s.when, h("span", { class: "sub", text: next })),
+    h("td", { class: "when", title: s.cron ? `cron ${s.cron}` : null }, s.when, h("span", { class: "sub", text: nextRun(s) })),
     h("td", { class: "who", text: s.to || "any" }),
     h("td", { class: "acts" },
       button("RUN NOW", "run", s.id, `schedules/${s.id}/run`, { title: "Start its sub-agent now, once; its next time stays" }),
@@ -152,7 +162,8 @@ function scheduleRow(s) {
         : button("PAUSE", "pause", s.id, `schedules/${s.id}/pause`, { title: "Stop it firing until you resume it" }),
       button("REMOVE", "remove", s.id, `schedules/${s.id}/remove`, { danger: true, confirm: true, title: "Delete this schedule" }))),
     open.has(key) ? h("tr", { class: "details" }, h("td", { colspan: 5 }, h("div", { class: "details" },
-      h("dl", {}, h("dt", { text: "id" }), h("dd", { text: s.id }), h("dt", { text: "time zone" }), h("dd", { text: s.tz || "UTC" }),
+      h("dl", {}, h("dt", { text: "id" }), h("dd", { text: s.id }), s.cron ? [h("dt", { text: "cron" }), h("dd", { text: s.cron })] : null,
+        h("dt", { text: "time zone" }), h("dd", { text: s.tz || "UTC" }),
         h("dt", { text: "added by" }), h("dd", { text: s.created_by || "" }), h("dt", { text: "added" }), h("dd", { text: clock(s.created) })),
       h("h3", { text: "WHAT ITS SUB-AGENT IS TOLD" }), h("pre", { text: s.prompt || "" }),
       h("p", { class: "muted small", text: `In a shell: clodfarm schedule pause|resume|run|remove ${s.id}` })))) : null];

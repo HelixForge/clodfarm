@@ -347,7 +347,7 @@ def test_cli_hands_work_to_another_claude_and_schedules_it(env, monkeypatch):
         wait_for(lambda: any(x["title"] == "tick" and x["status"] == "done" for x in farm.store.list_tasks("done")))
         assert "(no schedules)" in cli("schedule", "list").stdout  # a one-off is gone once it fired
         every = json.loads(cli("schedule", "add", "digest", "--cron", "0 9 * * *", "--tz", "Asia/Jerusalem", "--json").stdout)
-        assert "cron '0 9 * * *' (Asia/Jerusalem)" in cli("schedule", "list").stdout
+        assert "every day at 9am, Jerusalem time" in cli("schedule", "list").stdout
         assert cli("schedule", "remove", every["id"]).returncode == 0
         assert farm.store.get_task(held["id"])["status"] == "queued"  # nobody here is gil
     finally:

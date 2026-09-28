@@ -108,11 +108,98 @@ def next_run(spec: dict, after: float) -> float | None:
     return None
 
 
+_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+           "November", "December"]
+
+
+def _and(words: list[str]) -> str:
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def _clock(h: int, m: int) -> str:
+    """7:30am, 9am, noon, midnight."""
+    if m == 0 and h in (0, 12):
+        return "midnight" if h == 0 else "noon"
+    return f"{h % 12 or 12}{f':{m:02d}' if m else ''}{'am' if h < 12 else 'pm'}"
+
+
+def _nth(n: int) -> str:
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
+def _step(values: set[int], lo: int, hi: int) -> int | None:
+    """n when ``values`` is every n-th from ``lo`` (*/n), else None."""
+    for n in range(2, hi - lo + 1):
+        if values == set(range(lo, hi + 1, n)):
+            return n
+    return None
+
+
+def _zone(tz: str) -> str:
+    """'Asia/Jerusalem' -> 'Jerusalem time'; UTC stays UTC."""
+    return tz if tz.upper() in ("UTC", "GMT", "ETC/UTC") else tz.rsplit("/", 1)[-1].replace("_", " ") + " time"
+
+
+def cron_words(line: str, tz: str = "UTC") -> str | None:
+    """A cron line in plain words ('weekdays at 7:30am, Jerusalem time'); None when it is too unusual to say simply."""
+    try:
+        mins, hours, dom, months, dow, dom_set, dow_set = parse_cron(line)
+    except ValueError:
+        return None
+    every_min, every_hour = mins == set(range(60)), hours == set(range(24))
+
+    if dom_set and dow_set:
+        return None
+    if dow_set:
+        if dow == {1, 2, 3, 4, 5}:
+            days = "weekdays"
+        elif dow == {0, 6}:
+            days = "weekends"
+        elif len(dow) == 1:
+            days = "every " + _DAYS[next(iter(dow))]
+        else:
+            days = _and([_DAYS[d] + "s" for d in sorted(dow, key=lambda d: (d + 6) % 7)])  # Monday first
+    elif dom_set:
+        if len(dom) > 3:
+            return None
+        days = f"the {_and([_nth(d) for d in sorted(dom)])} of " + ("every month" if len(months) == 12 else "")
+    else:
+        days = "every day"
+    if len(months) < 12:
+        if len(months) > 3:
+            return None
+        names = _and([_MONTHS[m - 1] for m in sorted(months)])
+        days = days + names if days.endswith(" of ") else f"{days} in {names}"
+
+    if len(hours) <= 4 and len(mins) <= 2 and len(hours) * len(mins) <= 4:
+        at = "at " + _and([_clock(h, m) for h in sorted(hours) for m in sorted(mins)])
+    elif every_hour and len(mins) == 1:
+        m = next(iter(mins))
+        at = "every hour" + (f" at :{m:02d}" if m else "")
+    elif every_hour and every_min:
+        at = "every minute"
+    elif mins == {0} and (n := _step(hours, 0, 23)):
+        at = f"every {n} hours"
+    elif every_hour and (n := _step(mins, 0, 59)):
+        at = f"every {n} minutes"
+    else:
+        return None
+
+    if at.startswith("every"):  # "every 2 hours" / "weekdays, every hour at :30"
+        when = at if days == "every day" else f"{days}, {at}"
+    else:
+        when = f"{days} {at}"
+    return f"{when}, {_zone(tz)}"
+
+
 def describe(spec: dict) -> str:
     if spec.get("cron"):
-        return f"cron '{spec['cron']}' ({spec.get('tz') or 'UTC'})"
+        tz = spec.get("tz") or "UTC"
+        return cron_words(spec["cron"], tz) or f"cron '{spec['cron']}' ({tz})"
     if spec.get("every"):
         s = int(spec["every"])
-        return "every " + next(f"{s // u}{n}" for u, n in ((604800, "w"), (86400, "d"), (3600, "h"), (60, "m"), (1, "s"))
-                               if s % u == 0)
+        n, unit = next((s // u, name) for u, name in ((604800, "week"), (86400, "day"), (3600, "hour"), (60, "minute"),
+                                                      (1, "second")) if s % u == 0)
+        return f"every {unit}" if n == 1 else f"every {n} {unit}s"
     return "once"

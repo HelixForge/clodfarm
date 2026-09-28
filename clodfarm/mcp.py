@@ -300,8 +300,9 @@ TOOLS = [
      "{title, description, widgets: [...]}; widget types: stat {key,label,value,unit,good:'up'|'down',target}, "
      "chart {label,unit,from:[stat keys]} (plots the stats' recorded history) or {label,unit,series:[{name,points:"
      "[[iso time, value]]}]}, bars {label,unit,items:[{label,value}]}, table {label,columns,rows}, progress "
-     "{label,value,max}, text {label,text}. Every push records each stat's value, so the page shows how it moved.",
-     _schema({"dashboard": S, "spec": {"type": "object"}}, ["dashboard", "spec"])),
+     "{label,value,max}, text {label,text}. Every push records each stat's value, so the page shows how it moved. "
+     "folder (optional, nest with '/', e.g. 'Growth/Leads') files it on the list page; left out, it stays where it is.",
+     _schema({"dashboard": S, "spec": {"type": "object"}, "folder": S}, ["dashboard", "spec"])),
 ]
 READ_ONLY = {t[0] for t in TOOLS if t[1] == "farm:read"}
 
@@ -399,7 +400,9 @@ def run_tool(ui, grant: dict, name: str, args: dict):
         pub = os.environ.get("FARM_PUBLIC_URL", "").rstrip("/")
         try:
             if name == "farm_dashboard_push":
-                d = dashboards.push(store, s("dashboard", 48), args.get("spec"), by=me, owner=me)
+                folder = args.get("folder")
+                d = dashboards.push(store, s("dashboard", 48), args.get("spec"), by=me, owner=me,
+                                    folder=None if folder is None else str(folder)[:200])
                 return {"dashboard": d["slug"], "widgets": len(d["widgets"]), "url": f"{pub}/dashboards/{d['slug']}"}
             if s("dashboard", 48):
                 d = dashboards.get(store, s("dashboard", 48))
