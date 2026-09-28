@@ -73,8 +73,8 @@ slots and which should run; `/workspace/.farm/browser.log` (and `browsers/<name>
 | `FARM_BROWSER_ARGS` | | more Chromium flags |
 | `FARM_BROWSER_PROFILE` | `/workspace/.farm/browser` | the `default` profile's directory |
 
-The image has it unless built with `docker build --build-arg BROWSER=0 .` (Chromium, Xvfb, x11vnc, noVNC and Node add
-about 1 GB unpacked). Each box of a multi-box farm has its own browser and its own logins.
+The image has it unless built with `docker build --build-arg BROWSER=0 .` (Chromium, Xvfb, x11vnc, noVNC and Playwright
+add about 1 GB unpacked; Node is in every image). Each box of a multi-box farm has its own browser and its own logins.
 
 ## Security
 

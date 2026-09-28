@@ -140,6 +140,18 @@ def test_mail_reaches_a_session_after_a_tool_batch_and_before_it_stops(env, stor
     assert "and another" in json.loads(hook("Stop", {"stop_hook_active": False}, **sub).stdout)["reason"]
 
 
+def test_a_conversation_is_busy_from_its_prompt_until_its_turn_ends(env, store):
+    hook("SessionStart", check=True, FARM_TASK_ID="")
+    assert not store.session("s-1").get("busy")
+    hook("UserPromptSubmit", {"prompt": "fix the build"}, check=True, FARM_TASK_ID="")
+    assert store.session("s-1")["busy"] is True
+    store.send_message("gil", "test", "also the docs")
+    assert json.loads(hook("Stop", check=True, FARM_TASK_ID="").stdout)["decision"] == "block"
+    assert store.session("s-1")["busy"] is True, "kept going for its mail: still at work"
+    hook("Stop", {"stop_hook_active": True}, check=True, FARM_TASK_ID="")
+    assert store.session("s-1")["busy"] is False
+
+
 def test_an_idle_conversation_is_woken_for_mail(env, store):
     flag = env / "mail" / "test"
     flag.parent.mkdir()

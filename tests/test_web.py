@@ -228,6 +228,25 @@ def test_sessions_and_conversations_in_the_ui(ui):
     assert call(base + "/api/sessions/nope")[0] == 404
 
 
+def test_a_claude_mid_turn_in_a_conversation_is_at_work(ui):
+    base, farm_ui = ui
+    call = client()
+    login(call, base)
+    me = farm_ui.cfg.name
+    view = lambda: next(a for a in call(base + "/api/state")[1]["agents"] if a["id"] == me)  # noqa: E731
+    assert view()["talking"] is None
+    farm_ui.store.record_session("s1", claude=me, kind="conversation", title="fix the build", busy=True)
+    farm_ui._state_cache = None
+    assert view()["talking"]["n"] == 1 and view()["talking"]["title"] == "fix the build"
+    farm_ui.store.record_session("s1", busy=False)
+    farm_ui._state_cache = None
+    assert view()["talking"] is None
+    farm_ui.store.record_session("s2", claude=me, kind="conversation", busy=True)  # interrupted: no Stop, gone quiet
+    farm_ui.store._update("SESSION", "s2", lambda x: {**x, "last_at": x["last_at"] - farm_ui.TURN_QUIET - 1})
+    farm_ui._state_cache = None
+    assert view()["talking"] is None
+
+
 def test_slack_setup_endpoints(ui):
     base, _ = ui
     call = client()

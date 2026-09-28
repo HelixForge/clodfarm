@@ -422,7 +422,9 @@ def cmd_hook(cfg, a):
             store.record_session(sid, transcript=ev.get("transcript_path"), claude=owner or cfg.name, runs_on=cfg.name, kind=kind, box=cfg.farm_id, cwd=ev.get("cwd"),
                                  task=os.environ.get("FARM_TASK_ID") if kind == "sub-agent" else None,
                                  ended=True if name == "SessionEnd" else None,
-                                 end_reason=ev.get("reason") if name == "SessionEnd" else None)
+                                 end_reason=ev.get("reason") if name == "SessionEnd" else None,
+                                 # mid-turn: the farm shows the Claude at work while a conversation's turn runs
+                                 busy=True if name == "UserPromptSubmit" else False if name == "SessionEnd" else None)
         if name == "SessionEnd" and sid and os.environ.get("FARM_MAIL_FLAG"):  # its listener stops too
             try:
                 os.remove(_listener_file(os.environ["FARM_MAIL_FLAG"], sid))
@@ -439,6 +441,8 @@ def cmd_hook(cfg, a):
             if msgs:
                 print(json.dumps({"decision": "block", "reason": mail_text(msgs)}))
                 store.record_session(sid, mail_blocks=blocks + 1)
+            else:  # the turn ends
+                store.record_session(sid, busy=False)
     except Exception as e:  # noqa: BLE001
         print(f"clodfarm hook: {e!r}"[:300], file=sys.stderr)
     return 0

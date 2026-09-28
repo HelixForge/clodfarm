@@ -24,25 +24,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd -m -u 1000 -s /bin/bash farm \
     && mkdir -p /workspace /home/farm/.claude && chown farm:farm /workspace /home/farm/.claude
 
+# Node (npm, npx) and the AWS CLI v2 on every box: the Claudes build and ship with them. The apps role
+# (docs/deploy-aws.md) puts an `apps` profile in the AWS CLI config; without it `aws` has no credentials.
+ARG NODE_MAJOR=22
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends xz-utils unzip && rm -rf /var/lib/apt/lists/*; \
+    arch="$(dpkg --print-architecture | sed 's/amd64/x64/')"; \
+    base="https://nodejs.org/dist/latest-v${NODE_MAJOR}.x"; \
+    file="$(curl -fsSL "$base/SHASUMS256.txt" | awk -v a="linux-$arch.tar.xz" '$2 ~ a"$" {print $2}')"; \
+    curl -fsSLo "/tmp/$file" "$base/$file"; \
+    curl -fsSL "$base/SHASUMS256.txt" | grep " $file\$" | (cd /tmp && sha256sum -c -); \
+    tar -xJf "/tmp/$file" -C /usr/local --strip-components=1 --exclude='*/CHANGELOG.md' --exclude='*/README.md'; \
+    rm "/tmp/$file"; node --version; npm --version; \
+    curl -fsSLo /tmp/awscli.zip "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip"; \
+    unzip -q /tmp/awscli.zip -d /tmp && /tmp/aws/install && rm -rf /tmp/aws /tmp/awscli.zip; aws --version
+
 # The farm's browser (docs/browser.md): Chromium on a virtual screen that you log in to sites with from the farm UI,
 # noVNC to draw it there, and Playwright's MCP server so every Claude drives it. BROWSER=0 builds without it.
 ARG BROWSER=1
 ARG NOVNC_VERSION=1.6.0
-ARG NODE_MAJOR=22
 RUN if [ "$BROWSER" = "1" ]; then set -eux; \
       apt-get update && apt-get install -y --no-install-recommends \
-        chromium fonts-liberation fonts-noto-color-emoji fonts-dejavu-core xvfb x11vnc xz-utils \
+        chromium fonts-liberation fonts-noto-color-emoji fonts-dejavu-core xvfb x11vnc \
       && rm -rf /var/lib/apt/lists/*; \
       mkdir -p /opt/novnc && curl -fsSL "https://github.com/novnc/noVNC/archive/refs/tags/v${NOVNC_VERSION}.tar.gz" \
         | tar -xz -C /opt/novnc --strip-components=1 "noVNC-${NOVNC_VERSION}/core" "noVNC-${NOVNC_VERSION}/vendor" \
           "noVNC-${NOVNC_VERSION}/LICENSE.txt"; \
-      arch="$(dpkg --print-architecture | sed 's/amd64/x64/')"; \
-      base="https://nodejs.org/dist/latest-v${NODE_MAJOR}.x"; \
-      file="$(curl -fsSL "$base/SHASUMS256.txt" | awk -v a="linux-$arch.tar.xz" '$2 ~ a"$" {print $2}')"; \
-      curl -fsSLo "/tmp/$file" "$base/$file"; \
-      curl -fsSL "$base/SHASUMS256.txt" | grep " $file\$" | (cd /tmp && sha256sum -c -); \
-      tar -xJf "/tmp/$file" -C /usr/local --strip-components=1 --exclude='*/CHANGELOG.md' --exclude='*/README.md'; \
-      rm "/tmp/$file"; \
       npm install -g --no-fund --no-audit @playwright/mcp@latest && npm cache clean --force; \
       playwright-mcp --help | grep -q -- --cdp-endpoint; \
     fi

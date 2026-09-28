@@ -202,12 +202,14 @@ class FarmUI:
             name = box.split("@")[0]
             if name not in ids and not box.endswith(here) and all(c[0]["id"] != name for c in claudes):
                 claudes.append(({"id": name, "name": name, "remote": True, "hat": "cap"}, True))
+        talking = self._talking(store)
         agents = []
         for a, remote in claudes:
             ws = by_name.get(a["id"], [])
             seat = next((w.get("seat") for w in ws if w.get("seat")), None)
             agents.append(self._agent_view(a, {"loggedIn": True} if remote else self.manager.auth(a), ws, seat,
                                            seats, stats, rc.get(a["id"]) or rc.get(a.get("name"))))
+            agents[-1]["talking"] = talking.get(a["id"])
         primary = self.cfg.name
         subs = []
         for s in ("running", "waiting", "queued"):
@@ -228,6 +230,26 @@ class FarmUI:
             "events": [{"at": e["at"], "type": e["type"], "msg": e["msg"][:240], "task": e.get("task"), "by": e.get("by")}
                        for e in events[-40:]],
         }
+
+    TURN_QUIET = 600  # a turn whose transcript is silent this long was interrupted (no Stop comes then)
+
+    def _talking(self, store) -> dict[str, dict]:
+        """Per Claude, its conversations in the middle of a turn: how many, since when, and the newest one's title."""
+        out: dict[str, dict] = {}
+        for s in store.sessions(None, 200):
+            if s.get("kind") != "conversation" or not s.get("busy") or s.get("ended"):
+                continue
+            seen = float(s.get("last_at") or 0)
+            try:  # the transcript grows while the turn runs (same box); a Claude on another box: its last hook
+                seen = max(seen, os.path.getmtime(s["transcript"]))
+            except (KeyError, TypeError, OSError):
+                pass
+            if now() - seen > self.TURN_QUIET:
+                continue
+            t = out.setdefault(s.get("claude") or self.cfg.name, {"n": 0, "since": now(), "title": s.get("title") or ""})
+            t["n"] += 1
+            t["since"] = min(t["since"], float(s.get("last_at") or now()))
+        return out
 
     def _agent_view(self, a, st, ws, seat, seats, stats, link) -> dict:
         r = seats.get(seat) if seat else None
