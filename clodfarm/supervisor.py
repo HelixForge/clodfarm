@@ -26,8 +26,8 @@ import threading
 import time
 
 from . import awsapps, dashboards, gitops, notify, prompts
-from .auth import (accept_remote_control, auth_status, banner, claude_name, install_guide, install_hooks,
-                   install_messaging, install_model, seat_id, trust_directory)
+from .auth import (accept_remote_control, auth_status, banner, claude_name, install_browser_mcp, install_guide,
+                   install_hooks, install_messaging, install_model, seat_id, trust_directory)
 from .config import primary_name_file
 from .config import Config, load
 from .governor import Snapshot, decide
@@ -81,6 +81,7 @@ class Farm:
             install_hooks()
             install_messaging()
             install_model(self.cfg.model)
+            install_browser_mcp()  # the farm's browser as the `browser` MCP tools, when the image has one
             trust_directory(self.cfg.repo_dir)
             trust_directory(self.cfg.workspace)
         # this Claude's conversations (Remote Control and every session opened from it) inherit their mail flag
@@ -146,6 +147,8 @@ class Farm:
         print("stopping: handing running tasks back to the queue", flush=True)
         if self.ui:
             self.ui.ui.manager.shutdown()  # the agents added in the UI hand their tasks back too
+            self.ui.ui.stopping.set()
+            self.ui.ui.browser.shutdown()  # Chromium saves its cookies on the way out
         for p in list(self.procs.values()):
             try:
                 os.killpg(p.pid, signal.SIGTERM)

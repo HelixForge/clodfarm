@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **The farm's browser.** One Chromium in the container that you see and use in the farm UI (the globe button, or
+  B, at `/browser`): log in to a site there once (LinkedIn, an admin panel) and every Claude works in that login with
+  its new `browser` MCP tools (Playwright attached over DevTools), in the window you watch. START turns it on for the
+  box and it stays on across restarts; the profile lives in the workspace volume, so a new container is still logged
+  in. The screen comes over the UI's own WebSocket behind the farm password (noVNC); paste and copy work, and ⌘
+  shortcuts on a Mac. The guide tells the Claudes to use their own tab, never type passwords (they ask you to log in
+  instead) and act on your accounts only as asked. `clodfarm browser [start|stop|open URL]`. The image gains
+  Chromium, Xvfb, x11vnc, noVNC and Node; `--build-arg BROWSER=0` builds without them, `FARM_BROWSER=0` turns it off.
+
 ## 0.7.0 (2026-09-27)
 
 Dashboards that show what is improving, each Claude's tools on its card, and an optional AWS role so the farm can

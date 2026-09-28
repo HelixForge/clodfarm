@@ -36,6 +36,7 @@ The toolbar, bottom right:
 | Chat bubble | `T` | How to talk to your Claude: the steps in the Claude app, example asks, and the MCP command for Claude Code on your computer. With no Claude logged in yet, it says to log one in first. |
 | Slack logo | `S` | Give the farm work from Slack ([slack.md](slack.md)). Its dot is green when connected. |
 | Chart | `D` | The dashboards ([dashboards.md](dashboards.md)). |
+| Globe | `B` | The farm's browser: log in to sites there and the Claudes use those logins ([browser.md](browser.md)). |
 | **+ NEW CLAUDE** | `C` | Add a Claude login. |
 
 When you **release** a Claude, it leaves with everything it was running: its `clodfarm run` stops, its sub-agents go

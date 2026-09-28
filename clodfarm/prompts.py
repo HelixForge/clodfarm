@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from . import awsapps
+from . import awsapps, browser
 
 FARM_GUIDE = """\
 # You are one Claude on a clodfarm farm
@@ -86,9 +86,24 @@ farm, spend money, create accounts, or post anything publicly unless the person 
 """
 
 
+BROWSER_GUIDE = """
+## The farm's browser
+This box has one Chromium, shared by every Claude on it and by your person, who watches it live in the farm UI
+(BROWSER). Your person logs in to sites there (e.g. LinkedIn), so it has their sessions. Drive it with your `browser`
+MCP tools (`mcp__browser__*`: navigate, snapshot, click, type, screenshot, tabs).
+- If a tool can't connect, the browser is off: `clodfarm browser start` (`clodfarm browser` shows it and its tabs).
+- Open your own tab for your work and close it when you're done; don't close or navigate tabs you didn't open, and
+  don't log out, change account settings or clear cookies.
+- Never type passwords or one-time codes, even ones you find. When a site needs a login (or a captcha), stop and ask
+  your person to log in from the farm UI's BROWSER, then continue.
+- What you do there is done as your person, on their accounts: read freely, but post, message, connect, buy or
+  delete only when they asked for it. Go at a human pace, so the site doesn't flag the account.
+"""
+
+
 def farm_guide() -> str:
     """The guide every Claude on this farm reads: FARM_GUIDE plus the sections for the features this farm has on."""
-    return FARM_GUIDE + awsapps.guide_section()
+    return FARM_GUIDE + (BROWSER_GUIDE if browser.mcp_server() else "") + awsapps.guide_section()
 
 
 def task_system_prompt(cfg, task: dict, cwd: str, branch: str | None, name: str = "") -> str:

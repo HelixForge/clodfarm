@@ -194,6 +194,8 @@ const ICONS = {
     { o: "#6b5a3a", c: "#f6eed8", s: "#e2875f", d: "#d8c9a3" }],
   chart: [["o.........", "o.......gg", "o.......gg", "o....bb.gg", "o....bb.gg", "o.rr.bb.gg", "o.rr.bb.gg", "o.rr.bb.gg", "o.rr.bb.gg", "oooooooooo"],
     { o: "#3c4a6b", b: "#1c9fd6", g: "#3cc36b", r: "#d97757" }],
+  globe: [["...oooo...", "..obwbbo..", ".obwbbwbo.", "obbwbbwbbo", "owwwwwwwwo", "obbwbbwbbo", "owwwwwwwwo", ".obwbbwbo.", "..obwbbo..", "...oooo..."],
+    { o: "#1b3a5a", b: "#1c9fd6", w: "#d8eef8" }],
   quill: [["........oo", ".......owo", "......owwo", ".....owwo.", "....owwo..", "...owwo...", "..oowo....", "..ooo.....", ".ooo......", "oo........"],
     { o: "#3a2a1a", w: "#f6ecd0" }],
 };
@@ -777,10 +779,10 @@ const UI = {
     try { const me = await api("api/me"); App.user = me.user; if (!this.goNext()) this.showFarm(); }
     catch { this.showTitle(); }
   },
-  /** Back to the dashboard page that sent you to log in (?next=dashboards/<name>); only farm-local paths. */
+  /** Back to the page that sent you to log in (?next=dashboards/<name>, ?next=browser); only farm-local paths. */
   goNext() {
     const next = new URLSearchParams(location.search).get("next") || "";
-    if (!/^dashboards(\/[a-z0-9-]{1,48})?$/.test(next)) return false;
+    if (!/^(dashboards(\/[a-z0-9-]{1,48})?|browser)$/.test(next)) return false;
     location.replace(next);
     return true;
   },
@@ -898,7 +900,7 @@ const UI = {
     }
     addEventListener("keydown", (e) => {
       if ($("#hud").hidden || $$("dialog[open]").length || /INPUT|TEXTAREA/.test(document.activeElement?.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
-      const k = { c: "hatch", h: "hatch", n: "hatch", s: "slack", t: "talk", d: "dashboards" }[e.key.toLowerCase()];
+      const k = { c: "hatch", h: "hatch", n: "hatch", s: "slack", t: "talk", d: "dashboards", b: "browser" }[e.key.toLowerCase()];
       if (k) { e.preventDefault(); this.act(k); }
     });
   },
@@ -907,6 +909,7 @@ const UI = {
     if (a === "slack") return this.openSlack();
     if (a === "talk") return this.openClaude();
     if (a === "dashboards") location.href = "dashboards";
+    if (a === "browser") location.href = "browser";
   },
 
   // ------------------------------------------------------ talk to your Claude

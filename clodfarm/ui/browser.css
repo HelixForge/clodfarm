@@ -1,0 +1,51 @@
+/* the farm's browser page: dash.css gives the sign, the meadow and the paper; this adds the screen */
+.wrap.wide { max-width: 1480px; padding-top: 20px; }
+.top-actions { display: flex; align-items: center; gap: 10px; flex: none; }
+.top .chip { background: var(--paper); color: var(--ink); border: 3px solid #2f251b; box-shadow: 0 3px 0 #2f251b; }
+.chip.off .dot { background: #9aa3b2; box-shadow: none; }
+.chip.wait .dot { background: var(--hp-mid); box-shadow: 0 0 6px var(--hp-mid); }
+.btn {
+  font: 10px/1 var(--font-px); padding: 11px 14px; background: var(--paper); border: 3px solid var(--ink);
+  border-radius: 6px; box-shadow: 0 3px 0 var(--ink); color: var(--ink);
+}
+.btn:hover { background: #fff; }
+.btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
+.btn.primary { background: var(--clay); color: #fff; border-color: #6b2f1f; box-shadow: 0 3px 0 #6b2f1f; }
+.btn.primary:hover { background: #e4865f; }
+.btn:disabled { opacity: .5; cursor: default; }
+.small-btn { font-size: 8px; padding: 8px 10px; }
+.form-error { color: var(--bad); min-height: 1em; margin: 8px 0 0; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+.intro { max-width: 760px; }
+.intro h2 { font-size: 12px; line-height: 1.6; margin-bottom: 12px; }
+
+.bar { display: flex; gap: 10px; margin: 0 0 14px; }
+.bar input {
+  flex: 1; min-width: 0; font: 22px/1 var(--font-body); padding: 8px 12px; color: var(--ink); background: var(--white);
+  border: 3px solid var(--ink); border-radius: 6px; box-shadow: inset 0 3px 0 var(--paper-2);
+}
+.bar input:focus { outline: 3px solid var(--clay); outline-offset: 1px; }
+
+.screen-frame { position: relative; padding: 8px; background: #2b2f3a; border-color: var(--ink); overflow: hidden;
+  box-shadow: 0 var(--px) 0 var(--shadow); }
+.screen { width: 100%; height: 70vh; background: #1b1f2a; border-radius: 4px; overflow: hidden; }
+.screen canvas { image-rendering: auto; }
+.screen-msg {
+  position: absolute; inset: 8px; display: grid; place-items: center; margin: 0; color: #fff; text-align: center;
+  font: 10px/1.8 var(--font-px); background: rgba(27, 31, 42, .82); border-radius: 4px; padding: 20px;
+}
+.help { margin: 10px 2px 18px; color: #f4f1e8; text-shadow: 1px 1px 0 #1b2410; }
+.toast { margin-left: 10px; font: 8px/1 var(--font-px); color: #1b2410; background: var(--hp-mid); padding: 4px 6px; border-radius: 3px; text-shadow: none; }
+
+.tabs-panel { margin-bottom: 20px; }
+.tab-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.tab-list li { display: flex; gap: 14px; align-items: baseline; padding: 6px 10px; background: var(--white);
+  border: 2px solid var(--paper-2); border-radius: 4px; min-width: 0; }
+.tab-list b { font-weight: 400; flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab-list span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+@media (max-width: 760px) {
+  .screen { height: 56vh; }
+  .top-actions .chip { display: none; }
+}
