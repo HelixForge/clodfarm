@@ -166,6 +166,16 @@ class AgentManager:
     def all(self) -> list[dict]:
         return [self.primary()] + self._load()
 
+    def share_connectors(self):
+        """A connector changed (Stripe): every Claude's tools and farm guide follow (their new sessions see it)."""
+        from .auth import install_guide
+        self.share_browser_tools()
+        for a in self.all():
+            try:
+                install_guide(a["config_dir"])
+            except (OSError, KeyError) as e:
+                print(f"connectors: guide not updated for {a.get('id')}: {e}", flush=True)
+
     def share_browser_tools(self):
         """Every Claude on this box gets the MCP tools of its own browser profiles (their new sessions see a change)."""
         from .auth import install_browser_mcp

@@ -145,7 +145,10 @@ If you have none, you have no browser: ask your person to add one for you on the
 
 def farm_guide() -> str:
     """The guide every Claude on this farm reads: FARM_GUIDE plus the sections for the features this farm has on."""
-    return FARM_GUIDE + (BROWSER_GUIDE if browser.mcp_servers() else "") + awsapps.guide_section()
+    import os
+    from . import connectors
+    return FARM_GUIDE + (BROWSER_GUIDE if browser.mcp_servers() else "") + awsapps.guide_section() + \
+        connectors.guide_section(os.environ.get("FARM_WORKSPACE") or "/workspace")
 
 
 def task_system_prompt(cfg, task: dict, cwd: str, branch: str | None, name: str = "") -> str:

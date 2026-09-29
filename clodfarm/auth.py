@@ -112,10 +112,10 @@ Checking again every few seconds...
 """
 
 
-def install_guide():
+def install_guide(config_dir: str | None = None):
     """Put the farm guide in the user-level CLAUDE.md so every session, including the
-    ones you open through Remote Control, knows how the farm works."""
-    path = os.path.join(claude_home(), "CLAUDE.md")
+    ones you open through Remote Control, knows how the farm works (``config_dir``: another Claude's)."""
+    path = os.path.join(config_dir or claude_home(), "CLAUDE.md")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     try:
         cur = open(path).read()
@@ -254,21 +254,24 @@ def install_browser_mcp(path: str | None = None, claude: str | None = "", unowne
     logins made from the farm UI. Servers of removed profiles go; a server of the same name set up by hand is kept.
     ``path``: another Claude's .claude.json (the farm UI updates every Claude when a profile is added or removed).
     Returns True if the config changed."""
-    from . import browser
+    from . import browser, connectors
     p = path or claude_json_path()
     try:
         cfg = json.load(open(p))
     except (OSError, ValueError):
         cfg = {}
     servers = dict(cfg.get("mcpServers") or {})
-    # its own profiles only (``claude``); the farm's own Claude ("") also gets the profiles nobody owns
-    want = browser.mcp_servers(claude=claude, unowned=unowned)
+    workspace = os.environ.get("FARM_WORKSPACE") or "/workspace"
+    # its own profiles only (``claude``); the farm's own Claude ("") also gets the profiles nobody owns; and the
+    # connectors every Claude shares (Stripe)
+    want = {**browser.mcp_servers(claude=claude, unowned=unowned), **connectors.mcp_servers(workspace)}
+    ours = lambda n, srv: ((n == browser.MCP_NAME or n.startswith(browser.MCP_NAME + "-")) and browser.is_ours(srv)) \
+        or connectors.is_ours(n, srv)  # noqa: E731
     for name, server in list(servers.items()):
-        if (name == browser.MCP_NAME or name.startswith(browser.MCP_NAME + "-")) and browser.is_ours(server) \
-                and name not in want:
+        if ours(name, server) and name not in want:
             del servers[name]
     for name, server in want.items():
-        if servers.get(name) is None or browser.is_ours(servers[name]):
+        if servers.get(name) is None or ours(name, servers[name]):
             servers[name] = server
     if servers == (cfg.get("mcpServers") or {}):
         return False

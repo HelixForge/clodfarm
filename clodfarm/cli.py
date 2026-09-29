@@ -1141,6 +1141,121 @@ def cmd_farm(cfg, a):
     return 0
 
 
+def cmd_stripe(cfg, a):
+    """The Stripe connector from a shell: status, connect (the key on stdin, so it isn't in your shell history), or
+    disconnect. Every Claude on the farm gets mcp__stripe__*."""
+    from . import connectors
+    from .agents import AgentManager
+    if a.action in ("connect", "disconnect") and _in_claude():
+        print("clodfarm stripe: the farm manager connects Stripe (farm UI, CONNECTORS)", file=sys.stderr)
+        return 2
+    if a.action == "connect":
+        key = sys.stdin.readline().strip() if not sys.stdin.isatty() else __import__("getpass").getpass("Stripe key: ")
+        try:
+            v = connectors.stripe_connect(cfg.workspace, key, by="cli")
+        except ValueError as e:
+            print(f"clodfarm stripe: {e}", file=sys.stderr)
+            return 1
+        AgentManager(cfg).share_connectors()
+        _store(cfg).event("connector.stripe", f"Stripe connected ({v['mode']} mode, key …{v['last4']}) from a shell",
+                          by="cli")
+    elif a.action == "disconnect":
+        if connectors.stripe_disconnect(cfg.workspace):
+            AgentManager(cfg).share_connectors()
+            _store(cfg).event("connector.stripe", "Stripe disconnected from a shell", by="cli")
+    v = connectors.stripe_view(cfg.workspace)
+    acct = (v.get("account") or {}).get("name")
+    _out(v, a.json, "Stripe: not connected (the farm UI's CONNECTORS, or `clodfarm stripe connect` with the key on stdin)"
+         if not v["connected"] else f"Stripe: connected, {v['mode'].upper()} mode" + (f", {acct}" if acct else "")
+         + f", {v.get('kind')} key …{v['last4']}; the Claudes' tools: {v['tools']}")
+    return 0
+
+
+def cmd_gads(cfg, a):
+    """Google Ads for the Claudes: the accounts, GAQL reports, and an access token (with the headers) for changes."""
+    from . import connectors
+    if a.action in ("connect", "disconnect"):
+        return _gads_connect(cfg, a)
+    d = connectors.gads_load(cfg.workspace)
+    if a.action == "status" or not d:
+        v = connectors.gads_view(cfg.workspace)
+        if not v["connected"]:
+            print("Google Ads: not connected (the farm manager connects it in the farm UI's CONNECTORS)",
+                  file=sys.stdout if a.action == "status" else sys.stderr)
+            return 0 if a.action == "status" else 1
+        return _out(v, a.json, f"Google Ads: connected, {len(v['customers'])} account(s), API {v['api_version']}"
+                    + (f", through manager {v['login_customer_id']}" if v.get("login_customer_id") else "")) or 0
+    try:
+        if a.action == "accounts":
+            rows = d.get("customers") or []
+            if a.refresh:
+                rows = connectors.gads_check(d)["customers"]
+            _out(rows, a.json, "\n".join(f"{c['id']}  {c.get('name') or '(no name)'}" + ("  [manager]" if c.get("manager")
+                                         else "") for c in rows) or "no accounts")
+        elif a.action == "query":
+            if not a.customer or not a.gaql:
+                print("usage: clodfarm gads query --customer ID \"SELECT ... FROM ...\"", file=sys.stderr)
+                return 2
+            print(json.dumps(connectors.gads_query(cfg.workspace, a.customer, a.gaql), indent=1))
+        elif a.action == "dashboard":
+            if not a.customer:
+                print("usage: clodfarm gads dashboard --customer ID [--days 30]", file=sys.stderr)
+                return 2
+            print(json.dumps(connectors.gads_dashboard(cfg.workspace, a.customer, a.days)))
+        elif a.action == "token":  # for REST calls that change things: never print it into a transcript for no reason
+            tok = connectors.gads_access_token(d)
+            ver = d.get("api_version") or connectors._gads_versions()[0]
+            print(json.dumps({"base": f"{connectors._gads_api()}/{ver}",
+                              "headers": connectors._gads_headers(d, tok), "expires_in_s": 3600,
+                              "yaml": connectors._gads_paths(cfg.workspace)[1]}, indent=1))
+    except ValueError as e:
+        print(f"clodfarm gads: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _gads_connect(cfg, a):
+    """The farm manager connects Google Ads from the box's shell: the credentials as JSON on stdin (so they stay out
+    of the shell history), or asked for one by one."""
+    from . import connectors
+    from .agents import AgentManager
+    if _in_claude():
+        print("clodfarm gads: the farm manager connects Google Ads, from the box's shell", file=sys.stderr)
+        return 2
+    if a.action == "disconnect":
+        if connectors.gads_disconnect(cfg.workspace):
+            AgentManager(cfg).share_connectors()
+            _store(cfg).event("connector.google_ads", "Google Ads disconnected from a shell", by="cli")
+        print("Google Ads: not connected")
+        return 0
+    if sys.stdin.isatty():
+        import getpass
+        creds = {"developer_token": getpass.getpass("Developer token: "), "client_id": input("OAuth client ID: "),
+                 "client_secret": getpass.getpass("OAuth client secret: "),
+                 "refresh_token": getpass.getpass("Refresh token: "),
+                 "login_customer_id": input("Manager account ID (Enter for none): ")}
+    else:
+        try:
+            creds = json.loads(sys.stdin.read() or "{}")
+        except ValueError:
+            print("clodfarm gads connect: give the credentials as JSON on stdin: {\"developer_token\": ..., "
+                  "\"client_id\": ..., \"client_secret\": ..., \"refresh_token\": ..., \"login_customer_id\": ...}",
+                  file=sys.stderr)
+            return 2
+    try:
+        v = connectors.gads_connect(cfg.workspace, creds if isinstance(creds, dict) else {}, by="cli")
+    except ValueError as e:
+        print(f"clodfarm gads: {e}", file=sys.stderr)
+        return 1
+    AgentManager(cfg).share_connectors()
+    _store(cfg).event("connector.google_ads", f"Google Ads connected ({len(v['customers'])} account(s)) from a shell",
+                      by="cli")
+    print(f"Google Ads: connected, {len(v['customers'])} account(s), API {v['api_version']}:")
+    for c in v["customers"]:
+        print(f"  {c['id']}  {c.get('name') or '(no name)'}" + ("  [manager]" if c.get("manager") else ""))
+    return 0
+
+
 def cmd_upgrade(cfg, a):
     from . import upgrade
     return upgrade.main(cfg, a)
@@ -1322,6 +1437,16 @@ def main(argv=None):
     add("resume", cmd_resume, "resume work")
     add("ui", cmd_ui, "serve the farm UI (the daemon also serves it unless FARM_UI=0)").add_argument(
         "--tag", help=argparse.SUPPRESS)
+    gd = add("gads", cmd_gads, "Google Ads: status | accounts [--refresh] | query --customer ID GAQL | dashboard "
+             "--customer ID | token | connect (JSON on stdin) | disconnect")
+    gd.add_argument("action", nargs="?", default="status",
+                    choices=["status", "accounts", "query", "dashboard", "token", "connect", "disconnect"])
+    gd.add_argument("--days", type=int, default=30)
+    gd.add_argument("gaql", nargs="?", default="")
+    gd.add_argument("--customer", default="")
+    gd.add_argument("--refresh", action="store_true")
+    stp = add("stripe", cmd_stripe, "the Stripe connector: status | connect (key on stdin) | disconnect")
+    stp.add_argument("action", nargs="?", default="status", choices=["status", "connect", "disconnect"])
     pr = add("pair", cmd_pair, "a one-time link that signs your person in to you on the farm UI (for their phone)")
     ap = add("approvals", cmd_approvals, "missions and messages waiting for a person's approval")
     ap.add_argument("--claude", help="only the ones for this Claude")

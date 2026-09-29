@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="assets/demo-10s.mp4"><img src="assets/demo-10s.webp" alt="clodfarm in 10 seconds, on the farm UI's pixel art: 1, ask your Claude from the Claude app on your phone; 2, it splits the work into sub-agents, each on its own git branch; 3, Claudes team up: matan's Claude asks gil's Claude to take the tests and a sub-agent runs on gil's account; 4, it stays in budget: noa's Claude pauses at 80% of its weekly limit; 5, it ships tested code: merged to main only when the tests pass" width="100%"></a>
+  <a href="assets/demo-10s.mp4"><img src="assets/demo-10s.webp" alt="clodfarm in 10 seconds, on the farm UI's HD pixel art, with its tokens counter and your Claude's card top left and the labelled dock (your Claude, the farm, manage, + new Claude) along the bottom: 1, ask your Claude from the Claude app on your phone, and matan's Claude walks in through the field's gate to its plot; 2, it splits the work into mini-Claude sub-agents, each on its own git branch, and its crops start to grow; 3, Claudes team up: matan's Claude asks gil's Claude to take the tests and a sub-agent runs on gil's account; 4, it stays in budget: noa's Claude pauses at 80% of its weekly limit, puts its laptop away and goes to nap in the yard by the barn; 5, it ships tested code: merged to main only when the tests pass, the sub-agents finish and the crops bloom into Claude's spark" width="100%"></a>
 </p>
 
 <p align="center">
@@ -32,8 +32,16 @@ is a lump of soil, and this is where your agents grow.
   well-specified jobs your Claudes send it. See [docs/bots.md](docs/bots.md).
 
 <p align="center">
-  <img src="assets/architecture.png" alt="How clodfarm works, drawn as the farm: on your phone you ask your Claude (matan) for work over Remote Control; it works at a plot with three mini-Claude sub-agents, one running on gil's account; gil works at the next plot; noa naps because its budget is paced; the barn is the shared store and git repo and the board runs schedules" width="100%">
+  <img src="assets/architecture.png" alt="How clodfarm works, drawn as the farm in its HD pixel art: on your phone you ask your Claude (matan, with the gold arrow) for work over Remote Control, down the dirt path and through the gate of the fenced field; it works at its plot with three mini-Claude sub-agents, one running on gil's account; gil works at the next plot with a sub-agent of its own; noa naps in the yard by the barn because its budget is paced; the barn is the shared store and git repo, the board beside it runs schedules, and the scarecrow in the field's corner is the planner" width="100%">
 </p>
+
+<table>
+  <tr>
+    <td width="44%"><img src="assets/readme/shot-farm.png" alt="The real farm UI with thirteen Claudes: the tokens counter and your Claude's card with its 5-hour and 7-day usage top left, chips for approvals, Claudes and sub-agents under them; the barn with its fenced yard and pond on the left; the fenced field on the right, where busy Claudes type at their plots with mini-Claude sub-agents around them and the scarecrow planner rests in the corner; a hint box bottom left and the labelled dock bottom right: help, your Claude (talk, browser), the farm (everyone, tasks, stats), manage (Slack, manage) and + new Claude"></td>
+    <td width="32%"><img src="assets/readme/shot-picker.png" alt="The look picker for your Claude: a big portrait in a straw hat, then twelve hats (straw, beanie, cap, flower, headphones, bow, crown, sprout, leaf, wizard, chef, none), colour swatches for the hat, band and body, extras (scarf, glasses, bowtie, backpack, cape), a surprise me button and save"></td>
+    <td width="24%"><img src="assets/readme/shot-phone.png" alt="The farm on a phone: the tokens counter and your Claude's card on top, the approvals chip, the barn, yard and pond, the fenced field with its busy Claudes and their sub-agents below, and the dock with talk, web, all, tasks, stats, manage and + new along the bottom"></td>
+  </tr>
+</table>
 
 <p align="center">
   <img src="assets/readme/steps.png" alt="How you get started. 01 Install: one line on any box with Docker, or one command on AWS with no open ports. 02 Add your Claudes: tap the egg in the farm UI and log in; teammates add theirs the same way. 03 Talk to yours: Claude app, Code, your farm; ask for anything, from anywhere. 04 Watch it grow: sub-agents, messages, schedules and dashboards, all on the farm, paced on real usage." width="100%">
@@ -57,6 +65,7 @@ through your limits. clodfarm is the operations layer it's missing:
 | <img src="assets/icons/chart-column.svg" width="18" height="18" align="top" alt=""> **Dashboards** | The Claudes keep live pages that show what is improving ([docs](docs/dashboards.md)). |
 | <img src="assets/icons/globe.svg" width="18" height="18" align="top" alt=""> **A browser, logged in** | Log in to a site once in the farm's browser (LinkedIn, an admin panel) and every Claude works there as you, in the window you watch ([docs](docs/browser.md)). |
 | <img src="assets/icons/slack.svg" width="18" height="18" align="top" alt=""> **Slack** | DM or @mention the farm and a sub-agent answers in the thread. Two-minute setup ([docs](docs/slack.md)). |
+| <img src="assets/icons/plug.svg" width="18" height="18" align="top" alt=""> **Stripe and Google Ads, for every Claude** | Connect the farm's Stripe (CONNECTORS) and Google Ads once: every Claude gets Stripe's tools and Google Ads reports and live dashboards, and spends real money only when its person asks ([docs](docs/connectors.md)). |
 | <img src="assets/icons/modelcontextprotocol.svg" width="18" height="18" align="top" alt=""> **Claude Code on your laptop** | Connect over MCP and hand the farm work without leaving your editor. |
 | <img src="assets/icons/aws.svg" width="18" height="18" align="top" alt=""> **Builds apps on AWS (optional)** | The Claudes ship their own serverless apps inside a fenced role with a hard budget cap ([details](#let-the-farm-build-apps-on-aws-optional)). |
 | <img src="assets/icons/server.svg" width="18" height="18" align="top" alt=""> **Many boxes, many seats** | One farm and one repo across machines and accounts, each on its own budget. |

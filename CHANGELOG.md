@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Connectors, and Stripe for every Claude** ([docs/connectors.md](docs/connectors.md)). The SLACK button becomes
+  CONNECTORS: a menu with Slack and Stripe and how each is doing. The farm manager connects the farm's Stripe once
+  (a restricted key is best; the farm checks it with Stripe and never shows it again), and every Claude gets Stripe's
+  own MCP tools (`mcp__stripe__*`). Their guide says to move real money only when their person asks; a person can
+  turn Stripe off for their Claude in its SETTINGS. From a shell: `clodfarm stripe [connect|disconnect]`.
+- **Google Ads for every Claude.** `clodfarm gads connect` takes a developer token, an OAuth client and a refresh
+  token (and a manager account's ID). The farm checks them with Google and lists the ad accounts they reach. Every
+  Claude runs reports and gets tokens for changes with `clodfarm gads accounts | query | token`, and
+  `clodfarm gads dashboard --customer ID` is a ready live dashboard (spend, clicks, conversions, CPA, per day and per
+  campaign).
+
 ## 1.2.1 (2026-09-29)
 
 - **The Claudes walk round the farm again.** Free ones stroll the meadow, and so do the ones not running right now;

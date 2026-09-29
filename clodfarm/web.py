@@ -38,7 +38,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import __version__, boot, bots, browser, dashboards, policy
+from . import __version__, boot, bots, browser, connectors, dashboards, policy
 from . import mcp
 from .agents import AgentManager
 from .slack import SlackBridge
@@ -370,6 +370,8 @@ class FarmUI:
             "planner": {k: pl.get(k) for k in ("on", "goal", "host", "state", "last_at", "next_at", "cycles",
                                                 "every_s", "idle_until", "task")},
             "slack": {"state": self.slack.state, "team": (self.slack.info or {}).get("team")},
+            "connectors": {"stripe": bool(connectors.stripe_load(self.cfg.workspace)),
+                           "google_ads": bool(connectors.gads_load(self.cfg.workspace))},
             "agents": agents, "subagents": subs, "recent": recent,
             "events": [{"at": e["at"], "type": e["type"], "msg": e["msg"][:240], "task": e.get("task"), "by": e.get("by")}
                        for e in events[-40:]],
@@ -463,6 +465,18 @@ class FarmUI:
         """The Claudes whose persons run the farm: the farm's own (first) Claude until a manager changes it."""
         st = st if st is not None else self.store.settings()
         return [m for m in (st.get("managers") or []) if m] or [self.cfg.name]
+
+    def connectors_view(self, who: "Who") -> dict:
+        """The CONNECTORS menu: Slack, Stripe and Google Ads, as each viewer may see them (the manager manages them)."""
+        stripe = connectors.stripe_view(self.cfg.workspace)
+        if not who.manager:  # a person sees that it's there and what it's for, not who connected it or the key's end
+            stripe = {k: v for k, v in stripe.items() if k in ("connected", "mode", "account", "tools")}
+        gads = connectors.gads_view(self.cfg.workspace)
+        gads.pop("yaml", None)
+        if not who.manager:
+            gads = {k: v for k, v in gads.items() if k in ("connected", "customers", "more", "api_version")}
+        return {"manage": who.manager, "slack": {"state": self.slack.state, "team": (self.slack.info or {}).get("team")},
+                "stripe": stripe, "google_ads": gads}
 
     def profile_mine(self, p: dict, who: "Who") -> bool:
         """Is this browser profile the viewer's Claude's? One nobody owns is the farm's own Claude's."""
@@ -960,6 +974,8 @@ def make_handler(ui: FarmUI):
                     if not who.manager:
                         return self._err(403, "the farm manager only")
                     return self._json(ui.slack.view())
+                if path == "/api/connectors":  # the CONNECTORS menu: what the farm is connected to (never a key)
+                    return self._json(ui.connectors_view(who))
                 if path == "/api/browser":
                     return self._json(ui.browser_view(who))
                 m = re.fullmatch(r"/api/agents/([a-z0-9@._-]+)/tools", path)
@@ -1443,6 +1459,39 @@ def make_handler(ui: FarmUI):
                 else:
                     store.pause_schedule(sid, action == "pause", by="ui")
                 return self._json(ui.tasks_view(who))
+            if path == "/api/connectors/stripe":  # connect (checked with Stripe first), or change the key
+                if not who.manager:
+                    return self._err(403, "the farm manager connects the farm's Stripe")
+                v = connectors.stripe_connect(ui.cfg.workspace, str(data.get("key") or "")[:300],
+                                              by=f"owner:{who.owner}" if who.owner else "manager")
+                ui.manager.share_connectors()
+                acct = (v.get("account") or {}).get("name")
+                store.event("connector.stripe", f"Stripe connected ({v['mode']} mode" + (f", {acct}" if acct else "")
+                            + f", key …{v['last4']}): every Claude gets mcp__stripe__*", by="ui")
+                return self._json(ui.connectors_view(who))
+            if path == "/api/connectors/stripe/disconnect":
+                if not who.manager:
+                    return self._err(403, "the farm manager disconnects the farm's Stripe")
+                if connectors.stripe_disconnect(ui.cfg.workspace):
+                    ui.manager.share_connectors()
+                    store.event("connector.stripe", "Stripe disconnected: the Claudes' Stripe tools are gone", by="ui")
+                return self._json(ui.connectors_view(who))
+            if path == "/api/connectors/google-ads":  # connect (checked with Google first), or change the credentials
+                if not who.manager:
+                    return self._err(403, "the farm manager connects the farm's Google Ads")
+                creds = {k: str(data.get(k) or "")[:600] for k in (*connectors.GADS_FIELDS, "login_customer_id")}
+                v = connectors.gads_connect(ui.cfg.workspace, creds, by=f"owner:{who.owner}" if who.owner else "manager")
+                ui.manager.share_connectors()
+                store.event("connector.google_ads", f"Google Ads connected ({len(v['customers'])} account(s), developer "
+                            f"token …{v['developer_token_last4']}): every Claude can use `clodfarm gads`", by="ui")
+                return self._json(ui.connectors_view(who))
+            if path == "/api/connectors/google-ads/disconnect":
+                if not who.manager:
+                    return self._err(403, "the farm manager disconnects the farm's Google Ads")
+                if connectors.gads_disconnect(ui.cfg.workspace):
+                    ui.manager.share_connectors()
+                    store.event("connector.google_ads", "Google Ads disconnected", by="ui")
+                return self._json(ui.connectors_view(who))
             if path == "/api/slack/allow":
                 ui.slack.set_allow([x.strip() for x in re.split(r"[,\s]+", str(data.get("allow") or "")) if x.strip()][:200])
                 return self._json(ui.slack.view())

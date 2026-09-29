@@ -304,6 +304,8 @@ const ICONS = {
   fit: [["ooo....ooo", "oo......oo", "o.o....o.o", "..........", "...gggg...", "...gggg...", "..........", "o.o....o.o", "oo......oo", "ooo....ooo"], { o: "#2f251b", g: "#3cc36b" }],
   dice: [[".oooooooo.", "owwwwwwwwo", "owkkwwkkwo", "owkkwwkkwo", "owwwkkwwwo", "owwwkkwwwo", "owkkwwkkwo", "owkkwwkkwo", "owwwwwwwwo", ".oooooooo."],
     { o: "#1f2a44", w: "#fff8e8", k: "#d97757" }],
+  plug: [["..mn..mn..", "..mn..mn..", "oooooooooo", "ohhhhhhhbo", "ohbbbbbbso", "obbbbbbbso", ".obbbbbso.", "..osssso..", "...occo...", "....cc...."],
+    { o: "#2f251b", m: "#b7bfcc", n: "#6b7383", h: "#f2a07a", b: "#d97757", s: "#b45a3c", c: "#3c4a6b" }],
   quill: [["........oo", ".......owo", "......owwo", ".....owwo.", "....owwo..", "...owwo...", "..oowo....", "..ooo.....", ".ooo......", "oo........"],
     { o: "#3a2a1a", w: "#f6ecd0" }],
 };
@@ -1635,6 +1637,8 @@ const EVENT_TEXT = {
   "slack.received": (e) => `FROM SLACK · ${e.msg.slice(0, 120)}`,
   "slack.connected": () => "The farm is on Slack! DM it or @mention it in a channel, and a sub-agent answers in the thread.",
   "agent.removed": (e) => `${e.msg.split(" ")[0].toUpperCase()} left the farm.`,
+  "connector.stripe": (e) => /disconnected/.test(e.msg) ? "Stripe is disconnected: the Claudes' Stripe tools are gone."
+    : `The farm is on Stripe${/\(live mode/.test(e.msg) ? " in LIVE MODE" : /\(test mode/.test(e.msg) ? " (test mode)" : ""}: every Claude can use it now.`,
 };
 
 /** Who this browser is, from /api/state's `me` (fresh every poll) and /api/me (hatching, every 30s). */
@@ -1818,7 +1822,7 @@ const UI = {
     // the dock, by role: watchers see the farm and the tasks; people see their Claude; the manager sees everything
     const person = R.manager || !!R.owner;
     $("#talk-tool").hidden = !person;
-    $("#slack-tool").hidden = !R.manager;
+    this.renderConnTool(st, R);
     $("#dash-tool").hidden = !person;
     $("#browser-tool").hidden = !R.owner; // the browser is a Claude's tool: signed in to yours, or no browser
     $("#manager-tool").hidden = !R.manager;
@@ -1830,10 +1834,6 @@ const UI = {
     ht.dataset.desc = can ? "Hatch a new Claude: pick its look, log it in" : "The farm's manager decides who can hatch";
     ht.setAttribute("aria-label", `${ht.dataset.tip} (C)`);
     if ($("#dlg-claude").open) this.renderClaude(st);
-    const sl = $("#slack-tool"), ss = st.slack?.state;
-    if (ss && ss !== "off") sl.dataset.state = ss === "live" ? "live" : ss === "error" ? "error" : "wait"; else delete sl.dataset.state;
-    sl.dataset.tip = ss === "live" ? `On Slack: ${st.slack.team || "connected"}` : ss === "error" ? "Slack: needs a look" : "Connect Slack";
-    sl.setAttribute("aria-label", `${sl.dataset.tip} (S)`);
     for (const gp of $$(".dock-group")) { // a tray shows when it has buttons; on a phone it's as wide as its buttons
       const n = [...gp.children].filter(b => !b.hidden && getComputedStyle(b).display !== "none").length;
       gp.hidden = !n; gp.style.setProperty("--n", String(n || 1));
@@ -1924,7 +1924,9 @@ const UI = {
       if (!e.target.closest("#tokens")) $("#tokens").classList.remove("open");
     });
     $("#textbox").addEventListener("click", () => this.skip());
-    addEventListener("resize", () => { this.dockSig = null; this.placeDock(); });
+    addEventListener("resize", () => { this.dockSig = null; this.placeDock(); if ($("#dlg-conn-menu").open) this.placeConnMenu(); });
+    $("#dlg-conn-menu").addEventListener("keydown", (e) => this.connMenuKeys(e));
+    $("#connector-back").addEventListener("click", () => this.openConnMenu());
     $("#tokens").addEventListener("click", () => $("#tokens").classList.toggle("open"));
     $("#mine-block").addEventListener("click", () => this.focusMine(true)); // your Claude's card, right away
     $("#roster-q").addEventListener("input", () => this.renderRoster());
@@ -1936,6 +1938,7 @@ const UI = {
       });
       d.addEventListener("close", () => {
         if (d.id === "dlg-slack") clearTimeout(this.slackPoll);
+        if (d.id === "dlg-conn-menu") { $("#conn-tool").setAttribute("aria-expanded", "false"); if (this.connBack) $("#conn-tool").focus({ preventScroll: true }); }
         if (d.id === "dlg-hatch") this.stopHatchPoll();
         if (d.id === "dlg-summary") { this.summaryKey = null; Scene.selected = null; }
         if (d.id === "dlg-settings") clearInterval(this.previewT);
@@ -1944,7 +1947,7 @@ const UI = {
     }
     addEventListener("keydown", (e) => {
       if ($("#hud").hidden || $$("dialog[open]").length || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
-      const k = { c: "hatch", h: "hatch", n: "hatch", s: "slack", t: "talk", d: "dashboards", b: "browser", j: "tasks", r: "roster", g: "manager",
+      const k = { c: "hatch", h: "hatch", n: "hatch", s: "connectors", t: "talk", d: "dashboards", b: "browser", j: "tasks", r: "roster", g: "manager",
         a: "approvals", m: "menu", p: "planner", "?": "help", "0": "fit", f: "fit", "+": "zoomin", "=": "zoomin", "-": "zoomout" }[e.key.toLowerCase()];
       if (k) { e.preventDefault(); this.act(k); }
     });
@@ -1962,6 +1965,7 @@ const UI = {
     if (a === "zoomout") return Scene.zoomBy(1 / 1.4);
     if (a === "manager") return R.manager ? this.openManager() : null;
     if (a === "slack") return R.manager ? this.openSlack() : null;
+    if (a === "connectors") return person ? this.openConnMenu() : null;
     if (a === "talk") return person ? this.openClaude() : null;
     if (a === "dashboards" && person) location.href = "dashboards";
     if (a === "browser" && R.owner) location.href = "browser";
@@ -2284,6 +2288,260 @@ const UI = {
     fill(body, h("p", { text: "Give the farm work from Slack: DM it or @mention it, and a sub-agent does the job and answers in the thread. About two minutes, once." }), form);
   },
 
+  // --------------------------------------------------------------- connectors
+  /* CONNECTORS: what the farm is plugged into. A wooden menu opens over its dock button (a sheet on a phone), one row
+   * per service with its status; a row opens that service's panel. The manager connects them; people with a Claude
+   * see how things stand. */
+  /** The dock button: shown to the manager (in MANAGE) and to people with a Claude (in THE FARM), with a count. */
+  renderConnTool(st, R) {
+    const b = $("#conn-tool"), person = R.manager || !!R.owner;
+    b.hidden = !person;
+    if (!person) return;
+    const home = R.manager ? $("#grp-run") : $("#grp-farm");
+    if (b.parentElement !== home) { if (R.manager) home.insertBefore(b, $("#manager-tool")); else home.append(b); }
+    const slack = st.slack?.state, n = (slack === "live" ? 1 : 0) + (st.connectors?.stripe ? 1 : 0), bad = slack === "error";
+    const badge = $("#conn-badge");
+    badge.hidden = !n && !bad;
+    badge.textContent = n ? String(n) : "!";
+    badge.classList.toggle("bad", !n && bad);
+    b.dataset.desc = R.manager ? "Plug the farm into Slack and Stripe" : "What the farm is plugged into";
+    b.dataset.help = (R.manager ? "Plug the farm in: Slack gives it work, Stripe goes to every Claude." : "What the farm is plugged into: Slack, Stripe.")
+      + " The green number: how many are on.";
+    b.dataset.tip = n ? `Connectors · ${n} on` : bad ? "Connectors · Slack needs a look" : "Connectors";
+    b.setAttribute("aria-label", `Connectors: Slack and Stripe, ${n ? n + " connected" : bad ? "Slack needs a look" : "none connected"} (S)`);
+    if ($("#dlg-conn-menu").open) this.renderConnMenu();
+  },
+  async loadConnectors() {
+    try { this.conn = await api("api/connectors"); } catch { /* keep what we had: the menu still shows /api/state's view */ }
+    return this.conn;
+  },
+  /** Slack and Stripe as the menu shows them: [pill class, pill text]. /api/state is fresh every poll; api/connectors
+   * adds the details (Stripe's mode and account), used while it agrees with the state. */
+  connView() {
+    const st = App.state || {}, c = this.conn || {}, sl = st.slack || c.slack || {};
+    const on = !!st.connectors?.stripe, sp = c.stripe && !!c.stripe.connected === on ? c.stripe : { connected: on };
+    const slack = sl.state === "live" ? ["on", `CONNECTED · ${String(sl.team || "SLACK").toUpperCase()}`]
+      : sl.state === "error" ? ["bad", "NEEDS A LOOK"] : ["connecting", "retrying"].includes(sl.state) ? ["wait", "CONNECTING…"] : ["off", "NOT CONNECTED"];
+    const who = sp.account?.name || (sp.kind === "restricted" ? "restricted key" : "");
+    const stripe = !sp.connected ? ["off", "NOT CONNECTED"] : sp.mode === "live" ? ["live", `LIVE MODE${who ? " · " + who.toUpperCase() : ""}`]
+      : sp.mode ? ["on", `CONNECTED · TEST MODE${who ? " · " + who.toUpperCase() : ""}`] : ["on", "CONNECTED"];
+    return { slack: { pill: slack, ...sl }, stripe: { pill: stripe, ...sp } };
+  },
+  openConnMenu() {
+    const d = $("#dlg-conn-menu");
+    if (d.open) return d.close();
+    for (const x of $$("dialog[open]")) x.close();
+    this.connBack = true; // Esc or a click outside hands focus back to the dock button
+    $("#connm-list").dataset.sig = "";
+    this.renderConnMenu();
+    d.showModal();
+    this.placeConnMenu();
+    $("#conn-tool").setAttribute("aria-expanded", "true");
+    d.querySelector(".conn-row")?.focus({ preventScroll: true });
+    this.loadConnectors().then(() => { if (d.open) this.renderConnMenu(); });
+  },
+  /** Over the dock button, its nub pointing at it; a phone's CSS makes it a bottom sheet instead. */
+  placeConnMenu() {
+    const d = $("#dlg-conn-menu"), b = $("#conn-tool");
+    if (innerWidth <= 760 || b.hidden) { for (const p of ["left", "bottom", "--nub"]) d.style.removeProperty(p); return; }
+    const r = b.getBoundingClientRect(), tray = b.closest(".dock-group")?.getBoundingClientRect() || r, w = d.offsetWidth, mid = r.left + r.width / 2;
+    const left = clamp(mid - w / 2, 8, innerWidth - w - 8);
+    d.style.left = Math.round(left) + "px";
+    d.style.bottom = Math.round(innerHeight - tray.top + 34) + "px"; // clear of the tray's name tab
+    d.style.setProperty("--nub", Math.round(clamp(mid - left, 22, w - 22)) + "px");
+  },
+  renderConnMenu() {
+    const R = role(), v = this.connView(), list = $("#connm-list");
+    const sig = JSON.stringify([R.manager, v.slack.pill, v.stripe.pill]);
+    if (list.dataset.sig === sig) return;
+    list.dataset.sig = sig;
+    const at = [...list.children].indexOf(document.activeElement);
+    const row = (id, logo, name, what, [cls, text], go) => h("button", { class: "conn-row", type: "button", role: "menuitem", "data-conn": id,
+      "aria-label": `${name}: ${text.toLowerCase()}. ${what}`, onclick: () => { this.connBack = false; $("#dlg-conn-menu").close(); go(); } },
+      h("span", { class: "conn-logo" }, h("img", { src: logo, alt: "" })),
+      h("span", { class: "conn-txt" }, h("b", { class: "conn-name", text: name }), h("span", { class: "conn-what", text: what }),
+        h("span", { class: `pill pill-${cls}` }, h("i", { "aria-hidden": "true" }), h("span", { text }))),
+      h("span", { class: "conn-go", "aria-hidden": "true", text: "▶" }));
+    fill(list,
+      row("slack", "slack.svg", "SLACK", "Give the farm work from Slack", v.slack.pill, () => R.manager ? this.openSlack() : this.openConnector("slack")),
+      row("stripe", "stripe.svg", "STRIPE", "Every Claude can use your Stripe account", v.stripe.pill, () => this.openConnector("stripe")));
+    if (at >= 0) list.children[at]?.focus({ preventScroll: true });
+    $("#connm-foot").textContent = R.manager ? "MORE CONNECTORS COMING" : "THE FARM'S MANAGER CONNECTS THESE";
+  },
+  /** Arrows move through the menu's rows (Enter opens one, Esc closes it). */
+  connMenuKeys(e) {
+    const rows = $$("#connm-list .conn-row"), i = rows.indexOf(document.activeElement);
+    const to = { ArrowDown: i + 1, ArrowRight: i + 1, ArrowUp: i - 1, ArrowLeft: i - 1, Home: 0, End: rows.length - 1 }[e.key];
+    if (to == null || !rows.length) return;
+    e.preventDefault();
+    rows[(to + rows.length) % rows.length].focus();
+  },
+
+  /** A connector's panel: Stripe (the manager connects it; people see how it stands), or Slack for a person. */
+  async openConnector(id) {
+    for (const x of $$("dialog[open]")) x.close();
+    this.connPanel = id; this.stripeReplace = false;
+    $("#connector-logo").src = id === "slack" ? "slack.svg" : "stripe.svg";
+    $("#connector-h").textContent = id === "slack" ? "SLACK" : "STRIPE";
+    const body = $("#connector-body");
+    body.dataset.key = "";
+    if (this.conn) this.renderConnector(); else fill(body, h("p", { class: "muted", text: "Loading…" }));
+    const d = $("#dlg-connector");
+    d.showModal();
+    requestAnimationFrame(() => { d.scrollTop = 0; });
+    await this.loadConnectors();
+    if (!this.conn) return fill(body, h("p", { class: "form-error", text: "Couldn't load the connectors. Try again in a moment." }));
+    if (d.open) this.renderConnector();
+  },
+  renderConnector() {
+    if (this.connPanel === "slack") return this.renderSlackInfo();
+    return this.renderStripe();
+  },
+  pill([cls, text]) { return h("span", { class: `pill pill-${cls}` }, h("i", { "aria-hidden": "true" }), h("span", { text })); },
+  /** Slack, as a person sees it (the manager gets the real Slack panel). */
+  renderSlackInfo() {
+    const v = this.connView().slack, live = v.state === "live";
+    fill($("#connector-body"),
+      h("p", { class: "conn-status" }, this.pill(v.pill)),
+      h("p", { text: live ? `The farm is on Slack${v.team ? ` (${v.team})` : ""}: DM its app, or @mention it in a channel, and a sub-agent does the job and answers in the thread. Type “status” for the farm.`
+        : "The farm isn't on Slack yet. Once it is, people DM it or @mention it in a channel, and a sub-agent does the job and answers in the thread." }),
+      live ? null : h("p", { class: "muted small", text: "Ask the farm's manager to connect it: it's the CONNECTORS button on their farm." }));
+  },
+  /** What the Claudes get: Stripe's MCP tools. */
+  stripeCan() {
+    return h("div", { class: "tool-chips conn-can" }, ["Customers", "Products & prices", "Payment links", "Invoices", "Subscriptions", "Balances", "Refunds", "Stripe docs"]
+      .map(t => h("span", { class: "tool-chip", text: t })));
+  },
+  renderStripe() {
+    const R = role(), c = this.conn || {}, s = c.stripe || { connected: false }, manage = !!c.manage, body = $("#connector-body");
+    const key = JSON.stringify([s, manage, this.stripeReplace]);
+    if (body.dataset.key === key) return;
+    body.dataset.key = key;
+    if (!s.connected) {
+      const what = h("p", { class: "conn-lede" }, "Every Claude on the farm gets Stripe's tools: it can look up customers and balances, make products, prices and payment links, send invoices and run subscriptions. ",
+        h("b", { text: "They move real money only when their person asks." }));
+      if (!manage) return fill(body, what, this.stripeCan(),
+        h("p", { class: "banner-note" }, h("strong", { text: "NOT CONNECTED. " }), "Ask the farm's manager to connect Stripe: then your Claude can use it too, and you can still turn it off for your Claude in its SETTINGS."));
+      return fill(body, what, this.stripeCan(), this.stripeKeyForm(true, null));
+    }
+    const a = s.account || {}, live = s.mode === "live", restricted = s.kind === "restricted";
+    const title = a.name || (restricted ? "Restricted key" : a.id || "Your Stripe account");
+    const by = s.by ? String(s.by).replace(/^owner:/, "") : "";
+    const card = h("div", { class: "conn-card" + (live ? " live" : "") },
+      h("div", { class: "conn-card-main" },
+        h("p", { class: "conn-card-top" }, this.pill(["on", "CONNECTED"]), this.modeChip(s.mode)),
+        h("h3", { class: "conn-card-name", text: title.toUpperCase() }),
+        h("p", { class: "muted small", text: a.name ? [a.id, a.country].filter(Boolean).join(" · ") : restricted ? "A restricted key may not read the account's name. That's fine: it works." : [a.id, a.country].filter(Boolean).join(" · ") })),
+      h("dl", { class: "stat-row conn-dl" },
+        manage && s.last4 ? [h("dt", { text: "KEY" }), h("dd", { text: `${restricted ? "Restricted" : "Secret"} key ending …${s.last4}` })] : null,
+        manage && s.at ? [h("dt", { text: "CONNECTED" }), h("dd", { text: `${nowS() - s.at < 20 ? "just now" : ago(s.at)}${by ? ` by ${by === "manager" ? "the manager" : by}` : ""}` })] : null,
+        h("dt", { text: "TOOLS" }), h("dd", {}, h("code", { class: "conn-code", text: s.tools || "mcp__stripe__*" }), " on every Claude")));
+    const warn = live ? h("p", { class: "banner-note live-note" }, h("strong", { text: "LIVE MODE: REAL MONEY. " }),
+      "The Claudes create charges, refunds or payouts, cancel or delete only when their person asks for it.") : null;
+    const mineId = R.owner && App.state?.agents.find(x => x.id === R.owner && !x.remote) ? R.owner : null;
+    const optOut = h("p", { class: "muted small" }, "Anyone can turn Stripe off for their own Claude: its ", h("b", { text: "SETTINGS → RULES" }), ", untick ", h("b", { text: "Stripe (payments)" }), ". ",
+      mineId ? h("button", { class: "linkish", type: "button", onclick: () => this.openSettings(mineId, "RULES") }, "Open my Claude's rules →") : null);
+    const ask = [h("h3", { class: "kicker", text: "ASK YOUR CLAUDE" }),
+      h("ul", { class: "examples" },
+        h("li", { text: "“How much did we take in this week?”" }),
+        h("li", { text: "“Make a $20 a month plan and a payment link for it.”" }),
+        h("li", { text: "“Which invoices are overdue?”" }))];
+    if (!manage) return fill(body, card, warn, ask, optOut);
+    if (this.stripeReplace) return fill(body, card, h("h3", { class: "kicker", text: "REPLACE THE KEY" }),
+      this.stripeKeyForm(false, () => { this.stripeReplace = false; this.renderStripe(); }));
+    const off = h("button", { class: "btn danger", type: "button" }, "DISCONNECT"), err = h("p", { class: "form-error", role: "alert" });
+    off.addEventListener("click", async () => {
+      if (off.dataset.sure !== "1") { off.dataset.sure = "1"; off.textContent = "SURE? THE CLAUDES LOSE STRIPE"; return; }
+      off.disabled = true; off.textContent = "DISCONNECTING…"; err.textContent = "";
+      try { this.conn = await api("api/connectors/stripe/disconnect", {}); this.say("Stripe is disconnected: the Claudes' Stripe tools are gone."); this.renderStripe(); this.refresh(); }
+      catch (x) { err.textContent = x.message; off.disabled = false; off.dataset.sure = ""; off.textContent = "DISCONNECT"; }
+    });
+    const replace = h("button", { class: "btn", type: "button", onclick: () => { this.stripeReplace = true; this.renderStripe(); $("#connector-body input[name=key]")?.focus(); } }, "REPLACE KEY");
+    fill(body, card, warn, ask, optOut, err, h("div", { class: "dlg-actions" }, replace, off));
+  },
+  modeChip(mode) {
+    return mode ? h("span", { class: `mode-chip ${mode === "live" ? "live" : "test"}`, text: mode === "live" ? "LIVE" : "TEST" }) : null;
+  },
+  /** The key: pasted, hidden unless shown, checked for its shape as you type (TEST or LIVE from its prefix), then
+   * checked with Stripe by the farm. `steps`: the first connect, with where to find the key. */
+  stripeKeyForm(steps, onCancel) {
+    const KEY = /^(sk|rk)_(test|live)_[A-Za-z0-9]{10,250}$/, PREFIXES = ["sk_test_", "sk_live_", "rk_test_", "rk_live_"];
+    const input = h("input", { name: "key", type: "password", autocomplete: "off", spellcheck: "false", autocapitalize: "off", maxlength: 300,
+      placeholder: "sk_test_…  or  rk_live_…", "aria-describedby": "stripe-hint", "data-1p-ignore": "true", "data-lpignore": "true", id: "stripe-key" });
+    const eye = h("button", { class: "btn tiny key-eye", type: "button", "aria-pressed": "false", "aria-label": "Show the key", text: "SHOW" });
+    eye.addEventListener("click", () => {
+      const show = input.type === "password";
+      input.type = show ? "text" : "password"; eye.textContent = show ? "HIDE" : "SHOW";
+      eye.setAttribute("aria-pressed", String(show)); eye.setAttribute("aria-label", show ? "Hide the key" : "Show the key"); input.focus();
+    });
+    const chip = h("span", { class: "mode-chip", hidden: true });
+    const hint = h("p", { class: "key-hint", id: "stripe-hint", "aria-live": "polite" });
+    const warn = h("p", { class: "banner-note live-note", hidden: true }, h("strong", { text: "LIVE KEY: REAL MONEY. " }),
+      "The Claudes would act on your real Stripe account: real customers, charges, refunds and payouts. They move money only when their person asks; a restricted key with only what they need is safer.");
+    const err = h("p", { class: "form-error", role: "alert" });
+    const go = h("button", { class: "btn primary", type: "submit", disabled: true }, "▶ CONNECT");
+    const field = h("div", { class: "key-field" },
+      h("label", { for: "stripe-key" }, "SECRET OR RESTRICTED KEY ", chip),
+      h("div", { class: "key-row" }, input, eye), hint, err);
+    let li = [];
+    const check = () => {
+      const v = input.value.trim(), m = v.match(/^(sk|rk)_(test|live)_/), ok = KEY.test(v);
+      let text = "Starts with sk_ (secret) or rk_ (restricted), then test_ or live_.", cls = "";
+      if (m) {
+        const kind = m[1] === "rk" ? "restricted" : "secret", live = m[2] === "live";
+        chip.hidden = false; chip.className = `mode-chip ${live ? "live" : "test"}`; chip.textContent = `${live ? "LIVE" : "TEST"} · ${kind.toUpperCase()}`;
+        if (ok) { text = live ? `Looks right: a LIVE ${kind} key. Real money: read the warning below.` : `Looks right: a TEST-mode ${kind} key. Pretend money, safe to try.`; cls = live ? "warn" : "ok"; }
+        else if (/[^A-Za-z0-9]/.test(v.slice(m[0].length))) { text = "Only letters and digits come after the prefix: check for a space or a cut-off key."; cls = "bad"; }
+        else text = "Keep pasting: the whole key is longer.";
+      } else {
+        chip.hidden = true;
+        if (/^pk_/.test(v)) { text = "That's the publishable key (pk_…). The Claudes need the secret key (sk_…) or a restricted key (rk_…)."; cls = "bad"; }
+        else if (/^whsec_/.test(v)) { text = "That's a webhook signing secret. Copy the secret key (sk_…) or a restricted key (rk_…)."; cls = "bad"; }
+        else if (v && !PREFIXES.some(p => p.startsWith(v))) { text = "That isn't a Stripe secret key: it starts with sk_test_, sk_live_, rk_test_ or rk_live_."; cls = "bad"; }
+      }
+      hint.textContent = text; hint.className = "key-hint" + (cls ? " " + cls : "");
+      warn.hidden = !(ok && m[2] === "live");
+      go.disabled = !ok || form.dataset.busy === "1";
+      go.textContent = ok && m[2] === "live" ? "▶ CONNECT LIVE" : "▶ CONNECT";
+      if (li.length) { li[1].classList.toggle("done", ok); li[2].classList.toggle("done", ok); if (ok) li[0].classList.add("done"); }
+    };
+    input.addEventListener("input", () => { err.textContent = ""; check(); });
+    const form = h("form", { class: "stripe-form", autocomplete: "off" });
+    if (steps) {
+      li = [
+        h("li", {}, "Open Stripe → ", h("b", { text: "Developers → API keys" }), ".",
+          h("a", { class: "btn login-link key-link", href: "https://dashboard.stripe.com/test/apikeys", target: "_blank", rel: "noopener noreferrer",
+            onclick: () => li[0].classList.add("done") }, "OPEN STRIPE API KEYS ↗")),
+        h("li", {}, "Create a ", h("b", { text: "restricted key" }), " with only what the Claudes need ", h("span", { class: "rec", text: "RECOMMENDED" }), ", or copy the ", h("b", { text: "secret key" }), ".",
+          h("span", { class: "muted small step-note", text: "Test keys (…_test_) use pretend money: a good first try. Switch Stripe to live for a live key." })),
+        h("li", {}, "Paste it here.", field)];
+      form.append(h("ol", { class: "hatch-steps" }, li));
+    } else form.append(field);
+    form.append(warn,
+      h("p", { class: "muted small", text: "The farm checks the key with Stripe, then keeps it on its box. It's never shown again, not even to you." }),
+      h("div", { class: "dlg-actions save-bar" }, onCancel ? h("button", { class: "btn", type: "button", onclick: onCancel }, "CANCEL") : null, go));
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!KEY.test(input.value.trim()) || form.dataset.busy === "1") return;
+      form.dataset.busy = "1"; go.disabled = true; input.readOnly = true; err.textContent = "";
+      go.replaceChildren(h("span", { class: "spin", "aria-hidden": "true" }), "CHECKING WITH STRIPE…");
+      try {
+        const r = await api("api/connectors/stripe", { key: input.value.trim() });
+        input.value = ""; this.conn = r; this.stripeReplace = false;
+        const s = r.stripe || {};
+        this.say(`Stripe is connected${s.mode === "live" ? " in LIVE MODE" : " (test mode)"}${s.account?.name ? ": " + s.account.name : ""}. Every Claude can use it now.`);
+        this.renderStripe(); this.refresh();
+        $("#dlg-connector").scrollTop = 0;
+      } catch (x) {
+        form.dataset.busy = ""; input.readOnly = false; check(); hint.textContent = ""; hint.className = "key-hint"; err.textContent = x.message;
+        input.focus({ preventScroll: true }); input.select(); field.scrollIntoView({ block: "center" });
+      }
+    });
+    check();
+    setTimeout(() => { if (!steps) input.focus({ preventScroll: true }); }, 30);
+    return form;
+  },
+
   // ----------------------------------------------------------------- hatching
   /** + NEW CLAUDE: name (or a bot's provider), then its look, then its rules; then the Claude login (or the bot check). */
   openHatch(agentId, fromButton) {
@@ -2344,14 +2602,21 @@ const UI = {
     const all = h("input", { type: "checkbox", checked: state.allTools, onchange: (e) => { state.allTools = e.target.checked; list.hidden = state.allTools; } });
     fill(list, (groups || []).map(gp => h("li", {}, h("label", { class: "check" },
       h("input", { type: "checkbox", checked: !state.deny.has(gp.id), onchange: (e) => { if (e.target.checked) state.deny.delete(gp.id); else state.deny.add(gp.id); } }),
-      h("span", { text: gp.label })))));
+      this.groupLabel(gp)))));
     if (!groups) this.toolGroups().then(gs => fill(list, gs.map(gp => h("li", {}, h("label", { class: "check" },
       h("input", { type: "checkbox", checked: !state.deny.has(gp.id), onchange: (e) => { if (e.target.checked) state.deny.delete(gp.id); else state.deny.add(gp.id); } }),
-      h("span", { text: gp.label })))))).catch(() => fill(list, h("li", { class: "muted small", text: "Couldn't load the tool groups." })));
+      this.groupLabel(gp)))))).catch(() => fill(list, h("li", { class: "muted small", text: "Couldn't load the tool groups." })));
     return [
       this.switchRow(approve, "APPROVE EVERY MISSION", "Other Claudes and the planner can't start work on it without your OK, on your phone. Its own work (what you ask it in the Claude app) always runs."),
       this.switchRow(all, "ALL TOOLS", "Off: pick what it may use. Unticked tools are blocked at its next tool call."),
       list];
+  },
+  /** A tool group's name in the checklist; Stripe gets its logo, and says when the farm isn't connected to it. */
+  groupLabel(gp) {
+    if (gp.id !== "stripe") return h("span", { text: gp.label });
+    const on = !!App.state?.connectors?.stripe;
+    return h("span", { class: "grp-lbl" }, h("img", { src: "stripe.svg", alt: "" }),
+      h("span", {}, gp.label, h("small", { class: on ? "grp-on" : "muted", text: on ? "the farm's account" : "not connected yet" })));
   },
   /** A checkbox drawn as a switch, with what it does under its name. */
   switchRow(input, name, why) {
@@ -2894,7 +3159,7 @@ const UI = {
     const topic = h("input", { name: "notify_topic", maxlength: 200, value: s.notify_topic || "", placeholder: "e.g. clodfarm-" + id + "-" + (hashStr(id + Date.now()) % 9000 + 1000), autocomplete: "off", spellcheck: "false" });
     const hostOk = h("input", { type: "checkbox", checked: !!s.planner_host_ok });
     const err = h("p", { class: "form-error", role: "alert" }), save = h("button", { class: "btn primary", type: "submit" }, "SAVE");
-    const sec = (title, ...kids) => h("section", { class: "set-sec" }, h("h3", { text: title }), kids);
+    const sec = (title, ...kids) => h("section", { class: "set-sec" }, h("h3", { text: title }), ...kids); // spread: RULES is a list of rows
     const form = h("form", { class: "settings" },
       sec("NAME", h("label", { class: "sr-only", for: "set-name" }, "NAME"), Object.assign(name, { id: "set-name" })),
       sec("LOOK", this.skinPicker(D.skin, (v) => { D.skin = v; })),
@@ -2959,7 +3224,7 @@ const UI = {
     const buttons = tools.map(b => {
       const img = b.querySelector("img"), label = b.querySelector(".lbl")?.textContent.replace(/\s+/g, " ").trim();
       return h("li", { class: "help-btn" }, h("span", { class: "help-ico" + (b.id === "hatch-tool" ? " hatch" : "") }, img ? h("img", { src: img.src, alt: "" }) : null),
-        h("span", {}, h("b", { text: label }), h("span", { text: b.dataset.desc || b.dataset.tip })), h("kbd", { text: b.dataset.key }));
+        h("span", {}, h("b", { text: label }), h("span", { text: b.dataset.help || b.dataset.desc || b.dataset.tip })), h("kbd", { text: b.dataset.key }));
     });
     buttons.push(h("li", { class: "help-btn" }, h("span", { class: "help-ico" }, h("img", { src: icon("key"), alt: "" })),
       h("span", {}, h("b", { text: "TOP RIGHT" }), h("span", { text: "Sign in and the menu, zoom in and out, and see the whole farm." })), h("kbd", { text: "M" })));
@@ -3010,7 +3275,7 @@ const UI = {
         link("TASKS AND SCHEDULES", null, "J", "tasks"),
         person ? link("DASHBOARDS", null, "D", "dashboards") : null,
         R.owner ? link("YOUR CLAUDE'S BROWSER", null, "B", "browser") : null,
-        R.manager ? link("SLACK", "slack", "S") : null,
+        person ? link("CONNECTORS: SLACK, STRIPE", "connectors", "S") : null,
         R.manager ? link("RUN THE FARM", "manager", "G") : null,
         link("SEE THE WHOLE FARM", "fit", "0")),
       h("p", { class: "muted small", text: "Drag to look round the farm, scroll or pinch to zoom." }));
