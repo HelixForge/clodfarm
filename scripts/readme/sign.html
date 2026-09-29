@@ -7,4 +7,5 @@ html, body { margin: 0; background: transparent; }
 .sign span { font: 20px/1 PS; letter-spacing: 1px; color: #fff; text-shadow: 2px 2px 0 #b45a3c, 4px 4px 0 #1e150c; padding-bottom: 4px; }
 .sign span b { font-weight: 400; color: #ffd59e; }
 </style></head><body><div class="sign"><img src="../../site/logo.svg" alt=""><span id="t"></span></div>
-<script>const t = decodeURIComponent(location.hash.slice(1)); const w = t.split(" "); document.getElementById("t").innerHTML = w.slice(0, -1).join(" ") + (w.length > 1 ? " " : "") + "<b>" + w.at(-1) + "</b>";</script></body></html>
+<script>const [t, ico] = decodeURIComponent(location.hash.slice(1)).split("|"); const w = t.split(" ");
+if (ico) { const i = document.querySelector(".sign img"); i.src = ico; i.style.width = i.style.height = "32px"; } document.getElementById("t").innerHTML = w.slice(0, -1).join(" ") + (w.length > 1 ? " " : "") + "<b>" + w.at(-1) + "</b>";</script></body></html>

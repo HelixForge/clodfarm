@@ -3,6 +3,7 @@
 </p>
 
 <p align="center">
+  <a href="#make-money"><b>Make money</b></a> ·
   <a href="#quick-start"><b>Quick start</b></a> ·
   <a href="#how-it-works"><b>How it works</b></a> ·
   <a href="#multiple-deployments-one-farm"><b>Multi-seat</b></a> ·
@@ -19,10 +20,33 @@
   <img src="https://img.shields.io/badge/deploy-AWS%20in%2010%20min-FF9900?logo=amazonaws&logoColor=white&labelColor=4a3b2c" alt="AWS deploy">
 </p>
 
-<h3 align="center">Your Claude Code agents keep working while you sleep, and stop before they eat your week.</h3>
+<h3 align="center">A farm of Claude Code agents that builds your apps, puts them in the cloud, takes the payments and
+buys the traffic. Around the clock, on your Claude subscription.</h3>
+
+<a name="make-money"></a>
+<h2><img src="assets/readme/make-money.png" height="44" alt="Make money"></h2>
+
+Give the farm a product to run and it works on it day and night: it builds the app, ships it, charges for it and
+brings people to it. Every piece is connected once, for every Claude on the farm:
+
+| | |
+|---|---|
+| <img src="assets/icons/aws.svg" width="18" height="18" align="top" alt=""> **Builds apps in the cloud** | The Claudes write the app, test it and deploy it to your AWS account: landing pages, APIs, a small SaaS. Serverless, inside a fenced role with a hard monthly budget cap, in an account of its own if you like ([details](#let-the-farm-build-apps-on-aws-optional)). |
+| <img src="assets/icons/stripe.svg" width="18" height="18" align="top" alt=""> **Takes payments with Stripe** | Connect the farm's Stripe once (CONNECTORS): every Claude can make products, prices and payment links, send invoices, run subscriptions and see what came in ([docs](docs/connectors.md#stripe)). |
+| <img src="assets/icons/google-ads.svg" width="18" height="18" align="top" alt=""> **Brings traffic with Google Ads** | Connect Google Ads once (CONNECTORS): the Claudes report on spend, clicks and conversions, and change budgets, bids and campaigns ([docs](docs/connectors.md#google-ads)). |
+| <img src="assets/icons/chart-column.svg" width="18" height="18" align="top" alt=""> **Shows you it's working** | Live dashboards the farm keeps fresh: sign-ups, revenue, ad spend, cost per customer ([docs](docs/dashboards.md)). |
+
+Ask your Claude from your phone: *"Build a landing page for the invoice tool with a $9 a month plan, put it live, and
+start a $20 a day search campaign for it."* It builds and deploys the page, makes the Stripe price and payment link,
+drafts the campaign, and keeps a dashboard of ad spend against sign-ups. **Real money moves only when you say so:**
+the Claudes charge, refund or raise a budget only when their person asks, you can start on Stripe's test mode, and
+the AWS budget stops spending on its own.
+
+### And it does much more
 
 **clodfarm** (say it out loud) is a farm of Claude Code agents running around the clock in a container. A clod
-is a lump of soil, and this is where your agents grow.
+is a lump of soil, and this is where your agents grow. They keep working while you sleep, and stop before they eat
+your week.
 - **You talk to your Claude from the Claude app on your phone.** It does the work, or starts sub-agents for it.
 - **You see every sub-agent** on the farm: mini Claudes working at the plot of the Claude that started them.
 - **Claudes work together:** each one is a person's own account. They message each other and run sub-agents on
@@ -65,9 +89,7 @@ through your limits. clodfarm is the operations layer it's missing:
 | <img src="assets/icons/chart-column.svg" width="18" height="18" align="top" alt=""> **Dashboards** | The Claudes keep live pages that show what is improving ([docs](docs/dashboards.md)). |
 | <img src="assets/icons/globe.svg" width="18" height="18" align="top" alt=""> **A browser, logged in** | Log in to a site once in the farm's browser (LinkedIn, an admin panel) and every Claude works there as you, in the window you watch ([docs](docs/browser.md)). |
 | <img src="assets/icons/slack.svg" width="18" height="18" align="top" alt=""> **Slack** | DM or @mention the farm and a sub-agent answers in the thread. Two-minute setup ([docs](docs/slack.md)). |
-| <img src="assets/icons/plug.svg" width="18" height="18" align="top" alt=""> **Stripe and Google Ads, for every Claude** | Connect the farm's Stripe and Google Ads once (CONNECTORS): every Claude gets Stripe's tools and Google Ads reports and live dashboards, and spends real money only when its person asks ([docs](docs/connectors.md)). |
 | <img src="assets/icons/modelcontextprotocol.svg" width="18" height="18" align="top" alt=""> **Claude Code on your laptop** | Connect over MCP and hand the farm work without leaving your editor. |
-| <img src="assets/icons/aws.svg" width="18" height="18" align="top" alt=""> **Builds apps on AWS (optional)** | The Claudes ship their own serverless apps inside a fenced role with a hard budget cap ([details](#let-the-farm-build-apps-on-aws-optional)). |
 | <img src="assets/icons/server.svg" width="18" height="18" align="top" alt=""> **Many boxes, many seats** | One farm and one repo across machines and accounts, each on its own budget. |
 | <img src="assets/icons/bell.svg" width="18" height="18" align="top" alt=""> **Tells you when it matters** | Failures and usage limits go to ntfy, Slack or Discord. |
 | <img src="assets/icons/monitor-play.svg" width="18" height="18" align="top" alt=""> **A farm you can watch** | Every Claude, its sub-agents, usage and tools at a glance, in your browser. A hundred Claudes and a crowd watching stay quick; tokens burned, farm-wide and yours, top left. |
