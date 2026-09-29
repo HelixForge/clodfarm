@@ -302,6 +302,8 @@ class FarmUI:
         self._state_cache: tuple[float, dict] | None = None
         self._views: dict[str, tuple[float, bytes, str]] = {}  # per viewer kind: (at, JSON, ETag)
         self._tasks_cache: dict[str, tuple[float, bytes, str]] = {}
+        self.inflight = 0  # requests being answered (a roll waits for them)
+        self._inflight_lock = threading.Lock()
         self._tasks_lock = threading.Lock()
         self._lock = threading.Lock()
 
@@ -640,6 +642,11 @@ def make_handler(ui: FarmUI):
         server_version = f"clodfarm/{__version__}"
         sys_version = ""
 
+        def _uncount(self):
+            u = getattr(self.server, "uncount", None)
+            if u:
+                u(self.request, early=True)
+
         def log_message(self, fmt, *args):  # quiet: the farm log is for the farm
             pass
 
@@ -945,6 +952,7 @@ def make_handler(ui: FarmUI):
                 self.send_header("Sec-WebSocket-Protocol", "binary")
             self.end_headers()
             self.close_connection = True
+            self._uncount()  # a screen stays open for as long as it's watched: a roll doesn't wait for it
             browser.bridge(self.rfile, self.wfile, self.connection, vnc)
 
         def _browser_csp(self) -> str:
@@ -1544,6 +1552,31 @@ class FarmHTTPServer(ThreadingHTTPServer):
     rest, the proxy answers 502 and the page's script never runs."""
     request_queue_size = 256
     daemon_threads = True
+    _uncounted: set = set()
+
+    # every connection it took counts until it's answered, from the moment it's accepted: a roll waits for them
+    def process_request(self, request, client_address):
+        with self.ui._inflight_lock:
+            self.ui.inflight += 1
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.uncount(request)
+
+    def uncount(self, request, early: bool = False):
+        """Done with it (``early``: a browser screen, which stays open while watched, stops counting at once)."""
+        with self.ui._inflight_lock:
+            key = id(request)
+            if early:
+                self._uncounted.add(key)
+                self.ui.inflight -= 1
+            elif key in self._uncounted:
+                self._uncounted.discard(key)
+            else:
+                self.ui.inflight -= 1
 
     def server_bind(self):
         # a new UI process binds next to the old one while it takes over (uikeeper.py)
@@ -1556,8 +1589,19 @@ def serve(cfg, store: Store | None = None, manager: AgentManager | None = None, 
     """Start the UI (and keep the added agents running). Returns the server when ``block`` is False."""
     ui = FarmUI(cfg, store, manager)
     host, port = os.environ.get("FARM_UI_HOST", "0.0.0.0"), int(os.environ.get("FARM_UI_PORT", "8080"))
-    httpd = FarmHTTPServer((host, port), make_handler(ui))
+    fd = os.environ.pop("FARM_UI_FD", "")
+    if fd.isdigit():  # the farm daemon's socket, shared with the UI process this one replaces (uikeeper.py)
+        httpd = FarmHTTPServer((host, port), make_handler(ui), bind_and_activate=False)
+        httpd.socket.close()
+        httpd.socket = socket.fromfd(int(fd), socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM)
+        os.close(int(fd))
+        httpd.server_address = httpd.socket.getsockname()[:2]
+        # two processes accept from it during a roll: one that loses a race must not sit blocked in accept()
+        httpd.socket.setblocking(False)
+    else:
+        httpd = FarmHTTPServer((host, port), make_handler(ui))
     httpd.ui = ui
+    httpd._uncounted = set()
     managed = bool(os.environ.get("FARM_UI_PIDFILE"))  # its own process, kept by the farm daemon (uikeeper.py)
     if not managed:  # served on its own (`clodfarm ui`): nobody else keeps the added Claudes running
         threading.Thread(target=ui.manager.keep_alive, name="agents", daemon=True).start()
@@ -1582,6 +1626,10 @@ def serve(cfg, store: Store | None = None, manager: AgentManager | None = None, 
     try:
         httpd.serve_forever()
     finally:
+        if managed:  # rolled: let what it was answering finish (a browser screen doesn't count), then go
+            t0 = time.time()
+            while ui.inflight > 0 and time.time() - t0 < 10:
+                time.sleep(0.05)
         ui.slack.stop()
         ui.stopping.set()
         if not managed:

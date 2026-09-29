@@ -1,8 +1,11 @@
 """The farm UI runs in its own process, kept by the farm daemon.
 
 So the UI can be replaced (a new release, or a crash) without touching anything that runs agents, and the page stays
-up while it is: a new UI process starts next to the old one on the same port (SO_REUSEPORT), says it's ready in its
-pid file, and only then is the old one stopped. The farm daemon rolls the UI by itself when it finds one running an
+up while it is. The farm daemon opens the UI's listening socket once and hands that same socket to every UI process
+(it survives the daemon's own exec into a new release): a new UI process starts accepting on it next to the old one,
+says it's ready in its pid file, and only then is the old one stopped; the old one finishes what it was answering. The
+two share one queue of waiting connections, so none is dropped (separate sockets with SO_REUSEPORT would reset the
+ones queued on the old socket when it closes). The farm daemon rolls the UI by itself when it finds one running an
 older release than the current one (after `clodfarm upgrade`), or when `clodfarm upgrade --restart-ui` asks.
 """
 
@@ -10,6 +13,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import socket
 import sys
 import threading
 import time
@@ -19,9 +23,40 @@ from . import boot, procs
 READY_WAIT = 30
 
 
+def listener() -> int | None:
+    """The UI's listening socket, as an inheritable file descriptor: the one this process (or the farm daemon it
+    exec'd from) already opened, else a new one. None when the port can't be had (the UI then binds by itself)."""
+    host, port = os.environ.get("FARM_UI_HOST", "0.0.0.0"), int(os.environ.get("FARM_UI_PORT", "8080"))
+    fd = os.environ.get("CLODFARM_UI_FD")
+    if fd and fd.isdigit():
+        try:
+            s = socket.fromfd(int(fd), socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM)
+            ok = s.getsockname()[1] == port
+            s.close()
+            if ok:
+                return int(fd)
+        except OSError:
+            pass
+    try:
+        s = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if hasattr(socket, "SO_REUSEPORT"):  # next to UI processes left from before a crash of the daemon
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        s.bind((host, port))
+        s.listen(256)
+    except OSError as e:
+        print(f"farm UI: can't hold port {port} ({e}); each UI process binds it itself", flush=True)
+        return None
+    fd = s.detach()
+    os.set_inheritable(fd, True)  # through this daemon's exec into a new release, and into each UI process
+    os.environ["CLODFARM_UI_FD"] = str(fd)
+    return fd
+
+
 class UIKeeper:
     def __init__(self, cfg):
         self.cfg = cfg
+        self.fd: int | None = None  # the listening socket: opened by keep() only, in the farm daemon
         self.dir = procs.pids_dir(cfg.workspace)
         self.log = os.path.join(procs.farm_dir(cfg.workspace), "ui.log")
         self._lock = threading.Lock()
@@ -53,9 +88,13 @@ class UIKeeper:
         tag = f"ui-{secrets.token_hex(4)}"
         pidfile = os.path.join(self.dir, f"{tag}.json")
         env = {**os.environ, "FARM_UI_REUSEPORT": "1", "FARM_UI_PIDFILE": pidfile}
+        env.pop("CLODFARM_UI_FD", None)
+        if self.fd is not None:
+            env["FARM_UI_FD"] = str(self.fd)
         pid = procs.spawn_detached(self.cfg.workspace, boot.command(["ui", "--tag", tag]), env=env, log=self.log,
                                    pidfile=pidfile, cwd=self.cfg.workspace,
-                                   meta={"tag": tag, "release": os.path.basename(boot.target()) or "image"})
+                                   meta={"tag": tag, "release": os.path.basename(boot.target()) or "image"},
+                                   pass_fds=(self.fd,) if self.fd is not None else ())
         t0 = time.time()
         while pid and time.time() - t0 < READY_WAIT:
             if procs.read_json(pidfile).get("ready"):
@@ -85,6 +124,9 @@ class UIKeeper:
             return True
 
     def keep(self, stop: threading.Event, every: float = 2.0):
+        # only the process that keeps the UI holds the port: anything that merely lists the UI processes (upgrade
+        # --status) must not, or the kernel would hand it connections it never accepts
+        self.fd = listener()
         want = os.path.basename(boot.target()) or "image"
         backoff = 0.0
         while not stop.is_set():

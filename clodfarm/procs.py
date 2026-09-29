@@ -117,7 +117,7 @@ def write_json(path: str, data: dict, mode: int = 0o600):
 # ---------------------------------------------------------------- detached
 def spawn_detached(workspace: str, argv: list[str], env: dict | None = None, log: str | None = None,
                    pidfile: str | None = None, cwd: str | None = None, meta: dict | None = None,
-                   wait: float = 10) -> int:
+                   wait: float = 10, pass_fds: tuple = ()) -> int:
     """Start ``argv`` detached from this process (it keeps running when this one execs or dies) and return its pid,
     read back from ``pidfile``."""
     spec = {"argv": argv, "env": env or dict(os.environ), "log": log, "pidfile": pidfile, "cwd": cwd, "meta": meta}
@@ -132,7 +132,7 @@ def spawn_detached(workspace: str, argv: list[str], env: dict | None = None, log
             pass
     try:
         subprocess.run([sys.executable, shim_path(workspace), "exec", specf], check=True, timeout=30,
-                       stdin=subprocess.DEVNULL)
+                       stdin=subprocess.DEVNULL, pass_fds=pass_fds)
         if not pidfile:
             return 0
         t0 = time.time()

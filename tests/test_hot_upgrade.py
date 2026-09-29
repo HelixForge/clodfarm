@@ -107,6 +107,14 @@ def health(port):
         return json.loads(r.read())
 
 
+def health_or_none(port):
+    """For waiting: a UI that isn't listening yet is "not yet", not a failure."""
+    try:
+        return health(port)
+    except OSError:
+        return {}
+
+
 def tasks_running(ws):
     return {k: v for k, v in upgrade.agent_pids(ws).items() if "remote-control" not in k}
 
@@ -118,7 +126,7 @@ def repo_files(env):
 def test_upgrade_keeps_every_agent_running(farmd, tmp_path):
     ws, port = farmd["ws"], farmd["port"]
     p = farmd["start"]()
-    wait_for(lambda: health(port).get("ok"), timeout=30)
+    wait_for(lambda: health_or_none(port).get("ok"), timeout=60)
     ids = [json.loads(cli("spawn", f"slow {n}", "--prompt", f"SLOW 14 COMMIT slow{n}", "--json").stdout)["id"]
            for n in (1, 2)]
     before = wait_for(lambda: (lambda r: r if len(r) == 2 else None)(tasks_running(ws)), timeout=40)
@@ -133,7 +141,7 @@ def test_upgrade_keeps_every_agent_running(farmd, tmp_path):
             try:
                 health(port)
             except OSError as e:
-                refused.append(repr(e))
+                refused.append(f"{time.time():.2f} {e!r}")
             time.sleep(0.05)
     stop = threading.Event()
     watcher = threading.Thread(target=poll_ui, args=(stop,), daemon=True)
@@ -151,11 +159,14 @@ def test_upgrade_keeps_every_agent_running(farmd, tmp_path):
         assert after.get(run, pid) == pid, "an agent that was running is the same process"
     assert {k: v for k, v in upgrade.agent_pids(ws).items() if "remote-control" in k} == rc_before, \
         "Remote Control (the phone conversations) wasn't restarted"
-    wait_for(lambda: health(port).get("version") == "9.9.1", timeout=40)
+    wait_for(lambda: health_or_none(port).get("version") == "9.9.1", timeout=40)
     wait_for(lambda: upgrade.ui_pids(ws) and not set(upgrade.ui_pids(ws)) & set(ui_before), timeout=40)
     wait_for(lambda: not any(procs.alive(pid) for pid in ui_before), timeout=40)  # the old UI is gone, not just forgotten
     stop.set()
     watcher.join(5)
+    if refused:  # what the farm was doing then
+        print(open(farmd["env"] / "farmd-0.log").read()[-6000:])
+        print(open(os.path.join(ws, ".farm", "ui.log")).read()[-3000:])
     assert not refused, f"the UI was unreachable during the roll: {refused[:3]}"
 
     # the adopted runs finish and land, once each
