@@ -203,7 +203,7 @@ def test_the_gads_cli(ui, google, env):
                                     text=True, env={**os.environ, "CLAUDECODE": "1"})
     r = run("accounts")
     assert r.returncode == 0 and "2345678901  Jestr Shop" in r.stdout and "[manager]" in r.stdout
-    r = run("query", "--customer", "2345678901", "SELECT campaign.name FROM campaign")
+    r = run("query", "SELECT campaign.name FROM campaign", "--customer", "2345678901")
     assert r.returncode == 0 and json.loads(r.stdout)[0]["metrics"]["clicks"] == "80"
     t = json.loads(run("token").stdout)
     assert t["headers"]["developer-token"] == GADS["developer_token"] and t["headers"]["login-customer-id"] == "1234567890"

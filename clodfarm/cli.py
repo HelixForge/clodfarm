@@ -1194,7 +1194,7 @@ def cmd_gads(cfg, a):
                                          else "") for c in rows) or "no accounts")
         elif a.action == "query":
             if not a.customer or not a.gaql:
-                print("usage: clodfarm gads query --customer ID \"SELECT ... FROM ...\"", file=sys.stderr)
+                print("usage: clodfarm gads query \"SELECT ... FROM ...\" --customer ID", file=sys.stderr)
                 return 2
             print(json.dumps(connectors.gads_query(cfg.workspace, a.customer, a.gaql), indent=1))
         elif a.action == "dashboard":
@@ -1437,7 +1437,7 @@ def main(argv=None):
     add("resume", cmd_resume, "resume work")
     add("ui", cmd_ui, "serve the farm UI (the daemon also serves it unless FARM_UI=0)").add_argument(
         "--tag", help=argparse.SUPPRESS)
-    gd = add("gads", cmd_gads, "Google Ads: status | accounts [--refresh] | query --customer ID GAQL | dashboard "
+    gd = add("gads", cmd_gads, "Google Ads: status | accounts [--refresh] | query GAQL --customer ID | dashboard "
              "--customer ID | token | connect (JSON on stdin) | disconnect")
     gd.add_argument("action", nargs="?", default="status",
                     choices=["status", "accounts", "query", "dashboard", "token", "connect", "disconnect"])

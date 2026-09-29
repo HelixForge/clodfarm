@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1 (2026-09-29)
+
+- `clodfarm gads query` takes the query first, then `--customer ID`, so it works on Python 3.10 and 3.11 too (their
+  argparse can't take a second argument after an option); the Claudes' guide and the docs say so.
+
 ## 1.3.0 (2026-09-29)
 
 - **Connectors, and Stripe for every Claude** ([docs/connectors.md](docs/connectors.md)). The SLACK button becomes

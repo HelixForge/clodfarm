@@ -311,7 +311,7 @@ def gads_query(workspace: str, customer: str, gaql: str) -> list[dict]:
 GADS_GUIDE = """
 ## Google Ads (a connector)
 The farm is connected to Google Ads ({n} account(s){names}). Use `clodfarm gads`:
-- `clodfarm gads accounts` lists the ad accounts; `clodfarm gads query --customer <id> "<GAQL>"` runs a report
+- `clodfarm gads accounts` lists the ad accounts; `clodfarm gads query "<GAQL>" --customer <id>` runs a report
   (e.g. `SELECT campaign.name, metrics.impressions, metrics.clicks, metrics.cost_micros FROM campaign WHERE
   segments.date DURING LAST_7_DAYS`), as JSON rows.
 - `clodfarm gads dashboard --customer <id> [--days 30]` prints a ready dashboard (spend, clicks, conversions, CPA,

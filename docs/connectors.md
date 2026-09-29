@@ -59,8 +59,8 @@ version first), and lists them.
   `google-ads.yaml` for Google's own Python library (both readable by the farm's user only). Every Claude's farm guide
   teaches `clodfarm gads`:
   - `clodfarm gads accounts [--refresh]`: the ad accounts;
-  - `clodfarm gads query --customer <id> "SELECT campaign.name, metrics.clicks FROM campaign WHERE segments.date
-    DURING LAST_7_DAYS"`: a report, as JSON rows;
+  - `clodfarm gads query "SELECT campaign.name, metrics.clicks FROM campaign WHERE segments.date DURING
+    LAST_7_DAYS" --customer <id>`: a report, as JSON rows (the query first, then `--customer`);
   - `clodfarm gads dashboard --customer <id> [--days 30]`: a ready dashboard of the account (below);
   - `clodfarm gads token`: a fresh access token with the headers and base URL, for REST calls that change things.
 
