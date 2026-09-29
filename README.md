@@ -89,8 +89,9 @@ docker exec clodfarm clodfarm status
 ```
 
 The farm UI is at **http://localhost:8080**
-(see [docs/ui.md](docs/ui.md)): anyone who reaches it watches; the farm manager's password is printed once in
-`docker logs clodfarm` (or set `FARM_UI_PASSWORD`), and the manager can make the farm private
+(see [docs/ui.md](docs/ui.md)): anyone who reaches it watches. There's no admin password: the person of the farm's
+first Claude is its manager (they sign in to it with "farm login" in the Claude app), can hand that to others and make
+the farm private
 ([docs/people.md](docs/people.md)).
 From the UI you can also log the farm in: tap the egg, open the Claude login link and paste the code back.
 

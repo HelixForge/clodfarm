@@ -1,5 +1,5 @@
 /* The farm's browser: one tab per profile (each its own Chromium with its own logins), and the selected profile's
- * screen over the farm's own WebSocket (/api/browser/screen?profile=..., behind the farm password), drawn by noVNC.
+ * screen over the farm's own WebSocket (/api/browser/screen?profile=..., for its Claude's person only), drawn by noVNC.
  * START and STOP turn a profile on and off for everyone on the farm; it stays on until stopped. CONNECTION sends a
  * profile DIRECT or VIA PROXY (the farm's one proxy, from a country the profile picks), checked before it's used.
  * Paste goes through the page's paste event (no clipboard permission needed) and what you copy there comes back

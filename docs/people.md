@@ -7,7 +7,7 @@ A farm is watched by many and worked by a few. The farm UI knows who is looking:
 | **The public** | Nothing: a farm is public by default | Watch: every Claude and what it's doing, the tasks' titles and status, schedules, tokens burned, the planner's goal. Never prompts, results, conversations, tools, logins or the browser. **Hatch** a Claude of their own. |
 | **A viewer** | The viewer password, when the manager made the farm private | Same as the public. |
 | **An owner** | The browser that hatched a Claude (a cookie), or the pairing link that Claude gives them | Everything about **their** Claude: its conversations, results and tools, its skin and settings, the missions waiting for their OK, their browser profiles. |
-| **The farm manager** | The manager password (`FARM_UI_PASSWORD`, or `clodfarm manager-passwd`) | Everything: the planner, a private farm, hatching limits, every Claude and profile. |
+| **The farm manager** | The person of a manager Claude: the farm's first Claude, until a manager hands it on (no password) | Everything: the planner, a private farm, hatching limits, every Claude and profile. |
 
 > [!IMPORTANT]
 > A public farm shows its Claudes' names and task titles to anyone who can reach the UI's port. Keep the port on
@@ -52,6 +52,12 @@ When your Claude approves every mission:
 From a shell the manager can use `clodfarm approvals`, `clodfarm approve ID` and `clodfarm deny ID`. A Claude can't.
 
 ## The farm manager
+
+There's no admin password. The person of a **manager Claude** runs the farm: at first the farm's own Claude (the one
+the container logged in to, e.g. matan on the jestr farm). They sign in to it like anyone ("farm login" in the Claude
+app, or MY CLAUDE with its code). In the manager panel's WHO RUNS THE FARM they make another Claude a manager too, or
+hand the role over; the farm always keeps at least one. From the box's shell, `clodfarm farm manager [set|add|remove]
+<claude>` always works, as the way back in.
 
 The gear on the farm (or G) opens the manager panel:
 - **the planner:** on/off, its goal, which Claude it runs on, how often (see [planner.md](planner.md));

@@ -13,7 +13,8 @@
     clodfarm schedule list | remove ID | pause ID | resume ID | run ID
     clodfarm events [-n 30] [-f]      the farm's event log
     clodfarm pause [REASON] | resume  stop or restart new sub-agents on every box
-    clodfarm ui | ui-passwd           serve the farm UI on its own | set its password
+    clodfarm ui                       serve the farm UI on its own
+    clodfarm farm [manager [set|add|remove CLAUDE] | private --password P | public | hatch-open | hatch-closed]
     clodfarm slack                    Slack: connected or not, and how to connect it (the UI's SLACK button is easier)
     clodfarm browser [status] | start|stop [PROFILE] | open URL [--profile P] | add|remove NAME   the farm's browser
     clodfarm browser proxy on|off [PROFILE] [--country us]   through the farm's proxy (set in the UI), or direct
@@ -946,24 +947,12 @@ def cmd_ui(cfg, a):
 
 
 def cmd_ui_passwd(cfg, a):
-    import getpass
-    from .web import Auth
-    if os.environ.get("FARM_UI_PASSWORD"):
-        print("FARM_UI_PASSWORD is set in the environment and wins over a stored password: change it there.",
-              file=sys.stderr)
-        return 1
-    auth = Auth(os.path.join(cfg.workspace, ".farm", "ui-auth.json"))
-    pw = sys.stdin.readline().rstrip("\n") if not sys.stdin.isatty() else getpass.getpass("new farm UI password: ")
-    if sys.stdin.isatty() and getpass.getpass("again: ") != pw:
-        print("the passwords don't match", file=sys.stderr)
-        return 1
-    try:
-        auth.set_password(pw)
-    except ValueError as e:
-        print(str(e), file=sys.stderr)
-        return 1
-    print("farm UI password saved (every open session is signed out)")
-    return 0
+    print("There's no manager password any more: the farm's manager is the person of one of its Claudes (the farm's\n"
+          "own Claude, until a manager changes it in the manager panel). From this shell:\n"
+          "  clodfarm farm manager                  who runs the farm\n"
+          "  clodfarm farm manager set <claude>     hand it to another Claude's person (add / remove work too)\n"
+          "A private farm's viewer password: clodfarm farm private --password ...", file=sys.stderr)
+    return 1
 
 
 def cmd_bot(cfg, a):
@@ -1107,6 +1096,31 @@ def cmd_farm(cfg, a):
     """The farm manager's switches from a shell: private (a viewer password) or public, hatching."""
     from .web import _pw_hash
     store = _store(cfg)
+    if a.action == "manager":  # a person at the box's shell: who runs the farm (the persons of these Claudes)
+        from .agents import AgentManager
+        ids = [x["id"] for x in AgentManager(cfg).all()]
+        cur = [m for m in (store.settings().get("managers") or []) if m] or [cfg.name]
+        if a.rest:
+            if _in_claude():
+                print("clodfarm farm manager: a Claude can't change who runs the farm", file=sys.stderr)
+                return 2
+            verb, *names = a.rest if a.rest[0] in ("add", "remove", "set") else ["set", *a.rest]
+            bad = [n for n in names if n not in ids]
+            if not names or bad:
+                print(f"clodfarm farm manager: no Claude named {', '.join(bad) or '(none given)'} "
+                      f"(the Claudes: {', '.join(ids)})", file=sys.stderr)
+                return 2
+            new = cur + names if verb == "add" else [m for m in cur if m not in names] if verb == "remove" else names
+            new = list(dict.fromkeys(new))
+            if not new:
+                print("clodfarm farm manager: the farm needs a manager", file=sys.stderr)
+                return 2
+            store.set_settings(managers=new)
+            store.event("farm.managers", f"the farm's managers: {', '.join(new)} (from a shell)", by="cli")
+            cur = new
+        _out({"managers": cur}, a.json, "the farm is run by the person of: " + ", ".join(cur)
+             + "\n(they sign in to their Claude on the farm: MY CLAUDE, with a code from `clodfarm pair`)")
+        return 0
     if a.action == "private":
         pw = a.password or sys.stdin.readline().strip()
         if len(pw) < 6:
@@ -1319,11 +1333,12 @@ def main(argv=None):
     pl.add_argument("action", nargs="?", default="status",
                     choices=["on", "off", "status", "goal", "every", "host", "idle", "notes"])
     pl.add_argument("rest", nargs="*")
-    fm = add("farm", cmd_farm, "private (viewer password) or public, hatching open or closed")
+    fm = add("farm", cmd_farm, "who runs the farm (manager), private (viewer password) or public, hatching")
     fm.add_argument("action", nargs="?", default="status",
-                    choices=["status", "private", "public", "hatch-open", "hatch-closed"])
+                    choices=["status", "private", "public", "hatch-open", "hatch-closed", "manager"])
+    fm.add_argument("rest", nargs="*", help="for manager: [add|remove|set] CLAUDE...")
     fm.add_argument("--password", help="the viewer password for a private farm (or on stdin)")
-    add("manager-passwd", cmd_ui_passwd, "set the farm manager's password (same as ui-passwd)")
+    add("manager-passwd", cmd_ui_passwd, argparse.SUPPRESS)
     up = add("upgrade", cmd_upgrade, "install a new clodfarm and hand over to it: running agents keep running")
     up.add_argument("--from", dest="src", help="a source dir, wheel, or pip/git URL (default: the GitHub repo)")
     up.add_argument("--ref", default="main", help="git ref of the GitHub repo (default: main)")
@@ -1335,7 +1350,7 @@ def main(argv=None):
     dr = add("drain", cmd_drain, "this box stops taking sub-agents and finishes what it runs (for a new image)")
     dr.add_argument("--exit", action="store_true", help="then stop the farm (and the container)")
     dr.add_argument("--undo", action="store_true", help="take sub-agents again")
-    add("ui-passwd", cmd_ui_passwd, "set the farm UI password (reads stdin when piped)")
+    add("ui-passwd", cmd_ui_passwd, argparse.SUPPRESS)
     add("init", cmd_init, "create the DynamoDB table")
     add("doctor", cmd_doctor, "check the setup")
 

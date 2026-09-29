@@ -2,7 +2,7 @@
 
     claude mcp add --transport http farm https://<your farm>/mcp      then /mcp in Claude Code to sign in
 
-Streamable HTTP at FARM_UI_BASE/mcp, and OAuth 2.1 so the client never holds the farm password:
+Streamable HTTP at FARM_UI_BASE/mcp, and OAuth 2.1 (its person signs in to their Claude on the farm to connect it):
 - discovery: protected-resource metadata (RFC 9728) and authorization-server metadata (RFC 8414);
 - dynamic client registration (RFC 7591), with redirect URIs limited to loopback http or https;
 - authorization code with PKCE S256 only, and a sign-in-and-consent page on the farm itself;
@@ -561,8 +561,8 @@ def consent_page(p: dict, client: dict, logged_in: bool, form: str, default_name
 <div class="opt"><input type="radio" id="rw" name="access" value="work"{'' if ro else ' checked'}{' disabled' if ro else ''}><label for="rw" class="muted">See the farm, start sub-agents, message the Claudes and manage schedules</label></div>
 <div class="opt"><input type="radio" id="ro" name="access" value="read"{' checked' if ro else ''}><label for="ro" class="muted">Only see the farm</label></div>
 <p class="muted">It can never log Claudes in or out, release them or pause the farm. End it any time with <code>clodfarm disconnect</code>.</p>
-{'' if logged_in else '<label for="pw">FARM PASSWORD</label><input id="pw" name="password" type="password" autocomplete="current-password" required>'}
-<div class="row"><button name="decision" value="deny" formnovalidate>DENY</button><button class="go" name="decision" value="allow">ALLOW</button></div>
+{'' if logged_in else f'<div class="err">Sign in to your Claude on this farm first: open <a href="{e(base)}/">the farm</a> in this browser and tap MY CLAUDE (ask your Claude for a code: "farm login"). Then connect again.</div>'}
+<div class="row"><button name="decision" value="deny" formnovalidate>DENY</button><button class="go" name="decision" value="allow"{'' if logged_in else ' disabled'}>ALLOW</button></div>
 </form></main></body></html>"""
 
 

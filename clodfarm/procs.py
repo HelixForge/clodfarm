@@ -93,7 +93,21 @@ def alive(pid, marker: str = "") -> bool:
     if not marker:
         return True
     cmd = cmdline(pid)
+    for _ in range(20):  # mid-exec (a wrapper script execing the real program) Linux shows an empty command line
+        if cmd or _zombie(pid):
+            break
+        time.sleep(0.025)
+        cmd = cmdline(pid)
     return marker in cmd and "<defunct>" not in cmd
+
+
+def _zombie(pid: int) -> bool:
+    """A process that exited and waits to be reaped: its command line is empty for good."""
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().rsplit(")", 1)[1].split()[0] in ("Z", "X")
+    except (OSError, IndexError):
+        return not os.path.isdir("/proc/self")  # no /proc (macOS): ps says <defunct> instead
 
 
 def read_json(path: str) -> dict:

@@ -82,9 +82,7 @@ def vnc(monkeypatch):
 
 
 def cookie(host) -> str:
-    call = client()
-    _, _, headers = call(f"http://{host}/api/login", {"password": "correct horse"})
-    return headers["Set-Cookie"].split(";", 1)[0] + "; " + OWNER["cookie"]  # the manager, who owns the farm Claude
+    return OWNER["cookie"]  # the person of the farm's own Claude: its manager
 
 
 def upgrade(host, headers: dict, profile: str = ""):
@@ -177,7 +175,7 @@ def test_status_start_and_stop(farm, monkeypatch):
     assert any(e["type"] == "browser.started" for e in ui.store.events(0, 50))
     code, st, _ = call(base + "/api/browser/stop", {"profile": "default"})
     assert code == 200 and not st["profiles"][0]["on"]
-    assert call(base + "/api/browser/open", {"url": "javascript:alert(1)"})[0] == 403  # only its Claude's person
+    assert call(base + "/api/browser/open", {"url": "javascript:alert(1)"})[0] == 400
     assert call(base + "/api/browser/start", {"profile": "nope"})[0] == 404
 
 

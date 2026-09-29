@@ -11,7 +11,7 @@ import pytest
 
 from clodfarm.config import load
 from clodfarm.store import Store
-from clodfarm.web import Auth, FarmUI, make_handler
+from clodfarm.web import FarmUI, make_handler
 
 
 @pytest.fixture
@@ -56,9 +56,15 @@ def wait(fn, timeout=15):
     return False
 
 
-def login(call, base):
-    code, body, _ = call(base + "/api/login", {"password": "correct horse"})
-    assert code == 200, body
+def login(call, base, claude=None):
+    """Sign in the way the farm's manager does: as the person of the farm's own Claude (a code from `clodfarm pair`)."""
+    import hashlib
+    import secrets
+    cfg = load()
+    code = secrets.token_hex(3).upper()
+    Store.from_config(cfg).add_pairing(claude or cfg.name, hashlib.sha256(secrets.token_bytes(8)).hexdigest(), code)
+    status, body, _ = call(base + "/api/pair", {"code": code})
+    assert status == 200, body
 
 
 def test_login_required_and_wrong_password(ui):
@@ -68,8 +74,8 @@ def test_login_required_and_wrong_password(ui):
     assert code == 200 and st["farm"] == "test" and st["me"]["role"] == "viewer"
     assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
     assert call(base + "/api/manager")[0] == 403
-    assert call(base + "/api/login", {"password": "nope"})[0] == 401
-    login(call, base)
+    assert call(base + "/api/login", {"password": "correct horse"})[0] == 400, "no manager password any more"
+    login(call, base)  # the person of the farm's own Claude
     assert call(base + "/api/manager")[0] == 200
 
 
@@ -91,12 +97,15 @@ def test_a_private_farm_needs_its_viewer_password(ui):
 
 
 def test_session_cookie_flags_and_logout(ui):
-    base, _ = ui
+    base, farm_ui = ui
+    import hashlib
     call = client()
-    _, _, headers = call(base + "/api/login", {"password": "correct horse"})
+    Store.from_config(load()).add_pairing(farm_ui.cfg.name, hashlib.sha256(b"x").hexdigest(), "ABC234")
+    _, _, headers = call(base + "/api/pair", {"code": "ABC234"})
     cookie = headers["Set-Cookie"]
-    assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
-    call(base + "/api/logout", {})
+    assert "HttpOnly" in cookie and "SameSite=Lax" in cookie and "clodfarm_owner=" in cookie
+    assert call(base + "/api/manager")[0] == 200
+    call(base + "/api/owner/forget", {})
     assert call(base + "/api/manager")[0] == 403
 
 
@@ -112,8 +121,8 @@ def test_lockout_after_five_wrong_tries(ui):
     base, _ = ui
     call = client()
     for _ in range(5):
-        call(base + "/api/login", {"password": "wrong"})
-    assert call(base + "/api/login", {"password": "correct horse"})[0] == 429
+        assert call(base + "/api/pair", {"code": "WRONG1"})[0] == 401
+    assert call(base + "/api/pair", {"code": "WRONG1"})[0] == 429
 
 
 def test_state_pause_and_no_quest_endpoints(ui):
@@ -176,17 +185,26 @@ def test_hatch_an_agent_starts_its_own_farm_process(ui):
     assert call(base + f"/api/agents/{farm_ui.cfg.name}/remove", {})[0] == 400  # the primary is the farm itself
 
 
-def test_auth_generates_a_password_once(tmp_path, monkeypatch):
-    monkeypatch.delenv("FARM_UI_PASSWORD", raising=False)
-    p = str(tmp_path / "ui.json")
-    a = Auth(p)
-    assert a.generated and a.check(a.generated, "1.2.3.4")
-    assert Auth(p).generated is None  # the next start reuses the stored hash
-    assert "hash" in json.load(open(p)) and a.generated not in open(p).read()
-    tok = a.issue("farmer")
-    assert a.verify(tok) == "farmer" and a.verify(tok[:-2] + "00") is None
-    a.set_password("new password")
-    assert a.verify(tok) is None  # a new password signs every session out
+def test_the_farm_manager_is_a_claudes_person(ui):
+    base, farm_ui = ui
+    import subprocess
+    import sys
+    gil = farm_ui.manager.create("gil", start=False)
+    first, second = client(), client()
+    login(first, base)
+    login(second, base, claude=gil["id"])
+    assert first(base + "/api/manager")[0] == 200 and second(base + "/api/manager")[0] == 403
+    assert first(base + "/api/manager/managers", {"action": "add", "claude": gil["id"]})[1]["managers"] == \
+        [farm_ui.cfg.name, gil["id"]]
+    assert second(base + "/api/manager")[0] == 200, "made a manager too"
+    assert first(base + "/api/manager/managers", {"action": "remove", "claude": farm_ui.cfg.name})[0] == 200
+    assert first(base + "/api/manager")[0] == 403, "handed it over"
+    assert second(base + "/api/manager/managers", {"action": "remove", "claude": gil["id"]})[0] == 400, \
+        "the farm always has a manager"
+    r = subprocess.run([sys.executable, "-m", "clodfarm", "farm", "manager", "set", farm_ui.cfg.name],
+                       capture_output=True, text=True, env={k: v for k, v in os.environ.items() if k != "CLAUDECODE"})
+    assert r.returncode == 0 and farm_ui.cfg.name in r.stdout, "the box's shell can always set it"
+    assert first(base + "/api/manager")[0] == 200 and second(base + "/api/manager")[0] == 403
 
 
 def test_path_prefix_behind_a_proxy(env, backend, monkeypatch):
@@ -210,13 +228,16 @@ def test_path_prefix_behind_a_proxy(env, backend, monkeypatch):
         call = client()
         assert call(base + "/healthz")[0] == 200  # the container health check stays at the root
         assert call(base + "/api/state")[0] == 404  # outside the prefix
-        code, _, headers = call(base + "/team/api/login", {"password": "correct horse"}, headers={"X-Forwarded-For": "1.2.3.4"})
+        import hashlib
+        Store.from_config(cfg).add_pairing(cfg.name, hashlib.sha256(b"p").hexdigest(), "PAIR23")
+        code, _, headers = call(base + "/team/api/pair", {"code": "PAIR23"}, headers={"X-Forwarded-For": "1.2.3.4"})
         assert code == 200 and "Path=/team/" in headers["Set-Cookie"] and "Secure" in headers["Set-Cookie"]
-        # the lockout counts the forwarded client, not the proxy: another client can still log in
+        # the lockout counts the forwarded client, not the proxy: another client can still sign in
         for _ in range(5):
-            call(base + "/team/api/login", {"password": "x"}, headers={"X-Forwarded-For": "6.6.6.6"})
-        assert call(base + "/team/api/login", {"password": "x"}, headers={"X-Forwarded-For": "6.6.6.6"})[0] == 429
-        assert client()(base + "/team/api/login", {"password": "correct horse"}, headers={"X-Forwarded-For": "1.2.3.4"})[0] == 200
+            call(base + "/team/api/pair", {"code": "WRONG1"}, headers={"X-Forwarded-For": "6.6.6.6"})
+        assert call(base + "/team/api/pair", {"code": "WRONG1"}, headers={"X-Forwarded-For": "6.6.6.6"})[0] == 429
+        Store.from_config(cfg).add_pairing(cfg.name, hashlib.sha256(b"q").hexdigest(), "PAIR45")
+        assert client()(base + "/team/api/pair", {"code": "PAIR45"}, headers={"X-Forwarded-For": "1.2.3.4"})[0] == 200
         srv.shutdown()
         farm_ui.manager.shutdown()
     finally:
@@ -288,33 +309,13 @@ def test_slack_setup_endpoints(ui):
     assert body["slack"]["state"] == "off"
 
 
-def test_a_new_password_works_at_once_and_signs_old_sessions_out(env, backend, monkeypatch):
+def test_the_old_password_commands_explain(env, backend):
     if backend != "sqlite":
-        pytest.skip("the UI reads the same Store API on both backends; one is enough")
+        pytest.skip("one backend is enough")
     import subprocess
     import sys
-    from http.server import ThreadingHTTPServer
-    monkeypatch.delenv("FARM_UI_PASSWORD", raising=False)
-    cfg = load()
-    store = Store.from_config(cfg)
-    store.ensure_table()
-    farm_ui = FarmUI(cfg, store)
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(farm_ui))
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{srv.server_address[1]}"
-    try:
-        old = client()
-        assert old(base + "/api/login", {"password": farm_ui.auth.generated})[0] == 200
-        assert old(base + "/api/state")[0] == 200
-        subprocess.run([sys.executable, "-m", "clodfarm", "ui-passwd"], input="brand new pass\n", text=True,
-                       capture_output=True, check=True)  # from another process, like `docker exec`
-        assert old(base + "/api/manager")[0] == 403, "every open session is signed out"
-        new = client()
-        assert new(base + "/api/login", {"password": farm_ui.auth.generated or ""})[0] == 401
-        assert new(base + "/api/login", {"password": "brand new pass"})[0] == 200, "no restart needed"
-    finally:
-        srv.shutdown()
-        farm_ui.manager.shutdown()
+    r = subprocess.run([sys.executable, "-m", "clodfarm", "manager-passwd"], capture_output=True, text=True)
+    assert r.returncode == 1 and "no manager password" in r.stderr
 
 
 def test_a_burst_of_connections_is_served(env, backend, monkeypatch):

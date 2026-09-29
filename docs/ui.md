@@ -89,24 +89,21 @@ tokens, the planner's goal) and can hatch one Claude of their own. A Claude's pe
 it; the farm manager sees and manages everything. See [people.md](people.md): your own Claude, signing in from your
 phone ("farm login"), approvals, tool choices, private farms.
 
-**The manager's password**, no username:
-- `FARM_UI_PASSWORD` in `.env` wins; or
-- `docker exec -it clodfarm clodfarm manager-passwd` (same as `ui-passwd`) sets a stored one and signs the manager out
-  everywhere; or
-- with neither, a random password is generated on first start and printed once in `docker logs clodfarm`.
+**The farm manager** is the person of a manager Claude: the farm's first Claude until a manager hands it on (manager
+panel, or `clodfarm farm manager set <claude>` from the box's shell). There's no admin password: they sign in to their
+Claude like everyone else.
 
 **A private farm** needs a viewer password to watch: the manager panel (the gear), or
 `clodfarm farm private --password ...`. People who own a Claude on it get in with their owner cookie.
 
-Passwords are stored as PBKDF2-SHA256 hashes (600,000 rounds): the manager's in `/workspace/.farm/ui-auth.json`
-(mode 600), the viewer's in the store. Manager and viewer sessions are HMAC-signed, `HttpOnly`, `SameSite=Strict`
-cookies that last 7 days; owner cookies last a year and are `SameSite=Lax`, so the pairing link from the Claude app
-signs you in. Every write needs a JSON body and an `X-Clodfarm: 1` header, five wrong passwords (or pairing codes)
+A private farm's viewer password is stored in the store as a PBKDF2-SHA256 hash (600,000 rounds). Viewer sessions
+are HMAC-signed, `HttpOnly`, `SameSite=Strict` cookies that last 7 days; owner cookies last a year and are
+`SameSite=Lax`, so the pairing link from the Claude app signs you in. Every write needs a JSON body and an `X-Clodfarm: 1` header, five wrong passwords (or pairing codes)
 lock that address out for five minutes, and pages are served with a strict Content-Security-Policy and
 `frame-ancestors 'none'`.
 
-Whoever has the manager password can run agents on every Claude account on the farm and read your repo: treat it like
-an SSH key.
+Whoever signs in to a manager Claude can run agents on every Claude account on the farm and read your repo: a pairing
+code is as good as a key while it lasts (10 minutes, once).
 
 ## Many Claudes, many watchers
 

@@ -24,6 +24,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 OPEN = urllib.request.build_opener(NoRedirect)
+SIGNED_IN = {}
 
 
 @pytest.fixture
@@ -36,6 +37,8 @@ def farm(env, backend, monkeypatch):
     store = Store.from_config(cfg)
     store.ensure_table()
     ui = FarmUI(cfg, store)
+    # a person signed in to their Claude on the farm connects their Claude Code (no farm password any more)
+    SIGNED_IN["cookie"] = "clodfarm_owner=" + ui.keys.make("owner", [cfg.name, "1"], 365)
     srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(ui))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_address[1]}"
@@ -75,16 +78,17 @@ def register(base):
     return json.loads(body)["client_id"]
 
 
-def authorize(base, cid, challenge, name="matan-laptop", access="work", password="correct horse", state="s1"):
+def authorize(base, cid, challenge, name="matan-laptop", access="work", signed_in=True, state="s1"):
     q = {"response_type": "code", "client_id": cid, "redirect_uri": REDIRECT, "code_challenge": challenge,
          "code_challenge_method": "S256", "state": state, "resource": base + "/mcp"}
-    code, page, hdrs = req(base + "/oauth/authorize?" + urllib.parse.urlencode(q))
+    ck = {"Cookie": SIGNED_IN["cookie"]} if signed_in else {}
+    code, page, hdrs = req(base + "/oauth/authorize?" + urllib.parse.urlencode(q), headers=ck)
     assert code == 200, page
     assert "form-action 'self' http://localhost:53682" in hdrs["Content-Security-Policy"]
     fields = dict(re.findall(r'<input type="hidden" name="([a-z_]+)" value="([^"]*)"', page))
     fields = {k: v.replace("&amp;", "&") for k, v in fields.items()}
-    fields.update(decision="allow", name=name, access=access, password=password)
-    return req(base + "/oauth/authorize", fields, form=True)
+    fields.update(decision="allow", name=name, access=access)
+    return req(base + "/oauth/authorize", fields, form=True, headers=ck)
 
 
 def connect(base, **kw):
@@ -177,7 +181,7 @@ def test_consent_guards(farm):
     base, ui = farm
     cid = register(base)
     verifier, challenge = pkce()
-    assert authorize(base, cid, challenge, password="wrong")[0] == 400                 # wrong password: page again
+    assert authorize(base, cid, challenge, signed_in=False)[0] == 400                  # not signed in: page again
     assert authorize(base, cid, challenge, name=ui.cfg.name)[0] == 400                  # a Claude's own name
     assert authorize(base, cid, challenge, name="Bad Name!")[0] == 400
     q = {"response_type": "code", "client_id": cid, "redirect_uri": "http://localhost:9999/other",
@@ -191,8 +195,8 @@ def test_consent_guards(farm):
     code, page, _ = req(base + "/oauth/authorize?" + urllib.parse.urlencode(
         {**q, "code_challenge_method": "S256", "scope": "farm:read"}))
     fields = dict(re.findall(r'<input type="hidden" name="([a-z_]+)" value="([^"]*)"', page))
-    fields.update(decision="allow", name="x-laptop", password="correct horse", scope="farm:read farm:work")
-    assert req(base + "/oauth/authorize", fields, form=True)[0] == 400
+    fields.update(decision="allow", name="x-laptop", scope="farm:read farm:work")
+    assert req(base + "/oauth/authorize", fields, form=True, headers={"Cookie": SIGNED_IN["cookie"]})[0] == 400
 
 
 def test_pkce_code_reuse_refresh_rotation_and_revoke(farm):

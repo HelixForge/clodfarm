@@ -125,7 +125,8 @@ add about 1 GB unpacked; Node is in every image). Each box of a multi-box farm h
 
 ## Security
 
-Whoever has the farm UI password can use every site you log in to here, and so can every Claude on the box: that's
+Every site you log in to in a profile can be used by that profile's Claude and its person, and (through the shared
+container) by any Claude on the box with a shell that goes looking: that's
 the point. Log in only to accounts you want the farm to act on, prefer a separate browser account over your main
 one where a site allows it, and log out (or **REMOVE PROFILE**) to take access back.
 Chromium runs with `--no-sandbox`: the container is the sandbox, as for the agents (see [security.md](security.md)).

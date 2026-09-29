@@ -1181,7 +1181,7 @@ const UI = {
     for (const d of $$("dialog[open]")) d.close();
     $("#hud").hidden = true; $("#title").hidden = false;
     const priv = App.me ? App.me.private && !App.me.can_view : true;
-    this.accountForms($("#title-forms"), { tabs: priv ? ["viewer", "manager", "mine"] : ["manager", "mine"], note: this.titleNote,
+    this.accountForms($("#title-forms"), { tabs: priv ? ["viewer", "mine"] : ["mine"], note: this.titleNote,
       onDone: async () => { const me = await this.loadMe(); if (me?.can_view) { if (!this.goNext()) this.showFarm(); } else this.showTitle(); } });
     Scene.farm = false; Scene.layout = { clearOf: ".title-card" }; Scene.cam.auto = true; Scene.resize(); // the demo Claudes keep off the title and the form
     Scene.demo = true; fill(Scene.labels, null); Scene.crowEl = null; Scene.critters.clear(); Scene.plotTasks = []; Scene.plotMore = []; Scene.boardCount = 3;
@@ -1189,10 +1189,10 @@ const UI = {
     const hats = ["straw", "beanie", "cap", "sprout", "bow", "headphones"];
     hats.forEach((hat, i) => { const p = Scene.randomSpot(), c = new Critter("demo" + i, p.x, p.y); c.hat = hat; c.color = HAT_COLORS[i + 1]; c.born -= 5000; Scene.critters.set(c.key, c); });
   },
-  /** Sign-in forms, as tabs: the private farm's password (FARM), the manager's password (MANAGER), and the code your
-   * Claude gives you in the Claude app (MY CLAUDE). Used on the title screen and in the menu. */
+  /** Sign-in forms, as tabs: a private farm's viewer password (FARM), and the code your Claude gives you in the Claude
+   * app (MY CLAUDE). The farm's manager is the person of a manager Claude: they sign in to it like anyone. */
   accountForms(box, { tabs, tab, note, onDone }) {
-    const NAMES = { viewer: "FARM", manager: "MANAGER", mine: "MY CLAUDE" };
+    const NAMES = { viewer: "FARM", mine: "MY CLAUDE" };
     const draw = (cur) => {
       const err = h("p", { class: "form-error", role: "alert", id: box.id === "title-forms" ? "title-note" : null, text: note || "" });
       note = "";
@@ -1216,9 +1216,9 @@ const UI = {
         const pw = h("input", { name: "password", type: "password", autocomplete: "current-password", required: true });
         form = h("form", { class: "acct-form", autocomplete: "on" },
           h("input", { name: "user", autocomplete: "username", value: "clodfarm", hidden: true }),
-          h("label", {}, cur === "viewer" ? "FARM PASSWORD" : "MANAGER PASSWORD", pw),
-          cur === "viewer" ? h("p", { class: "muted small", text: "This farm is private. Its manager gives you the password." }) : null,
-          err, h("button", { class: "btn primary", type: "submit" }, cur === "viewer" ? "▶ ENTER THE FARM" : "▶ LOG IN AS MANAGER"));
+          h("label", {}, "FARM PASSWORD", pw),
+          h("p", { class: "muted small", text: "This farm is private. Its manager gives you the password; or sign in to your own Claude (MY CLAUDE)." }),
+          err, h("button", { class: "btn primary", type: "submit" }, "▶ ENTER THE FARM"));
         form.addEventListener("submit", async (e) => {
           e.preventDefault(); const btn = form.querySelector("button[type=submit]"); btn.disabled = true; err.textContent = "";
           try { const r = await api("api/login", { password: pw.value }); App.user = r.user; await onDone(r.role, r); }
@@ -1477,7 +1477,7 @@ const UI = {
       h("p", { class: "muted small", text: "It starts sub-agents (you see them here as mini Claudes), asks the other Claudes for help, schedules work and builds dashboards, and it watches its budget." }),
       R.manager ? [h("h3", { class: "kicker", text: "OR FROM CLAUDE CODE ON YOUR COMPUTER" }),
         h("div", { class: "copy-row" }, h("code", { class: "pre", text: mcp }), copy),
-        h("p", { class: "muted small", text: "Then run /mcp in Claude Code and sign in with the farm password." })] : null);
+        h("p", { class: "muted small", text: "Then run /mcp in Claude Code: it opens this farm, where you're signed in to your Claude, to connect." })] : null);
     fill($("#claude-actions"), none && !me
       ? h("button", { class: "btn primary", type: "button", onclick: () => { $("#dlg-claude").close(); this.openHatch(null, true); } }, "+ NEW CLAUDE")
       : h("a", { class: "btn primary", href: link || "https://claude.ai/code", target: "_blank", rel: "noopener noreferrer", text: "OPEN IN CLAUDE ↗" }));
@@ -2023,7 +2023,7 @@ const UI = {
       $("#appr-sub").textContent = "";
       const box = h("div", { class: "login inset" });
       fill(body, h("p", { text: "Missions for your Claude wait here for your OK. Sign in to your Claude first:" }), box);
-      this.accountForms(box, { tabs: ["mine", "manager"], onDone: async () => { await this.loadMe(); await this.refresh(); this.openApprovals(this.apprFocus); } });
+      this.accountForms(box, { tabs: ["mine"], onDone: async () => { await this.loadMe(); await this.refresh(); this.openApprovals(this.apprFocus); } });
       return;
     }
     let list = App.approvals || [];
@@ -2175,6 +2175,28 @@ const UI = {
       return f;
     };
     const num = (name, value, min, max) => h("input", { name, type: "number", min, max, value: value ?? "", inputmode: "numeric" });
+    // who runs the farm: the persons of these Claudes
+    const nameOf = id => (App.state?.agents.find(a => a.id === id)?.name || id).toUpperCase();
+    const mgrs = m.managers || [], mgrErr = h("p", { class: "form-error", role: "alert" });
+    const change = async (action, claude, btn) => {
+      mgrErr.textContent = "";
+      if (btn && btn.dataset.sure !== "1") { btn.dataset.sure = "1"; btn.textContent = "SURE?"; return; }
+      try { const r = await api("api/manager/managers", { action, claude }); await this.loadMe(); this.renderManager(r); if (!role().manager) { $("#dlg-manager").close(); this.say(`${nameOf(claude)}'s person runs the farm now.`); } }
+      catch (x) { mgrErr.textContent = x.message; }
+    };
+    const others = (m.hosts || []).filter(id => !mgrs.includes(id));
+    const pick = h("select", { "aria-label": "a Claude" }, others.map(id => h("option", { value: id, text: nameOf(id) })));
+    const managers = h("div", { class: "mgr-sec" }, h("h3", { text: "WHO RUNS THE FARM" }),
+      h("p", { class: "muted small", text: "The person of each of these Claudes is a manager (signed in to their Claude, like you). No password." }),
+      h("ul", { class: "owners" }, mgrs.map(id => {
+        const rm = h("button", { class: "btn tiny danger", type: "button", disabled: mgrs.length < 2 }, "REMOVE");
+        rm.addEventListener("click", () => change("remove", id, rm));
+        return h("li", {}, h("span", { class: "o-name", text: nameOf(id) }), id === role().owner ? h("span", { class: "badge", text: "YOU" }) : null, rm);
+      })),
+      others.length ? h("div", { class: "dlg-actions left" }, pick,
+        h("button", { class: "btn", type: "button", onclick: () => change("add", pick.value) }, "+ MAKE A MANAGER TOO"),
+        (() => { const b = h("button", { class: "btn danger", type: "button" }, "HAND IT OVER"); b.addEventListener("click", () => change("set", pick.value, b)); return b; })()) : null,
+      mgrErr);
     // planner
     const everyS = P.every_s || 900, everySel = h("select", { name: "every" }, EVERY.map(([l, s]) => h("option", { value: l, text: `every ${l}`, selected: s === everyS })));
     if (!EVERY.some(e => e[1] === everyS)) everySel.prepend(h("option", { value: "", text: `every ${everyLabel(everyS)} (now)`, selected: true }));
@@ -2235,7 +2257,7 @@ const UI = {
       h("p", {}, "Version ", h("b", { text: m.version || "?" }), h("span", { class: "muted", text: ` · ${rel}` })),
       h("p", { class: "muted small", text: "ROLL UI restarts the web UI on the code that's installed now (the Claudes keep working, the page stays up)." }),
       rollErr, h("div", { class: "dlg-actions" }, roll));
-    fill($("#mgr-body"), planner, privacy, hatching, owners, release);
+    fill($("#mgr-body"), managers, planner, privacy, hatching, owners, release);
   },
 
   // ---------------------------------------------------------------- settings
@@ -2307,14 +2329,14 @@ const UI = {
   renderMenu() {
     const R = role(), st = App.state, me = App.me || {}, mine = st?.agents.find(a => a.mine);
     const person = R.manager || !!R.owner;
-    const who = R.manager ? "the farm's MANAGER" : R.owner ? `the person of ${String(mine?.name || R.owner).toUpperCase()}` : me.viewer ? "a VIEWER (farm password)" : "a VISITOR: you watch";
+    const who = R.manager ? `the farm's MANAGER (the person of ${String(mine?.name || R.owner).toUpperCase()})` : R.owner ? `the person of ${String(mine?.name || R.owner).toUpperCase()}` : me.viewer ? "a VIEWER (farm password)" : "a VISITOR: you watch";
     const err = h("p", { class: "form-error", role: "alert" });
     const out = async (path, msg) => {
       err.textContent = "";
       try { await api(path, {}); this.say(msg); const m = await this.loadMe(); if (!m?.can_view) return this.showTitle(); await this.refresh(); this.renderMenu(); }
       catch (x) { err.textContent = x.message; }
     };
-    const tabs = [!R.owner ? "mine" : null, !R.manager ? "manager" : null].filter(Boolean);
+    const tabs = [!R.owner ? "mine" : null].filter(Boolean);
     const forms = h("div", { class: "login inset" });
     const link = (text, act, key, href) => href ? h("a", { class: "menu-item", href }, text, h("kbd", { text: key }))
       : h("button", { class: "menu-item", type: "button", "data-act": act, onclick: () => $("#dlg-menu").close() }, text, h("kbd", { text: key }));
@@ -2322,7 +2344,7 @@ const UI = {
       h("p", {}, "You're ", h("b", { text: who }), "."),
       h("div", { class: "dlg-actions left" },
         R.owner && mine ? h("button", { class: "btn", type: "button", onclick: () => { $("#dlg-menu").close(); this.focusMine(); } }, "★ SHOW MY CLAUDE") : null,
-        R.manager || me.viewer ? h("button", { class: "btn", type: "button", onclick: () => out("api/logout", "Logged out.") }, "LOG OUT") : null,
+        me.viewer ? h("button", { class: "btn", type: "button", onclick: () => out("api/logout", "Logged out.") }, "LOG OUT") : null,
         R.owner ? h("button", { class: "btn danger", type: "button", onclick: () => out("api/owner/forget", "This device forgot your Claude. Sign in again with a code from it.") }, "FORGET MY CLAUDE ON THIS DEVICE") : null),
       err,
       tabs.length ? [h("h3", { text: "SIGN IN" }), forms] : null,

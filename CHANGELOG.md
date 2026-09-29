@@ -1,10 +1,20 @@
 # Changelog
 
-## 1.0.3 (2026-09-29)
+## 1.1.0 (2026-09-29)
 
-- **`clodfarm browser` shows a Claude its own profiles** (the farm's own Claude also the ones nobody owns), the ones
-  whose tools it has; a person at the box's shell still sees every profile. Found by a Claude on the jestr farm
-  checking itself after the upgrade.
+- **No admin password: the farm's manager is a Claude's person.** The person of a manager Claude runs the farm: at
+  first the farm's own (first) Claude, e.g. matan on the jestr farm. They sign in to it like anyone ("farm login" in
+  the Claude app, or MY CLAUDE with its code). In the manager panel, WHO RUNS THE FARM makes another Claude a manager
+  too or hands the role over (a farm always keeps one); from the box's shell, `clodfarm farm manager [set|add|remove]
+  <claude>`. `FARM_UI_PASSWORD`, `clodfarm ui-passwd` and `manager-passwd` are gone; a private farm keeps its viewer
+  password. Connecting Claude Code over MCP now asks you to be signed in to your Claude on the farm.
+- **NEW SESSION in the Claude app works again.** Since 1.0.0 Remote Control ran with its stdin a closed pipe, and the
+  app's new sessions never started (the one it opened at start did). It gets /dev/null again, as before 1.0; one
+  started the old way is restarted once none of its conversations has been active for 15 minutes.
+- **`clodfarm browser` shows a Claude its own profiles** (the farm's own Claude also the ones nobody owns); a person
+  at the box's shell still sees every profile. Found by a Claude on the jestr farm checking itself after the upgrade.
+- A process mid-exec (a wrapper script execing the real program) is no longer taken for gone: its command line is
+  empty for an instant on Linux.
 
 ## 1.0.2 (2026-09-29)
 

@@ -32,15 +32,6 @@ else
     "$IMAGE" >/dev/null
 fi
 
-# the farm UI's password: FARM_UI_PASSWORD if you set one, else the one generated on first start (printed once)
-PW=""
-if [ -z "${FARM_UI_PASSWORD:-}" ]; then
-  i=0
-  while [ $i -lt 20 ] && [ -z "$PW" ]; do
-    PW=$(docker logs "$NAME" 2>&1 | sed -n 's/.*farm \(UI\|manager\) password: \([^ |]*\).*/\2/p' | tail -1)
-    [ -n "$PW" ] || { sleep 1; i=$((i + 1)); }
-  done
-fi
 if docker exec "$NAME" clodfarm whoami >/dev/null 2>&1; then
   say "Already logged in"
 else
@@ -48,16 +39,13 @@ else
   docker exec -it "$NAME" clodfarm login </dev/tty
 fi
 
-if [ -n "${FARM_UI_PASSWORD:-}" ]; then PWTXT="your FARM_UI_PASSWORD"
-elif [ -n "$PW" ]; then PWTXT="$PW"
-else PWTXT="set one with: docker exec -it $NAME clodfarm ui-passwd"; fi
-
 cat <<MSG
 
   clodfarm is running.
 
-  Farm UI:            http://localhost:$PORT   manager password: $PWTXT
-                      (anyone with the address watches; make it private in the manager panel)
+  Farm UI:            http://localhost:$PORT
+                      You run it: in the Claude app, tell your Claude "farm login" and open the link it gives you.
+                      Anyone with the address watches; make it private in the manager panel (the gear).
 
   Talk to it:         Claude app -> Code -> "[clodfarm] $NAME" (on your phone or at claude.ai/code)
   Add teammates:      in the farm UI, + NEW CLAUDE: each hatches their own Claude with their own account

@@ -12,7 +12,8 @@ them: they are reparented to PID 1 (tini in the container), and the farm can res
 underneath them.
 
 A run's directory:
-    cmd.json     {"argv": [...], "cwd": ..., "env": {...}, "merge_stderr": false}   written by the farm first
+    cmd.json     {"argv": [...], "cwd": ..., "env": {...}, "merge_stderr": false, "stdin": "null"?}   written first
+                 ("stdin": "null": its stdin is /dev/null, as for a program that reads keys from it, not a pipe)
     shim.json    {"shim": pid, "child": pid, "started": t}              written by the shim once the child runs
     out.jsonl    the child's stdout (appended as it writes)
     err.log      the child's stderr
@@ -64,7 +65,8 @@ def run(rundir: str):
     err = open(os.path.join(rundir, "err.log"), "ab")
     try:
         child = subprocess.Popen(spec["argv"], cwd=spec.get("cwd") or None, env=spec.get("env"),
-                                 stdin=subprocess.PIPE, stdout=out,
+                                 stdin=subprocess.DEVNULL if spec.get("stdin") == "null" else subprocess.PIPE,
+                                 stdout=out,
                                  stderr=subprocess.STDOUT if spec.get("merge_stderr") else err, start_new_session=True)
     except OSError as e:
         err.write(f"could not start {spec['argv'][:1]}: {e}\n".encode())
@@ -75,7 +77,7 @@ def run(rundir: str):
     err.close()
     _write_json(os.path.join(rundir, "shim.json"), {"shim": os.getpid(), "child": child.pid, "started": time.time(),
                                                     "protocol": PROTOCOL})
-    stdin_open, stop_at = True, 0.0
+    stdin_open, stop_at = child.stdin is not None, 0.0
     while child.poll() is None:
         if stdin_open:
             for name in sorted(n for n in os.listdir(inbox) if not n.endswith(".tmp")):

@@ -39,6 +39,7 @@ from .store import Store, iso, now
 
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\]8;;[^\x07\x1b]*(?:\x07|\x1b\\)?")
+RC_SPEC = 2  # how Remote Control is started (its stdin /dev/null): one started another way is replaced when idle
 RC_IDLE = 900  # Remote Control is restarted on a new Claude Code only when no conversation was active for this long
 DRAINED_MARK = "/tmp/clodfarm-drained" if os.path.exists("/.dockerenv") else "/nonexistent/clodfarm-drained"
 CANCEL_POLL = 3  # seconds between two looks at a running sub-agent's status: a cancel stops it within about this long
@@ -384,7 +385,8 @@ class Farm:
                     print("remote-control: claude binary not found", flush=True)
                     return
                 h = start_run(self.cfg.workspace, rundir, cmd, self.cfg.repo_dir, dict(os.environ),
-                              meta={"kind": "rc", "started": t0, "version": self.rc_version}, merge_stderr=True)
+                              meta={"kind": "rc", "started": t0, "version": self.rc_version, "spec": RC_SPEC},
+                              merge_stderr=True, stdin_null=True)
                 self.store.event("rc.started", f"Remote Control session '{self.cfg.name}' starting (pid {h.pid})")
             self.procs["remote-control"] = h
             seen, connected = set(), adopted
@@ -435,13 +437,16 @@ class Farm:
         if not p or p.poll() is not None or not self.rc_version:
             return
         cur = self.claude_version()
-        if not cur or cur == self.rc_version:
+        # started the 1.0.0-1.0.3 way (its stdin a closed pipe: the Claude app's NEW SESSION never reached it)
+        old_spec = procs.read_json(os.path.join(self.runs, "remote-control", "meta.json")).get("spec") != RC_SPEC
+        if not old_spec and (not cur or cur == self.rc_version):
             return
         if any(s.get("kind") == "conversation" and not s.get("ended") and now() - float(s.get("last_at", 0)) < RC_IDLE
                for s in self.store.sessions(self.cfg.name, 50)):
             return
-        self.store.event("rc.updating", f"Remote Control '{self.cfg.name}': restarting on Claude Code {cur} "
-                         f"(was {self.rc_version})")
+        self.store.event("rc.updating", f"Remote Control '{self.cfg.name}': restarting " + (
+            "so NEW SESSION from the Claude app works again" if old_spec else
+            f"on Claude Code {cur} (was {self.rc_version})") + "; no conversation was active")
         self.rc_updating = True
         p.stop()
 

@@ -142,7 +142,8 @@ class RunHandle:
 
 
 def start_run(workspace: str, rundir: str, cmd: list[str], cwd: str, env: dict, meta: dict | None = None,
-              stdin: str | None = None, close: bool = True, merge_stderr: bool = False) -> RunHandle:
+              stdin: str | None = None, close: bool = True, merge_stderr: bool = False,
+              stdin_null: bool = False) -> RunHandle:
     """Start ``cmd`` through the shim in ``rundir`` (created fresh), with ``stdin`` handed to it first; ``close``
     closes its stdin after that. Returns once the process runs (or failed to start)."""
     shutil.rmtree(rundir, ignore_errors=True)
@@ -154,8 +155,10 @@ def start_run(workspace: str, rundir: str, cmd: list[str], cwd: str, env: dict, 
         h.send(stdin)
     if close:
         h.close_stdin()
+    env = {k: v for k, v in env.items() if k not in ("CLODFARM_UI_FD", "FARM_UI_FD")}  # the UI's socket stays there
     procs.write_json(os.path.join(rundir, "cmd.json"), {"argv": cmd, "cwd": cwd, "env": env,
-                                                        "merge_stderr": merge_stderr})
+                                                        "merge_stderr": merge_stderr,
+                                                        **({"stdin": "null"} if stdin_null else {})})
     subprocess.run([sys.executable, procs.shim_path(workspace), "run", rundir], check=True, timeout=60,
                    stdin=subprocess.DEVNULL)
     t0 = time.time()

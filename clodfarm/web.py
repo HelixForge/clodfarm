@@ -1,7 +1,6 @@
 """The farm UI: a pixel-art farm where you watch your Claude agents work and hatch (or release) new ones.
 
     clodfarm ui            serve it on its own (the farm daemon also serves it when FARM_UI=1, the default)
-    clodfarm ui-passwd     set the farm manager's password
 
 Who sees what:
   * the public (a public farm, the default) and viewers (a private farm's viewer password) watch: the farm, every
@@ -10,15 +9,15 @@ Who sees what:
   * an owner (the `clodfarm_owner` cookie, set when they hatched their Claude, or by the pairing link their Claude
     gives them in the Claude app) sees and manages their own Claude: its conversations, results, tools, skin and
     settings, the missions waiting for their approval, and their browser profiles.
-  * the farm manager (the password) sees and manages everything: the planner, a private farm, hatching, every Claude.
+  * the farm manager, the person of a manager Claude (the farm's first, until a manager hands it on), sees and manages
+    everything: who runs the farm, the planner, a private farm, hatching, every Claude.
 
 Behind a reverse proxy: FARM_UI_BASE=/team serves it under a path prefix, FARM_UI_SECURE=1 marks the cookie Secure,
 and FARM_UI_TRUST_PROXY=1 takes the client address from X-Forwarded-For (for the login lockout).
 
-Standard library only. One password, no username (FARM_UI_PASSWORD, or `clodfarm ui-passwd`; with neither, a
-password is generated on first start and printed once in the log). Passwords are stored as PBKDF2
-hashes; sessions are HMAC-signed, HttpOnly, SameSite=Strict cookies; every write needs a JSON body and the
-X-Clodfarm header, so another site can't drive the farm through your browser.
+Standard library only. No admin password. A private farm's viewer password is stored as a PBKDF2 hash; cookies are
+HMAC-signed and HttpOnly; every write needs a JSON body and the X-Clodfarm header, so another site can't drive the
+farm through your browser.
 """
 
 from __future__ import annotations
@@ -63,113 +62,28 @@ def _hash(password: str, salt: bytes, rounds: int = PBKDF2_ROUNDS) -> str:
     return base64.b64encode(hashlib.pbkdf2_hmac("sha256", password.encode(), salt, rounds)).decode()
 
 
-class Auth:
-    """The UI's password, and signed session cookies. There is one farmer, so no username."""
+class Lockout:
+    """Five wrong passwords (or pairing codes) from one address in five minutes: that address waits."""
 
-    def __init__(self, path: str):
-        self.path = path
+    def __init__(self):
         self.fails: dict[str, list[float]] = {}
         self._lock = threading.Lock()
-        self.generated: str | None = None
-        self.data = self._load()
-        self._seen = self._mtime()
-
-    def _mtime(self) -> int:
-        try:
-            return os.stat(self.path).st_mtime_ns
-        except OSError:
-            return 0
-
-    def _fresh(self):
-        """`clodfarm ui-passwd` rewrites the file from another process: use the new password (and its new secret,
-        which signs every old session out) as soon as it's there."""
-        m = self._mtime()
-        if m and m != self._seen:
-            self._seen = m
-            self.data = self._load()
-
-    def _load(self) -> dict:
-        try:
-            d = json.load(open(self.path))
-        except (OSError, ValueError):
-            d = {}
-        env_pw = os.environ.get("FARM_UI_PASSWORD")
-        if env_pw:  # the environment wins; keep the stored secret so sessions survive restarts
-            salt = base64.b64decode(d["salt"]) if d.get("salt") and d.get("from_env") else secrets.token_bytes(16)
-            h = _hash(env_pw, salt)
-            if not (d.get("from_env") and d.get("hash") == h):
-                # a new password: a new secret too, so nobody stays signed in as the manager with the old one
-                d = {"user": "farmer", "salt": base64.b64encode(salt).decode(), "hash": h,
-                     "secret": secrets.token_hex(32), "from_env": True}
-                self._save(d)
-        elif not d.get("hash"):
-            self.generated = secrets.token_urlsafe(12)
-            d = self._make(self.generated)
-            self._save(d)
-        return d
-
-    @staticmethod
-    def _make(password: str) -> dict:
-        salt = secrets.token_bytes(16)
-        return {"user": "farmer", "salt": base64.b64encode(salt).decode(), "hash": _hash(password, salt),
-                "secret": secrets.token_hex(32)}  # a new secret signs out every old session
-
-    def _save(self, d: dict):
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        tmp = self.path + ".tmp"
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            json.dump(d, f)
-        os.replace(tmp, self.path)
-        self._seen = self._mtime()
-
-    def set_password(self, password: str):
-        if len(password) < 8:
-            raise ValueError("use at least 8 characters")
-        self.data = self._make(password)
-        self._save(self.data)
-
-    def check(self, password: str, ip: str) -> bool:
-        self._fresh()
-        with self._lock:
-            recent = [t for t in self.fails.get(ip, []) if t > time.time() - 300]
-            self.fails[ip] = recent
-            if len(recent) >= 5:
-                return False  # 5 wrong tries in 5 minutes: wait
-        salt = base64.b64decode(self.data["salt"])
-        ok = hmac.compare_digest(_hash(password, salt).encode(), self.data["hash"].encode())
-        if not ok:
-            with self._lock:
-                self.fails.setdefault(ip, []).append(time.time())
-        return ok
 
     def locked_out(self, ip: str) -> bool:
-        return len([t for t in self.fails.get(ip, []) if t > time.time() - 300]) >= 5
+        with self._lock:
+            return len([t for t in self.fails.get(ip, []) if t > time.time() - 300]) >= 5
 
-    def _sign(self, payload: str) -> str:
-        return hmac.new(bytes.fromhex(self.data["secret"]), payload.encode(), hashlib.sha256).hexdigest()
+    def fail(self, ip: str):
+        with self._lock:
+            self.fails[ip] = [t for t in self.fails.get(ip, []) if t > time.time() - 300] + [time.time()]
 
-    def issue(self, user: str) -> str:
-        payload = f"{user}|{int(time.time() + SESSION_DAYS * 86400)}|{secrets.token_hex(8)}"
-        return base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=") + "." + self._sign(payload)
-
-    def verify(self, token: str | None) -> str | None:
-        if not token or "." not in token:
-            return None
-        self._fresh()
-        b, sig = token.rsplit(".", 1)
-        try:
-            payload = base64.urlsafe_b64decode(b + "=" * (-len(b) % 4)).decode()
-            user, exp, _ = payload.split("|")
-        except (ValueError, UnicodeDecodeError):
-            return None
-        if not hmac.compare_digest(sig, self._sign(payload)) or int(exp) < time.time() or user != self.data["user"]:
-            return None
-        return user
+    def clear(self, ip: str):
+        with self._lock:
+            self.fails.pop(ip, None)
 
 
 class Keys:
-    """Signs owner and viewer cookies. Its own secret (not the manager's): a new manager password signs the manager
+    """Signs owner and viewer cookies. Its own secret, kept in the workspace volume (a new one signs everyone out).
     out, not every person who owns a Claude."""
 
     def __init__(self, path: str):
@@ -292,7 +206,7 @@ class FarmUI:
         self.cfg = cfg
         self.store = store or Store.from_config(cfg)
         self.manager = manager or AgentManager(cfg)
-        self.auth = Auth(os.path.join(cfg.workspace, ".farm", "ui-auth.json"))
+        self.lock = Lockout()
         self.keys = Keys(os.path.join(cfg.workspace, ".farm", "ui-keys.json"))
         self.hatches: dict[str, list[float]] = {}  # per client address: when it hatched (the per-hour limit)
         self.slack = SlackBridge(cfg, self.store)
@@ -545,6 +459,11 @@ class FarmUI:
         mine = [p["name"] for p in profs if self.profile_mine(p, who)]
         return (mine or ([p["name"] for p in profs] if who.manager else []) or [""])[0]
 
+    def managers(self, st: dict | None = None) -> list[str]:
+        """The Claudes whose persons run the farm: the farm's own (first) Claude until a manager changes it."""
+        st = st if st is not None else self.store.settings()
+        return [m for m in (st.get("managers") or []) if m] or [self.cfg.name]
+
     def profile_mine(self, p: dict, who: "Who") -> bool:
         """Is this browser profile the viewer's Claude's? One nobody owns is the farm's own Claude's."""
         return bool(who.owner) and (p.get("owner") or self.cfg.name) == who.owner
@@ -692,16 +611,10 @@ def make_handler(ui: FarmUI):
         def _err(self, status: int, msg: str):
             self._json({"error": msg}, status)
 
-        def _user(self) -> str | None:
-            """The farm manager's session."""
-            c = SimpleCookie(self.headers.get("Cookie") or "")
-            return ui.auth.verify(c[COOKIE].value if COOKIE in c else None)
-
         def _who(self) -> Who:
             if getattr(self, "_who_cache", None) is not None:
                 return self._who_cache
             c = SimpleCookie(self.headers.get("Cookie") or "")
-            manager = bool(ui.auth.verify(c[COOKIE].value if COOKIE in c else None))
             owner = None
             got = ui.keys.read(c[OWNER_COOKIE].value if OWNER_COOKIE in c else None, "owner")
             if got and len(got) == 2:
@@ -709,6 +622,7 @@ def make_handler(ui: FarmUI):
                 if str(rec.get("owner_ver", 1)) == got[1] and ui.manager.get(got[0]):
                     owner = got[0]
             st = ui.store.settings()
+            manager = bool(owner) and owner in ui.managers(st)  # the person of a manager Claude runs the farm
             viewer = False
             if st.get("private"):
                 v = ui.keys.read(c[VIEWER_COOKIE].value if VIEWER_COOKIE in c else None, "viewer")
@@ -810,7 +724,7 @@ def make_handler(ui: FarmUI):
             if err:
                 return self._redirect(mcp.redirect_with(p["redirect_uri"], error=err, state=p["state"], iss=self._pub()))
             c = ui.oauth.client(p["client_id"])
-            page = mcp.consent_page(p, c, bool(self._user()), ui.oauth.form_token(p),
+            page = mcp.consent_page(p, c, bool(self._who().owner), ui.oauth.form_token(p),
                                     q.get("name") or mcp.slug(f"{ui.cfg.name}-laptop"), nonce, BASE, error)
             self._html(200 if not error else 400, page, self._page_csp(nonce, p["redirect_uri"]))
 
@@ -860,11 +774,9 @@ def make_handler(ui: FarmUI):
             if f.get("decision") != "allow":
                 return self._redirect(mcp.redirect_with(p["redirect_uri"], error="access_denied", state=p["state"],
                                                         iss=self._pub()))
-            if not self._user():
-                if ui.auth.locked_out(self._ip()):
-                    return self._consent({**p, "name": f.get("name", "")}, "too many tries: wait five minutes")
-                if not ui.auth.check(str(f.get("password", ""))[:1000], self._ip()):
-                    return self._consent({**p, "name": f.get("name", "")}, "wrong password")
+            if not self._who().owner:  # a person signed in to their Claude on this farm (MY CLAUDE) connects
+                return self._consent({**p, "name": f.get("name", "")},
+                                     "sign in to your Claude on this farm first (MY CLAUDE), then connect again")
             name = str(f.get("name", "")).strip().lower()
             if not mcp.NAME_RE.match(name):
                 return self._consent({**p, "name": name}, "a name is lowercase letters, digits, . _ or -")
@@ -1150,6 +1062,7 @@ def make_handler(ui: FarmUI):
             return {"settings": {k: st.get(k) for k in ("private", "hatch_open", "max_claudes", "hatch_per_ip_hour")}
                     | {"viewer_password": bool(st.get("viewer_hash"))},
                     "planner": ui.store.planner(), "claudes": owners, "release": boot.running(),
+                    "managers": ui.managers(st),
                     "version": __version__, "hosts": [a["id"] for a in ui.manager.all()]}
 
         # ---------------------------------------------------------- POST
@@ -1162,26 +1075,23 @@ def make_handler(ui: FarmUI):
                         not (self.headers.get("Content-Type") or "").startswith("application/json"):
                     return self._err(403, "missing X-Clodfarm header or JSON body")
                 data = self._body()
-                if path == "/api/login":  # the manager's password, or a private farm's viewer password
-                    if ui.auth.locked_out(self._ip()):
+                if path == "/api/login":  # a private farm's viewer password (the manager is a Claude's person)
+                    if ui.lock.locked_out(self._ip()):
                         return self._err(429, "too many tries: wait five minutes")
-                    pw, user = str(data.get("password", ""))[:1000], ui.auth.data["user"]
+                    pw = str(data.get("password", ""))[:1000]
                     st = ui.store.settings()
-                    if data.get("as") != "viewer" and ui.auth.check(pw, self._ip()):
-                        return self._json({"user": user, "role": "manager"}, extra={
-                            "Set-Cookie": self._cookie(ui.auth.issue(user), SESSION_DAYS * 86400)})
-                    if st.get("private") and st.get("viewer_hash") and \
-                            hmac.compare_digest(_pw_hash(pw, st.get("viewer_salt"))[1], st["viewer_hash"]):
-                        ui.auth.fails.pop(self._ip(), None)
+                    if not (st.get("private") and st.get("viewer_hash")):
+                        return self._err(400, "this farm has no password: sign in to your Claude (MY CLAUDE)")
+                    if hmac.compare_digest(_pw_hash(pw, st.get("viewer_salt"))[1], st["viewer_hash"]):
+                        ui.lock.clear(self._ip())
                         tok = ui.keys.make("viewer", [str(st.get("viewer_ver", 1))], SESSION_DAYS)
                         return self._json({"role": "viewer"}, extra={
                             "Set-Cookie": self._named_cookie(VIEWER_COOKIE, tok, SESSION_DAYS * 86400)})
-                    if data.get("as") == "viewer":
-                        ui.auth.check("\0", self._ip())  # counts toward the lockout like a wrong manager password
+                    ui.lock.fail(self._ip())
                     return self._err(401, "wrong password")
                 if path == "/api/logout":
                     self.send_response(200)
-                    for c in (self._cookie("", 0), self._named_cookie(VIEWER_COOKIE, "", 0)):
+                    for c in (self._cookie("", 0), self._named_cookie(VIEWER_COOKIE, "", 0)):  # old manager cookies too
                         self.send_header("Set-Cookie", c)
                     body = b'{"ok": true}'
                     self.send_header("Content-Type", "application/json")
@@ -1192,11 +1102,11 @@ def make_handler(ui: FarmUI):
                 if path == "/api/owner/forget":  # this device forgets which Claude is mine
                     return self._json({"ok": True}, extra={"Set-Cookie": self._named_cookie(OWNER_COOKIE, "", 0)})
                 if path == "/api/pair":  # the code a Claude gave its person in the Claude app
-                    if ui.auth.locked_out(self._ip()):
+                    if ui.lock.locked_out(self._ip()):
                         return self._err(429, "too many tries: wait five minutes")
                     cid = ui.store.take_pairing(code=str(data.get("code", ""))[:20])
                     if not cid:
-                        ui.auth.check("\0", self._ip())
+                        ui.lock.fail(self._ip())
                         return self._err(401, "that code is wrong or used up: ask your Claude for a new one")
                     return self._paired(cid)
                 if not self._who().can_view:
@@ -1447,6 +1357,22 @@ def make_handler(ui: FarmUI):
                 store.event("planner.changed", "planner " + ", ".join(f"{k}={str(v)[:80]}" for k, v in ch.items()),
                             by="ui")
                 return self._json(self._manager_view())
+            if path == "/api/manager/managers":  # who runs the farm: add a Claude, remove one, or hand it over
+                cur, ids = ui.managers(), {a["id"] for a in ui.manager.all()}
+                cid = str(data.get("claude") or "")
+                if cid not in ids:
+                    raise ValueError(f"no Claude named {cid!r} on this farm")
+                action = str(data.get("action") or "add")
+                new = cur + [cid] if action == "add" else [m for m in cur if m != cid] if action == "remove" \
+                    else [cid] if action == "set" else None
+                if new is None:
+                    raise ValueError("action: add, remove or set")
+                new = list(dict.fromkeys(new))
+                if not new:
+                    raise ValueError("the farm needs a manager: give the role to another Claude first")
+                store.set_settings(managers=new)
+                store.event("farm.managers", f"the farm's managers: {', '.join(new)} ({action} {cid})", by="ui")
+                return self._json(self._manager_view())
             m = re.fullmatch(r"/api/manager/owners/([a-z0-9._-]+)/signout", path)
             if m:  # every device signed in to that Claude signs out
                 rec = store.claude(m.group(1))
@@ -1620,11 +1546,6 @@ def serve(cfg, store: Store | None = None, manager: AgentManager | None = None, 
         from .uikeeper import mark_ready
         mark_ready()
     print(f"farm UI on http://{'localhost' if host in ('0.0.0.0', '::') else host}:{port}", flush=True)
-    if ui.auth.generated:
-        print("+----------------------------------------------------------------+\n"
-              f"|  farm manager password: {ui.auth.generated:<39}|\n"
-              "|  shown once; change it with `clodfarm manager-passwd`          |\n"
-              "+----------------------------------------------------------------+", flush=True)
     if not block:
         threading.Thread(target=httpd.serve_forever, name="ui", daemon=True).start()
         return httpd

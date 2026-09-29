@@ -5,14 +5,14 @@ The farm is a **remote MCP server**. Add it to Claude Code once, and the Claude 
 - hand work to it;
 - talk to the farm's Claudes.
 
-It does this without holding the farm password or anyone's Claude login.
+It does this without holding anyone's Claude login.
 
 ```bash
 claude mcp add --transport http --scope user farm https://clod.farm/<team>/mcp     # or http://localhost:8080/mcp
 ```
 
 Then run `/mcp` in Claude Code, pick **farm** and choose *Authenticate*. A browser page on the farm itself asks for:
-- **the farm UI password**, unless you're already signed in to the farm UI in that browser;
+- **being signed in to your Claude on the farm** in that browser (MY CLAUDE, with a code from "farm login");
 - **a name for your computer**, for example `matan-laptop`;
 - **what it may do:** see and work (the default), or only see.
 
