@@ -4,11 +4,13 @@ import base64
 import json
 import os
 import socket
+import sys
 import threading
+import time
 
 import pytest
 
-from clodfarm import auth, browser, prompts
+from clodfarm import auth, browser, procs, prompts
 from clodfarm.config import load
 from clodfarm.store import Store
 from clodfarm.web import FarmUI, make_handler
@@ -480,6 +482,39 @@ def test_turning_the_proxy_on_restarts_chromium_through_the_relay(tmp_path, monk
     finally:
         b.shutdown()
     assert not b.procs and b.relay is None
+
+
+def test_a_chromium_behind_a_wrapper_script_is_one_chromium(tmp_path, monkeypatch):
+    """Debian's /usr/bin/chromium execs the real one with its own flags before ours. It is still the Chromium we
+    started: not a crash to start again at every sync (that filled a farm's memory with Chromiums), and stopped."""
+    wrapper = tmp_path / "chromium"
+    wrapper.write_text(f"#!/bin/sh\nexec {sys.executable} -c 'import time; time.sleep(60)' "
+                       "--show-component-extension-options --enable-gpu-rasterization \"$@\"\n")
+    wrapper.chmod(0o755)
+    monkeypatch.setenv("FARM_BROWSER_BIN", str(wrapper))
+    monkeypatch.setattr(browser, "available", lambda: True)
+    monkeypatch.setattr(browser.Browser, "_wait", staticmethod(lambda *a: None))
+    b = browser.Browser("default", 0, str(tmp_path / "profile"), str(tmp_path / "browser.log"))
+    started = []
+    real_cmd = b._cmd
+
+    def cmd(name):
+        started.append(name)
+        return real_cmd(name) if name == "chromium" else ["sleep", "30"]
+    monkeypatch.setattr(b, "_cmd", cmd)
+    try:
+        b.sync(True)
+        pid = b.pid("chromium")
+        t0 = time.time()
+        while "--show-component-extension-options" not in procs.cmdline(pid) and time.time() - t0 < 5:
+            time.sleep(0.05)  # the wrapper has exec'd the real one
+        assert pid and "--show-component-extension-options" in procs.cmdline(pid)
+        b.sync(True)
+        b.sync(True)
+        assert started == ["xvfb", "vnc", "chromium"] and b.pid("chromium") == pid and not b.error
+    finally:
+        b.shutdown()
+    assert not procs.alive(pid)
 
 
 def test_a_country_goes_in_a_dataimpulse_login():

@@ -119,7 +119,8 @@ def spawn_detached(workspace: str, argv: list[str], env: dict | None = None, log
                    pidfile: str | None = None, cwd: str | None = None, meta: dict | None = None,
                    wait: float = 10, pass_fds: tuple = ()) -> int:
     """Start ``argv`` detached from this process (it keeps running when this one execs or dies) and return its pid,
-    read back from ``pidfile``."""
+    read back from ``pidfile``. ``meta`` goes in the pid file; its ``marker``, when there is one, is what the command
+    line must hold (see live_pid)."""
     spec = {"argv": argv, "env": env or dict(os.environ), "log": log, "pidfile": pidfile, "cwd": cwd, "meta": meta}
     d = os.path.join(farm_dir(workspace), "spawn")
     specf = os.path.join(d, f"{os.getpid()}-{time.time_ns()}.json")
@@ -140,7 +141,7 @@ def spawn_detached(workspace: str, argv: list[str], env: dict | None = None, log
             pid = read_json(pidfile).get("pid")
             if pid:
                 # the pid file is written just before the exec: wait until the process is the command
-                marker = " ".join(str(x) for x in argv[:3])
+                marker = (meta or {}).get("marker") or " ".join(str(x) for x in argv[:3])
                 while time.time() - t0 < wait and alive(pid) and not alive(pid, marker):
                     time.sleep(0.01)
                 return int(pid)
@@ -159,12 +160,14 @@ def spawn_detached(workspace: str, argv: list[str], env: dict | None = None, log
 
 
 def live_pid(pidfile: str, marker: str | None = None) -> int:
-    """The pid in ``pidfile`` if that process is still ours and running, else 0. Without a ``marker``, the start of
-    the command line it was started with (kept in the pid file) must still be its command line."""
+    """The pid in ``pidfile`` if that process is still ours and running, else 0. Without a ``marker``, the pid file's
+    own marker, or else the start of the command line it was started with (kept in the pid file), must still be in its
+    command line. A command that is a wrapper script execs something else, often with its own arguments first: it
+    needs its own marker, or it never looks like ours again."""
     d = read_json(pidfile)
     pid = d.get("pid")
     if marker is None:
-        marker = " ".join(str(a) for a in (d.get("argv") or [])[:3])
+        marker = d.get("marker") or " ".join(str(a) for a in (d.get("argv") or [])[:3])
     return int(pid) if pid and alive(pid, marker) else 0
 
 

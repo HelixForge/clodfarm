@@ -639,8 +639,12 @@ class Browser:
         with open(self.log_path, "ab") as log:
             log.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} starting {name}: {' '.join(cmd)}\n".encode())
         from . import procs
+        # Debian's /usr/bin/chromium is a script that execs /usr/lib/chromium/chromium with its own flags before
+        # ours: its command line never starts like ours, so it is known by its profile (one Chromium per profile)
+        marker = f"--user-data-dir={self.profile}"
+        meta = {"proxy_key": _proxy_key(self.proxy), **({"marker": marker} if marker in cmd else {})}
         pid = procs.spawn_detached(self.workspace, cmd, env=env, log=self.log_path, pidfile=self.pidfile(name),
-                                   meta={"proxy_key": _proxy_key(self.proxy)} if name == "chromium" else None)
+                                   meta=meta if name == "chromium" else None)
         self.procs[name] = pid
         if name == "xvfb":
             self.since = 0.0
