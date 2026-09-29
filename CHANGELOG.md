@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.0 (2026-09-29)
 
 - **Farms hosted for someone else** ([docs/people.md](docs/people.md#a-farm-hosted-for-someone)). With
   `FARM_UI_SSO_KEY`, the farm accepts a one-time `/sso` link signed by its host, which signs the device in as the
