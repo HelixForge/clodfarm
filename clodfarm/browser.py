@@ -151,6 +151,44 @@ def normalize_url(url: str) -> str:
     return url
 
 
+def insert_text(text: str, slot: int = 0) -> dict:
+    """Type ``text`` where the cursor is in the profile's active tab (DevTools Input.insertText): what paste means, in
+    any language. The VNC clipboard can't be counted on for this: x11vnc takes a viewer's clipboard but doesn't always
+    hand it to X, so Ctrl+V there would paste nothing."""
+    if not text:
+        return {"ok": True, "chars": 0}
+    pages = [t for t in _get(cdp_port(slot), "/json/list") or [] if t.get("type") == "page"]
+    if not pages:
+        raise OSError("that profile has no open tab")
+    page = pages[0]  # DevTools lists tabs most recently used first: the one on the screen
+    u = urllib.parse.urlsplit(page["webSocketDebuggerUrl"])
+    with socket.create_connection((u.hostname, u.port), timeout=10) as s:
+        key = base64.b64encode(os.urandom(16)).decode()
+        s.sendall((f"GET {u.path} HTTP/1.1\r\nHost: {u.netloc}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                   f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+        head = b""
+        while b"\r\n\r\n" not in head:
+            chunk = s.recv(4096)
+            if not chunk:
+                raise OSError("DevTools closed the connection")
+            head += chunk
+        if b" 101 " not in head.split(b"\r\n", 1)[0]:
+            raise OSError("DevTools refused the connection")
+        payload = json.dumps({"id": 1, "method": "Input.insertText", "params": {"text": text}}).encode()
+        mask = os.urandom(4)
+        n = len(payload)
+        frame = bytes([0x81]) + (bytes([0x80 | n]) if n < 126 else bytes([0x80 | 126]) + struct.pack(">H", n)
+                                 if n < 65536 else bytes([0x80 | 127]) + struct.pack(">Q", n))
+        s.sendall(frame + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+        buf = head.split(b"\r\n\r\n", 1)[1]
+        while len(buf) < 2 or b'"id":1' not in buf:  # its answer: the text is in
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+    return {"ok": True, "chars": len(text)}
+
+
 def open_url(url: str, slot: int = 0) -> dict:
     """Open ``url`` in a new tab of a running profile's browser."""
     t = _get(cdp_port(slot), "/json/new?" + urllib.parse.quote(normalize_url(url), safe=":/?&=%#@+,;~"),

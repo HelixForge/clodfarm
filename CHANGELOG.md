@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.2.0 (2026-09-29)
+
+- **The farm, redrawn, in the same theme.** It draws at your screen's real resolution (sharp on phones and Retina,
+  nothing shimmers when you pan); every character is redrawn with twice the detail (the Claudes, hats, extras, minis,
+  eggs, the scarecrow, crops) and new moves (walking, blinking, typing, napping, a cheer when work lands); the field
+  sits fenced by the barn, with paths and things growing around it.
+- **A real look picker** when you hatch a Claude or change its look in SETTINGS: a big live preview, hats and extras
+  as tiles, colour swatches for its hat, band and body, SURPRISE ME; keyboard and touch friendly, a bottom sheet on a
+  phone. SETTINGS is laid out in cards with its SAVE always in reach.
+- **Your Claude, one tap away:** tapping YOUR CLAUDE (top left) opens its card, with ✎ CUSTOMIZE (straight to its
+  look) and ⚙ SETTINGS at the top, next to its name.
+- **A dock that explains itself:** the buttons at the bottom are labelled and grouped (YOUR CLAUDE, THE FARM, MANAGE,
+  + NEW CLAUDE), their signs say what each does, and HELP (or ?) explains every button and everything on the farm.
+- **Pasting into the farm's browser works:** ⌘/Ctrl+V types your clipboard where the cursor is, in any language. It
+  used to go through the VNC clipboard, which x11vnc doesn't hand to the browser's display, so it pasted nothing.
+  A TYPE box under the screen sends any text; on a phone, ⌨ KEYBOARD opens your keyboard and types into it.
+- **The browser page shows only your own Claude's profiles**, the manager's too (a profile moves to another Claude
+  with `clodfarm browser assign`).
+
 ## 1.1.0 (2026-09-29)
 
 - **No admin password: the farm's manager is a Claude's person.** The person of a manager Claude runs the farm: at

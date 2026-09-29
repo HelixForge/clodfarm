@@ -139,12 +139,30 @@ function ctrl(key) { // Ctrl + a letter in the farm's browser
   rfb.sendKey(XK_CONTROL, "ControlLeft", false);
 }
 
-// Before noVNC sees the key (capture phase): ⌘/Ctrl+V is left to the page, so a paste event brings your clipboard;
-// on a Mac, ⌘ + a few letters becomes Ctrl, the way the farm's Linux Chromium expects.
+// Pasting your clipboard into the farm's browser: the text is typed in where its cursor is (api/browser/type).
+// ⌘/Ctrl+V reads your clipboard directly (asked once by the browser); a paste event is the other way in (Safari);
+// if neither brings text in time, Ctrl+V still goes through and pastes what the farm's browser has copied itself.
+let pasting = 0;
+function pasteText(text) {
+  if (!rfb || !text) return;
+  pasting = 0;
+  // typed in where the cursor is, through the farm's own browser (the VNC clipboard doesn't reach its X clipboard)
+  api("browser/type", { profile: sel, text }).catch(e => toast(String(e.message || e).toUpperCase().slice(0, 80)));
+}
+function startPaste() {
+  const mine = pasting = Date.now();
+  if (navigator.clipboard && navigator.clipboard.readText) {
+    navigator.clipboard.readText().then(t => { if (pasting === mine && t) pasteText(t); }, () => {});
+  }
+  setTimeout(() => { if (pasting === mine) { pasting = 0; rfb && ctrl("v"); } }, 700);
+}
+
+// Before noVNC sees the key (capture phase): ⌘/Ctrl+V pastes your clipboard (above); on a Mac, ⌘ + a few letters
+// becomes Ctrl, the way the farm's Linux Chromium expects.
 $("#screen").addEventListener("keydown", e => {
   if (!rfb) return;
   const k = (e.key || "").toLowerCase(), mod = MAC ? e.metaKey : e.ctrlKey;
-  if (mod && k === "v" && !e.altKey) { e.stopPropagation(); return; }
+  if (mod && k === "v" && !e.altKey) { e.stopPropagation(); if (!e.repeat) startPaste(); return; }
   if (MAC && e.metaKey && !e.ctrlKey && !e.altKey && CMD_KEYS.has(k)) {
     e.preventDefault(); e.stopPropagation();
     ctrl(k);
@@ -158,8 +176,35 @@ document.addEventListener("paste", e => {
   const text = e.clipboardData && e.clipboardData.getData("text/plain");
   if (!text) return;
   e.preventDefault();
-  rfb.clipboardPasteFrom(text);
-  setTimeout(() => rfb && ctrl("v"), 60); // the text is on the farm's clipboard first, then Ctrl+V pastes it
+  pasteText(text);
+});
+
+// The TYPE bar: text you type or paste there is typed into the farm's browser where its cursor is, any language.
+$("#type-bar").addEventListener("submit", e => {
+  e.preventDefault();
+  const t = $("#type-text").value;
+  if (!rfb) return toast("START THE BROWSER FIRST");
+  if (t) { pasteText(t); $("#type-text").value = ""; toast("SENT"); }
+});
+// ⌨ KEYBOARD (a phone): tapping the screen can't open the on-screen keyboard, so this focuses a hidden box and what
+// you type there becomes keys in the farm's browser.
+const XK = { Backspace: 0xff08, Enter: 0xff0d, Tab: 0xff09, Escape: 0xff1b, ArrowLeft: 0xff51, ArrowUp: 0xff52,
+  ArrowRight: 0xff53, ArrowDown: 0xff54, Delete: 0xffff };
+const keysym = ch => { const c = ch.codePointAt(0); return c < 0x100 ? c : 0x1000000 | c; };
+function tap(sym, code) { rfb.sendKey(sym, code || "", true); rfb.sendKey(sym, code || "", false); }
+const sink = $("#kbd-sink");
+$("#kbd-btn").addEventListener("click", () => { sink.value = ""; sink.focus({ preventScroll: true }); toast("TYPING INTO THE BROWSER"); });
+sink.addEventListener("keydown", e => {
+  if (!rfb || !XK[e.key]) return;
+  e.preventDefault();
+  tap(XK[e.key], e.code);
+});
+sink.addEventListener("input", e => {
+  if (!rfb) return;
+  if (e.inputType === "deleteContentBackward") tap(XK.Backspace, "Backspace");
+  else if (e.inputType === "insertLineBreak") tap(XK.Enter, "Enter");
+  else for (const ch of (e.data || "")) tap(keysym(ch));
+  sink.value = "";
 });
 
 // ------------------------------------------------------------------ state

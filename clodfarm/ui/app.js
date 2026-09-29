@@ -1871,9 +1871,9 @@ const UI = {
     const t = fmtN(k.shown), el = $("#tok-total");
     if (el.textContent !== t) el.textContent = t;
   },
-  focusMine() {
+  focusMine(open = false) {
     const id = App.state?.me?.claude; if (!id) return;
-    this.focusAgent(id, false);
+    this.focusAgent(id, open);
   },
   /** Point the camera at a Claude (zoomed in enough to read names) and select it. */
   focusAgent(id, open = true) {
@@ -1917,7 +1917,7 @@ const UI = {
     $("#textbox").addEventListener("click", () => this.skip());
     addEventListener("resize", () => { this.dockSig = null; this.placeDock(); });
     $("#tokens").addEventListener("click", () => $("#tokens").classList.toggle("open"));
-    $("#mine-block").addEventListener("click", () => this.focusMine());
+    $("#mine-block").addEventListener("click", () => this.focusMine(true)); // your Claude's card, right away
     $("#roster-q").addEventListener("input", () => this.renderRoster());
     $("#roster-sort").addEventListener("change", () => this.renderRoster());
     for (const d of $$("dialog")) {
@@ -2063,7 +2063,7 @@ const UI = {
         see ? [h("h3", { text: "ITS SESSION" }), this.sessionList(c.agent.id, t.id)] : null,
         see ? h("p", { class: "muted small", text: `Its result: ask ${c.agent.name}, or run clodfarm result ${t.id}` }) : null,
         h("p", { class: "small" }, h("a", { href: "tasks", text: "See every sub-agent on the TASKS page →" }))];
-      fill($("#sum-body"), parts); fill($("#sum-actions"));
+      fill($("#sum-body"), parts); fill($("#sum-actions")); fill($("#sum-top"));
       return;
     }
     const a = st.agents.find(x => x.id === c.agent.id) || c.agent, b = a.budget || {}, see = canManage(a);
@@ -2103,9 +2103,11 @@ const UI = {
     if (elsewhere.length) parts.push(h("h3", { text: `HELPING OTHERS (${elsewhere.length})` }), h("ul", { class: "subs" }, elsewhere.slice(0, 20).map(t => h("li", {}, badge(t),
       h("span", { text: `${t.title} · for ${t.owner}` })))));
     fill($("#sum-body"), parts);
-    const acts = [];
-    if (see && !a.remote) acts.push(h("button", { class: "btn", type: "button", onclick: () => this.openSettings(a.id) }, "⚙ SETTINGS"));
-    fill($("#sum-actions"), acts);
+    // its person's own controls, up top next to its name: its look, and everything else
+    fill($("#sum-top"), see && !a.remote ? [
+      h("button", { class: "btn primary small-btn", type: "button", onclick: () => this.openSettings(a.id, "LOOK") }, "✎ CUSTOMIZE"),
+      h("button", { class: "btn small-btn", type: "button", onclick: () => this.openSettings(a.id) }, "⚙ SETTINGS")] : null);
+    fill($("#sum-actions"));
   },
 
   // ------------------------------------------------------------------- tools
@@ -2858,13 +2860,18 @@ const UI = {
   },
 
   // ---------------------------------------------------------------- settings
-  async openSettings(id) {
+  async openSettings(id, section) {
     for (const d of $$("dialog[open]")) d.close();
     fill($("#set-body"), h("p", { class: "muted", text: "Loading…" }));
     $("#set-h").textContent = "SETTINGS";
     $("#dlg-settings").showModal();
-    try { this.renderSettings(await api(`api/agents/${encodeURIComponent(id)}/settings`)); }
-    catch (x) { fill($("#set-body"), h("p", { class: "form-error", text: x.message })); }
+    try {
+      this.renderSettings(await api(`api/agents/${encodeURIComponent(id)}/settings`));
+      if (section) { // CUSTOMIZE: straight to its look
+        const sec = [...$$("#set-body .set-sec")].find(x => x.querySelector("h3")?.textContent === section);
+        sec?.scrollIntoView({ block: "start" });
+      }
+    } catch (x) { fill($("#set-body"), h("p", { class: "form-error", text: x.message })); }
   },
   /** A Claude's own page for its person (or the manager): its name and look, who may start work on it, its tools,
    * phone pushes, the planner, and RELEASE. */
@@ -2929,7 +2936,7 @@ const UI = {
     const soil = (g, x, y, w, hgt) => { g.fillStyle = G.soilo; g.fillRect(x - 1, y - 1, w + 2, hgt + 2); g.fillStyle = G.soil; g.fillRect(x, y, w, hgt); g.fillStyle = G.soil2; for (let yy = y + 3; yy < y + hgt; yy += 5) g.fillRect(x + 1, yy, w - 2, 1); };
     const things = [
       [skinFrameHD(clay, { look: 1 }), "A CLAUDE", "One Claude Code login with its own usage budget. It wanders when it's free. Tap one to see what it's doing."],
-      [scene(32, 46, g => { g.drawImage(ARROW_MINE, 11, 0); g.drawImage(skinFrameHD(mineSkin, {}), 0, 10); }), "YOURS", "The Claude you're signed in to wears the gold arrow. Tap your card, top left, to find it."],
+      [scene(32, 46, g => { g.drawImage(ARROW_MINE, 11, 0); g.drawImage(skinFrameHD(mineSkin, {}), 0, 10); }), "YOURS", "The Claude you're signed in to wears the gold arrow. Tap your card, top left, to open it."],
       [scene(40, 26, g => { g.drawImage(miniHD("#3b7dd8", { arms: 1 }), 0, 8); g.drawImage(LAPTOP_HD[0], 20, 12); }), "A SUB-AGENT", "A job a Claude handed off. These minis work round their Claude's plot, in the colour of the account paying for them."],
       [scene(46, 30, g => { soil(g, 1, 14, 44, 14); g.drawImage(CROPS.sprout[1], 3, 10); g.drawImage(CROPS.grow[1], 18, 10); g.drawImage(CROPS.ripe[1], 33, 10); }), "A PLOT", "A busy Claude gets one. Crops grow while the work runs, bloom into Claude's spark when it's done, and wilt if it failed."],
       [EGG_HD, "AN EGG", "A Claude waiting for its person to log it in. It hatches once they do."],

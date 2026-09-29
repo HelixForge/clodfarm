@@ -109,3 +109,13 @@
   .for-pick, .assign { flex-wrap: wrap; }
   .for-pick select, .assign select { max-width: 100%; }
 }
+
+/* typing into the farm's browser: a bar under the screen; the phone keyboard's hidden box */
+.type-bar { display: flex; gap: 8px; align-items: center; margin: 10px 0 4px; position: relative; }
+.type-text { flex: 1; min-width: 0; font: inherit; font-size: 18px; padding: 8px 10px; border: 3px solid var(--ink, #1f2a44);
+  border-radius: 6px; background: #fffdf5; }
+.kbd-sink { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0;
+  resize: none; font-size: 16px; /* 16px: iOS doesn't zoom the page in on focus */ }
+#kbd-btn { display: none; }
+@media (hover: none), (pointer: coarse) { #kbd-btn { display: inline-block; } }
+@media (max-width: 760px) { .type-bar { flex-wrap: wrap; } .type-text { flex-basis: 100%; order: 3; } }

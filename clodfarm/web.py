@@ -1255,6 +1255,12 @@ def make_handler(ui: FarmUI):
                             + (f"; profile {name} through it{_from(seen)}" if name else ""), by="ui")
                 threading.Thread(target=ui.browsers.sync, name="browser-sync", daemon=True).start()
                 return self._json({**ui.browser_view(who), "seen": seen})
+            if path == "/api/browser/type":  # what you paste (or SEND) goes in where the cursor is, any language
+                text = str(data.get("text") or "")[:20000]
+                try:
+                    return self._json(browser.insert_text(text, ui.browsers.slot(name)))
+                except OSError as e:
+                    return self._err(503, f"couldn't type into that profile's browser: {e}")
             if path == "/api/browser/open":
                 url = browser.normalize_url(str(data.get("url", ""))[:2000])
                 slot = ui.browsers.slot(name)

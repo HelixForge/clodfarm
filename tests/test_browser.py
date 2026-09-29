@@ -686,3 +686,15 @@ def test_a_claude_lists_only_its_own_profiles(env):
     assert names(run({"CLAUDECODE": "1", "FARM_NAME": "gil", "FARM_HATCHED": "1"})) == ["gil-work"]
     assert names(run({"CLAUDECODE": "1"})) == ["default"], "the farm's own Claude: the ones nobody owns"
     assert set(names(run({}))) == {"default", "gil-work", "noa-li"}, "a person at the shell sees them all"
+
+
+def test_pasting_types_into_your_own_profile_only(farm):
+    host, ui = farm
+    base, mine, other = f"http://{host}", client(), client()
+    login(mine, base)  # the farm Claude's person: "default" (nobody owns it) is theirs
+    gil = ui.manager.create("gil", start=False)
+    login(other, base, claude=gil["id"])
+    code, body, _ = mine(base + "/api/browser/type", {"profile": "default", "text": "hi"})
+    assert code == 503 and "couldn't type" in body["error"]  # no Chromium in the tests: it says so
+    assert other(base + "/api/browser/type", {"profile": "default", "text": "hi"})[0] == 403
+    assert [p["name"] for p in other(base + "/api/browser")[1]["profiles"]] == [], "no other Claude's profiles"

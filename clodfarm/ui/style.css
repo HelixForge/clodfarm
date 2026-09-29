@@ -636,3 +636,8 @@ select {
   .help-farm .help-list { grid-template-columns: 1fr; }
 }
 .save-bar:empty { display: none; }
+
+/* a Claude's card: its person's controls sit up top, next to its name */
+.sum-top { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.sum-top:empty { display: none; }
+.sum-top .btn { margin: 0; }

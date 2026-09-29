@@ -95,7 +95,15 @@
       <div id="screen" class="screen" aria-label="The farm's browser: click to use it"></div>
       <p class="screen-msg" id="screen-msg" hidden></p>
     </div>
+    <form class="type-bar" id="type-bar" autocomplete="off">
+      <button type="button" class="btn small-btn" id="kbd-btn" title="Open your phone's keyboard and type into the farm's browser">⌨ KEYBOARD</button>
+      <input id="type-text" class="type-text" placeholder="type or paste text here, then SEND" spellcheck="false" autocapitalize="off" autocorrect="off"
+        aria-label="Text to type into the farm's browser">
+      <button type="submit" class="btn small-btn primary" id="type-send" title="Pastes it where the cursor is in the farm's browser">SEND ▸</button>
+      <textarea id="kbd-sink" class="kbd-sink" aria-hidden="true" tabindex="-1" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+    </form>
     <p class="muted small help">Click the screen to use it. Paste with ⌘V / Ctrl+V; what you copy there (⌘C / Ctrl+C) lands on your own clipboard.
+      On a phone, tap ⌨ KEYBOARD.
       <span id="toast" class="toast" hidden></span></p>
     <section class="card panel tabs-panel">
       <div class="panel-head"><h2>OPEN TABS</h2><span class="note" id="tools-note"></span></div>
