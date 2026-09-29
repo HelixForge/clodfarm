@@ -15,6 +15,10 @@ Who sees what:
 Behind a reverse proxy: FARM_UI_BASE=/team serves it under a path prefix, FARM_UI_SECURE=1 marks the cookie Secure,
 and FARM_UI_TRUST_PROXY=1 takes the client address from X-Forwarded-For (for the login lockout).
 
+Hosted for someone else: FARM_UI_PRIVATE=1 keeps the farm private whatever its settings say, FARM_UI_SSO_KEY lets the
+host sign its customer in with a one-time /sso link (sso.py), and FARM_MAX_CLAUDES caps the Claudes the farm hatches
+(agents.py), the manager's included.
+
 Standard library only. No admin password. A private farm's viewer password is stored as a PBKDF2 hash; cookies are
 HMAC-signed and HttpOnly; every write needs a JSON body and the X-Clodfarm header, so another site can't drive the
 farm through your browser.
@@ -38,7 +42,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import __version__, boot, bots, browser, connectors, dashboards, policy
+from . import __version__, boot, bots, browser, connectors, dashboards, policy, sso
 from . import mcp
 from .agents import AgentManager
 from .slack import SlackBridge
@@ -366,7 +370,7 @@ class FarmUI:
             "paused": bool(ctl.get("paused")), "pause_reason": ctl.get("reason") or "",
             "tokens": store.tokens(), "tokens_today_by": store.tokens_today_by(),
             "pending": [{"id": p.get("id"), "to": p.get("to")} for p in store.pending()],
-            "private": bool(settings.get("private")), "hatch_open": bool(settings.get("hatch_open")),
+            "private": self.private(settings), "hatch_open": bool(settings.get("hatch_open")),
             "planner": {k: pl.get(k) for k in ("on", "goal", "host", "state", "last_at", "next_at", "cycles",
                                                 "every_s", "idle_until", "task")},
             "slack": {"state": self.slack.state, "team": (self.slack.info or {}).get("team")},
@@ -460,6 +464,11 @@ class FarmUI:
         profs = self.browsers.registry.all()
         mine = [p["name"] for p in profs if self.profile_mine(p, who)]
         return (mine or ([p["name"] for p in profs] if who.manager else []) or [""])[0]
+
+    def private(self, st: dict | None = None) -> bool:
+        """Only signed-in people watch: the manager made it private, or its host did (FARM_UI_PRIVATE=1)."""
+        st = st if st is not None else self.store.settings()
+        return bool(st.get("private")) or os.environ.get("FARM_UI_PRIVATE") == "1"
 
     def managers(self, st: dict | None = None) -> list[str]:
         """The Claudes whose persons run the farm: the farm's own (first) Claude until a manager changes it."""
@@ -638,10 +647,11 @@ def make_handler(ui: FarmUI):
             st = ui.store.settings()
             manager = bool(owner) and owner in ui.managers(st)  # the person of a manager Claude runs the farm
             viewer = False
-            if st.get("private"):
+            private = ui.private(st)
+            if private:
                 v = ui.keys.read(c[VIEWER_COOKIE].value if VIEWER_COOKIE in c else None, "viewer")
                 viewer = bool(v) and v[0] == str(st.get("viewer_ver", 1))
-            self._who_cache = Who(manager, owner, viewer, public=not st.get("private"))
+            self._who_cache = Who(manager, owner, viewer, public=not private)
             return self._who_cache
 
         def _owner_cookie(self, cid: str) -> str:
@@ -892,6 +902,8 @@ def make_handler(ui: FarmUI):
                 return self._json(ui.health())
             if self.path.split("?", 1)[0] == f"{BASE}/pair" or self.path.startswith(f"{BASE}/pair/"):
                 return self._pair_link()
+            if self.path.split("?", 1)[0] == f"{BASE}/sso":
+                return self._sso()
             if self._oauth_get(self.path.split("?", 1)[0]):
                 return
             path = self._path()
@@ -924,7 +936,8 @@ def make_handler(ui: FarmUI):
                 if path == "/api/me":
                     st = ui.store.settings()
                     return self._json({**who.view(), "user": "farmer" if who.manager else None, "farm": ui.cfg.farm,
-                                       "version": __version__, "private": bool(st.get("private")),
+                                       "version": __version__, "private": ui.private(st),
+                                       "sso_url": os.environ.get("FARM_UI_SSO_URL") or None,
                                        "hatch": self._hatch_view(who)}, 200 if who.can_view else 401)
                 if not who.can_view:
                     return self._err(401, "this farm is private: log in first")
@@ -1048,14 +1061,39 @@ def make_handler(ui: FarmUI):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
+        def _sso(self):
+            """GET /sso?t=<token>: a link from the farm's host (FARM_UI_SSO_KEY, see sso.py) signs this device in as
+            the person of the farm's manager Claude. Once: the link then stops working."""
+            ip, key = self._ip(), os.environ.get("FARM_UI_SSO_KEY", "")
+            token = (parse_qs(urlsplit(self.path).query).get("t") or [""])[0]
+            claims = None if ui.lock.locked_out(ip) else sso.read(key, ui.cfg.farm, token)
+            cid = ui.managers()[0] if claims else None
+            if not (claims and ui.manager.get(cid) and ui.store.use_sso(claims["n"], claims["exp"])):
+                ui.lock.fail(ip)
+                return self._err(403, "that sign-in link is wrong, used or expired: open your farm again from where "
+                                      "you got it")
+            ui.store.put_claude(cid, owned=True)
+            ui.store.event("owner.sso", f"{cid}'s person signed in with a link from the farm's host", by="ui")
+            ui._views.clear()
+            self.send_response(302)
+            self.send_header("Location", f"{BASE}/")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Set-Cookie", self._owner_cookie(cid))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
         def _hatch_view(self, who: Who) -> dict:
             st = ui.store.settings()
             n = len([a for a in ui.manager.all() if not a.get("primary")])
-            why = "" if who.manager else "you have a Claude on this farm already" if who.owner else \
+            cap = ui.manager.max_claudes()  # the host's plan: a ceiling for everyone, the manager too
+            most = int(st.get("max_claudes") or 100) if cap is None else min(int(st.get("max_claudes") or 100), cap)
+            why = "this farm's plan has no room for another Claude" if cap is not None and n >= cap else \
+                "" if who.manager else "you have a Claude on this farm already" if who.owner else \
                 "hatching is closed on this farm" if not st.get("hatch_open") else \
-                "this farm is full" if n >= int(st.get("max_claudes") or 100) else \
+                "this farm is full" if n >= most else \
                 "" if who.can_view else "log in first"
-            return {"can": not why, "why": why, "claudes": n, "max": int(st.get("max_claudes") or 100)}
+            return {"can": not why, "why": why, "claudes": n, "max": most}
 
         def _approvals(self, who: Who) -> list[dict]:
             out = []
@@ -1076,7 +1114,8 @@ def make_handler(ui: FarmUI):
             owners = [{"id": c["id"], "owned": bool(c.get("owned")), "approve_missions": bool(c.get("approve_missions"))}
                       for c in ui.store.claudes()]
             return {"settings": {k: st.get(k) for k in ("private", "hatch_open", "max_claudes", "hatch_per_ip_hour")}
-                    | {"viewer_password": bool(st.get("viewer_hash"))},
+                    | {"viewer_password": bool(st.get("viewer_hash")), "private": ui.private(st),
+                       "private_by_host": os.environ.get("FARM_UI_PRIVATE") == "1", "plan_claudes": ui.manager.max_claudes()},
                     "planner": ui.store.planner(), "claudes": owners, "release": boot.running(),
                     "managers": ui.managers(st),
                     "version": __version__, "hosts": [a["id"] for a in ui.manager.all()]}

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Farms hosted for someone else** ([docs/people.md](docs/people.md#a-farm-hosted-for-someone)). With
+  `FARM_UI_SSO_KEY`, the farm accepts a one-time `/sso` link signed by its host, which signs the device in as the
+  person of the manager Claude (like a pairing link). `FARM_UI_SSO_URL` adds a SIGN IN button to the sign-in screen
+  that goes to the host's account page. `FARM_UI_PRIVATE=1` keeps the farm private whatever its settings say.
+  `FARM_MAX_CLAUDES` caps the Claudes and bots the farm adds, for everyone including the manager, from the UI, the
+  CLI and MCP alike.
+
 ## 1.3.1 (2026-09-29)
 
 - `clodfarm gads query` takes the query first, then `--customer ID`, so it works on Python 3.10 and 3.11 too (their

@@ -892,6 +892,11 @@ class Store:
         self.b.put({"PK": "PAIR", "SK": token_hash, "ver": 1, "claude": claude, "code": code, "at": t,
                     "until": t + ttl, "expires_at": int(t + ttl + 3600)})
 
+    def use_sso(self, nonce: str, until: float) -> bool:
+        """Spend a sign-in link's nonce (see sso.py): True the first time, False ever after (until it has expired)."""
+        return self.b.put({"PK": "SSO", "SK": nonce, "ver": 1, "at": now(), "expires_at": int(until) + 3600},
+                          expect_ver=0)
+
     def take_pairing(self, token_hash: str | None = None, code: str | None = None) -> str | None:
         """Use a pairing link (its token's hash) or code once: returns the Claude it signs in to."""
         items = [self.b.get("PAIR", token_hash)] if token_hash else \

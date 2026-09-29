@@ -10,6 +10,9 @@ Login runs ``claude auth login`` in a pseudo-terminal: the UI shows the URL it p
 back into it. clodfarm never stores or logs that code, or any credential.
 
 A *bot* (see bots.py) is an agent with a provider instead of a login: another model, through Claude Code.
+
+FARM_MAX_CLAUDES caps how many agents (Claudes and bots, beyond the primary) the farm keeps, for a host whose plan
+sizes the box: 0 means the primary is the farm's only Claude.
 """
 
 from __future__ import annotations
@@ -189,6 +192,12 @@ class AgentManager:
     def get(self, aid: str) -> dict | None:
         return next((a for a in self.all() if a["id"] == aid), None)
 
+    @staticmethod
+    def max_claudes() -> int | None:
+        """The host's cap on added agents (FARM_MAX_CLAUDES), or None when there is none."""
+        v = os.environ.get("FARM_MAX_CLAUDES", "").strip()
+        return max(0, int(v)) if v.isdigit() else None
+
     def create(self, name: str, bot: dict | None = None, key: str = "", start: bool = True) -> dict:
         """A new agent: a Claude that waits for its login, or with ``bot`` (checked settings, see bots.parse) a bot on
         another model, whose API key is kept in its own config dir. ``start=False`` only registers it: the farm UI's
@@ -196,6 +205,9 @@ class AgentManager:
         name = (name or "").strip()[:24] or ("Bot" if bot else "Claude")
         with self._lock:
             agents = self._load()
+            cap = self.max_claudes()
+            if cap is not None and len(agents) >= cap:
+                raise ValueError("this farm's plan has no room for another Claude")
             taken = {a["id"] for a in self.all()}
             aid = slug(name)
             while aid in taken:
