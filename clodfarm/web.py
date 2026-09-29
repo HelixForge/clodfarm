@@ -98,8 +98,9 @@ class Auth:
             salt = base64.b64decode(d["salt"]) if d.get("salt") and d.get("from_env") else secrets.token_bytes(16)
             h = _hash(env_pw, salt)
             if not (d.get("from_env") and d.get("hash") == h):
+                # a new password: a new secret too, so nobody stays signed in as the manager with the old one
                 d = {"user": "farmer", "salt": base64.b64encode(salt).decode(), "hash": h,
-                     "secret": d.get("secret") or secrets.token_hex(32), "from_env": True}
+                     "secret": secrets.token_hex(32), "from_env": True}
                 self._save(d)
         elif not d.get("hash"):
             self.generated = secrets.token_urlsafe(12)
