@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1 (2026-09-29)
+
+- **The Claudes walk round the farm again.** Free ones stroll the meadow, and so do the ones not running right now;
+  the fenced yard by the barn is where Claudes nap while their budget is paced. Busy ones walk round their plot now
+  and then to look at the crops, then go back to their laptop.
+
 ## 1.2.0 (2026-09-29)
 
 - **The farm, redrawn, in the same theme.** It draws at your screen's real resolution (sharp on phones and Retina,
