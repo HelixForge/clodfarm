@@ -236,3 +236,25 @@ def test_upgrade_status_and_rollback(env, tmp_path, monkeypatch):
     assert r.returncode == 0 and "the image" in r.stdout
     from clodfarm import boot
     assert boot.target(ws) == ""
+
+
+def test_a_claude_waiting_for_its_login_hands_over_too(env, tmp_path, monkeypatch):
+    """An added Claude whose person never finished logging in waits in its `clodfarm run`: an upgrade execs it too
+    (same process, new release) instead of stopping it, and `upgrade` doesn't wait for it to become ready."""
+    monkeypatch.setenv("FARM_MANAGE_CLAUDE_CONFIG", "0")
+    monkeypatch.setenv("FAKE_LOGGED_IN", "0")
+    ws = os.environ["FARM_WORKSPACE"]
+    os.makedirs(ws, exist_ok=True)
+    p = subprocess.Popen([sys.executable, "-m", "clodfarm", "run"], cwd=str(env), stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        pidfile = os.path.join(procs.pids_dir(ws), "farmd-primary.json")
+        wait_for(lambda: procs.read_json(pidfile).get("pid") == p.pid, timeout=60)
+        assert not procs.read_json(pidfile).get("ready"), "it waits for its login"
+        r = cli("upgrade", "--from", release_copy(tmp_path, "9.9.5"), "--wait", "60")
+        assert r.returncode == 0, r.stdout + r.stderr
+        info = procs.read_json(pidfile)
+        assert info["pid"] == p.pid and info["release"].startswith("9.9.5-") and p.poll() is None
+    finally:
+        p.send_signal(signal.SIGTERM)
+        p.wait(30)

@@ -636,15 +636,21 @@ class Browser:
         env = {**os.environ, "DISPLAY": self.display}
         os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
         self._rotate_log()
+        from . import procs
+        # what tells its process apart for as long as it runs: Chromium's profile folder (Debian's /usr/bin/chromium
+        # is a script that execs the real binary, with another command line), else the start of the command
+        marker = next((a for a in cmd if a.startswith("--user-data-dir=")), None) or procs.default_marker(cmd)
+        meta = {"marker": marker, **({"proxy_key": _proxy_key(self.proxy)} if name == "chromium" else {})}
+        # only a marker that can't be anyone else's (Chromium's profile folder) is enough to adopt a stranger
+        running = procs.find(marker) if marker.startswith("--user-data-dir=") else []
+        if running:  # already there (started before this process knew of it): adopt it, never a second one
+            procs.write_json(self.pidfile(name), {"pid": running[0], "started": time.time(), "argv": cmd, **meta})
+            self.procs[name] = running[0]
+            return
         with open(self.log_path, "ab") as log:
             log.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} starting {name}: {' '.join(cmd)}\n".encode())
-        from . import procs
-        # Debian's /usr/bin/chromium is a script that execs /usr/lib/chromium/chromium with its own flags before
-        # ours: its command line never starts like ours, so it is known by its profile (one Chromium per profile)
-        marker = f"--user-data-dir={self.profile}"
-        meta = {"proxy_key": _proxy_key(self.proxy), **({"marker": marker} if marker in cmd else {})}
         pid = procs.spawn_detached(self.workspace, cmd, env=env, log=self.log_path, pidfile=self.pidfile(name),
-                                   meta=meta if name == "chromium" else None)
+                                   meta=meta)
         self.procs[name] = pid
         if name == "xvfb":
             self.since = 0.0

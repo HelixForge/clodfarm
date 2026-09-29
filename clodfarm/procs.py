@@ -141,7 +141,7 @@ def spawn_detached(workspace: str, argv: list[str], env: dict | None = None, log
             pid = read_json(pidfile).get("pid")
             if pid:
                 # the pid file is written just before the exec: wait until the process is the command
-                marker = (meta or {}).get("marker") or " ".join(str(x) for x in argv[:3])
+                marker = (meta or {}).get("marker") or default_marker(argv)
                 while time.time() - t0 < wait and alive(pid) and not alive(pid, marker):
                     time.sleep(0.01)
                 return int(pid)
@@ -159,6 +159,13 @@ def spawn_detached(workspace: str, argv: list[str], env: dict | None = None, log
             pass
 
 
+def default_marker(argv: list) -> str:
+    """What tells a process we started apart: its first arguments, not its program (a wrapper script, or macOS's
+    framework Python, execs into another path)."""
+    argv = [str(a) for a in argv or []]
+    return " ".join(argv[1:4]) if len(argv) > 1 else (argv[0] if argv else "")
+
+
 def live_pid(pidfile: str, marker: str | None = None) -> int:
     """The pid in ``pidfile`` if that process is still ours and running, else 0. Without a ``marker``, the pid file's
     own marker, or else the start of the command line it was started with (kept in the pid file), must still be in its
@@ -166,9 +173,32 @@ def live_pid(pidfile: str, marker: str | None = None) -> int:
     needs its own marker, or it never looks like ours again."""
     d = read_json(pidfile)
     pid = d.get("pid")
-    if marker is None:
-        marker = d.get("marker") or " ".join(str(a) for a in (d.get("argv") or [])[:3])
+    if marker is None:  # the marker it was started with, else the start of its command line
+        marker = d.get("marker") or default_marker(d.get("argv"))
     return int(pid) if pid and alive(pid, marker) else 0
+
+
+def find(marker: str) -> list[int]:
+    """Every running process of this user whose command line carries ``marker`` (to adopt one instead of starting a
+    second: a wrapper script, like Debian's /usr/bin/chromium, execs into another command line)."""
+    out = []
+    if os.path.isdir("/proc/self"):
+        for n in os.listdir("/proc"):
+            if n.isdigit() and int(n) != os.getpid():
+                cmd = cmdline(int(n))
+                if marker in cmd and "<defunct>" not in cmd:
+                    out.append(int(n))
+        return sorted(out)
+    try:
+        lines = subprocess.run(["ps", "-axww", "-o", "pid=,command="], capture_output=True, text=True,
+                               timeout=10).stdout.splitlines()
+    except (OSError, subprocess.TimeoutExpired):
+        return out
+    for line in lines:
+        pid, _, cmd = line.strip().partition(" ")
+        if pid.isdigit() and int(pid) != os.getpid() and marker in cmd:
+            out.append(int(pid))
+    return sorted(out)
 
 
 def terminate(pid: int, marker: str = "", grace: float = 20, group: bool = True) -> bool:

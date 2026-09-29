@@ -182,6 +182,8 @@ def hand_over(workspace: str, wait: int) -> bool:
         print("no farm daemon is running here: the next start runs the new release", flush=True)
         return True
     before = agent_pids(workspace)
+    for d in daemons:
+        d["was_ready"] = bool(d.get("ready"))
     print(f"handing over {len(daemons)} farm daemon(s) with {len(before)} agent process(es) running ...", flush=True)
     for d in daemons:
         try:
@@ -191,8 +193,11 @@ def hand_over(workspace: str, wait: int) -> bool:
     t0 = time.time()
     while time.time() - t0 < wait:
         now = _daemons(workspace)
-        if now and all(x.get("release") == want and x.get("ready") for x in now) and \
-                {x["pid"] for x in now} >= {d["pid"] for d in daemons}:
+        for x in now:
+            x["was_ready"] = next((d["was_ready"] for d in daemons if d.get("path") == x.get("path")), True)
+        # a daemon waiting for its Claude's login runs the new release but is never "ready": its release is enough
+        if now and all(x.get("release") == want for x in now) and \
+                all(x.get("ready") or not x.get("was_ready") for x in now):
             break
         time.sleep(0.5)
     else:

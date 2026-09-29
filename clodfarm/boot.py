@@ -30,6 +30,25 @@ def target(workspace: str | None = None) -> str:
     return real if os.path.islink(cur) and os.path.isdir(os.path.join(real, "lib", "clodfarm")) else ""
 
 
+def _ver(v: str) -> tuple:
+    out = []
+    for part in v.split("+")[0].split("-")[0].split("."):
+        out.append(int(part) if part.isdigit() else 0)
+    return tuple(out)
+
+
+def _image_newer(tgt: str) -> bool:
+    """A new image (`deploy.sh roll`) is newer than the release left in the volume by an older `clodfarm upgrade`:
+    the image wins, or it would never take effect."""
+    if not tgt or os.environ.get("CLODFARM_RELEASE"):
+        return False  # only the image's own code (not a release) decides this
+    try:
+        from . import __version__ as mine
+    except ImportError:
+        return False
+    return _ver(mine) > _ver(os.path.basename(tgt))
+
+
 def running() -> str:
     """The release this process runs: its directory name, or "image"."""
     r = os.environ.get("CLODFARM_RELEASE", "")
@@ -99,6 +118,8 @@ def boot(argv: list[str] | None = None):
     argv = sys.argv[1:] if argv is None else argv
     have = os.environ.get("CLODFARM_RELEASE", "")
     tgt = target()
+    if _image_newer(tgt):
+        tgt = ""
     if argv[:1] == ["run"] and tgt and not os.environ.get("FARM_HATCHED") and tgt != have:
         tgt = _crash_guard(None, tgt)
     if tgt == have:

@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.2 (2026-09-29)
+
+- **Dashboards and your Claude's browser on your phone.** Their buttons were desktop-only; they now show on a phone
+  once you're signed in to your Claude (the toolbar's buttons get a little smaller to fit).
+- **A Chromium already running for a profile is adopted, never doubled:** before starting one, the farm looks for a
+  process with that profile and takes it over. Every process the farm starts is recognised by its arguments, not its
+  program's path (a wrapper, or macOS's framework Python, execs into another one).
+- **A new image wins over an older in-place release:** `deploy.sh roll` onto a newer image is no longer hidden behind
+  a release that an earlier `clodfarm upgrade` left in the volume.
+- **A Claude that is still waiting for its login hands over too** on `clodfarm upgrade` (it used to stop, and be
+  started again), and `upgrade` no longer waits for it to be ready.
+- The farm UI on macOS: requests taken from the shared socket are answered normally again.
+
 ## 1.0.1 (2026-09-29)
 
 - **One Chromium per browser profile again.** In the image, `/usr/bin/chromium` is Debian's script that execs the

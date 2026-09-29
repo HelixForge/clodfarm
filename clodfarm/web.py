@@ -1554,6 +1554,11 @@ class FarmHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     _uncounted: set = set()
 
+    def get_request(self):
+        conn, addr = self.socket.accept()
+        conn.setblocking(True)  # on BSD/macOS it would inherit the shared listener's non-blocking mode
+        return conn, addr
+
     # every connection it took counts until it's answered, from the moment it's accepted: a roll waits for them
     def process_request(self, request, client_address):
         with self.ui._inflight_lock:

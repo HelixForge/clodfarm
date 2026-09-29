@@ -637,3 +637,39 @@ def test_the_proxy_from_the_cli(env, monkeypatch, capsys):
     assert "via the proxy from GB" in out and "proxy: gw.dataimpulse.com:823" in out and ":p@" not in out
     assert cli.main(["browser", "proxy", "off", "default"]) == 0
     assert cli.main(["browser", "proxy", "on", "nope"]) == 1
+
+
+def test_a_wrapper_that_execs_the_real_browser_never_starts_a_second_one(tmp_path, monkeypatch):
+    """Debian's /usr/bin/chromium is a script that execs the real binary: the process's command line is then another
+    one than the farm started. The farm must still know it's running (its profile folder tells), and never start more
+    (1.0.0 did, every few seconds, until the box ran out of memory)."""
+    import subprocess as sp
+    import sys
+    from clodfarm import procs
+    monkeypatch.setattr(browser, "available", lambda: True)
+    monkeypatch.setattr(browser.Browser, "_wait", staticmethod(lambda *a: None))
+    b = browser.Browser("work", 1, str(tmp_path / "profile"), str(tmp_path / "browser.log"), str(tmp_path))
+    wrapper = tmp_path / "chromium"
+    wrapper.write_text(f"#!/bin/sh\nexec {sys.executable} -c 'import time; time.sleep(60)' \"$@\"\n")
+    wrapper.chmod(0o755)
+    started = []
+
+    def cmd(name):
+        started.append(name)
+        if name == "chromium":
+            return [str(wrapper), f"--user-data-dir={b.profile}", "--no-first-run"]
+        return [sys.executable, "-c", "import time; time.sleep(60)", f"--{name}-{tmp_path.name}"]
+    monkeypatch.setattr(b, "_cmd", cmd)
+    try:
+        for _ in range(4):
+            b.sync(True)
+            time.sleep(0.3)
+        assert started.count("chromium") == 1, started
+        assert len(procs.find(f"--user-data-dir={b.profile}")) == 1
+        again = browser.Browser("work", 1, str(tmp_path / "profile"), str(tmp_path / "browser.log"), str(tmp_path))
+        monkeypatch.setattr(again, "_cmd", cmd)
+        again.sync(True)  # a new UI process adopts it
+        assert started.count("chromium") == 1 and again.alive("chromium")
+    finally:
+        b.shutdown()
+    assert not procs.find(f"--user-data-dir={b.profile}")

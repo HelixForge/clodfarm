@@ -454,6 +454,11 @@ select { font: 22px/1.1 var(--font-body); }
 
 @media (max-width: 760px) {
   .tool.desk { display: none !important; }
+  /* up to seven buttons (the manager's) on a 360px screen: dashboards and your Claude's browser work on a phone too */
+  .toolbar { gap: 5px; }
+  .tool.mini { width: 46px; height: 52px; }
+  .tool.mini img { width: 26px; height: 26px; }
+  .tool.wide-tool { height: 52px; }
   .tool.wide-tool span { display: none; }
   .tool.wide-tool { padding: 6px 10px; }
   .tok-big { font-size: 11px; }

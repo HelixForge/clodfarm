@@ -190,6 +190,8 @@ class Farm:
                 print(f"DynamoDB not reachable yet ({type(e).__name__}: {str(e)[:120]}); retrying in {delay}s", flush=True)
                 self.stop.wait(delay)
                 delay = min(delay * 2, 60)
+        if self.handoff:  # SIGHUP while it waited (for its login, for the store): exec the new release, as always
+            self.hand_over()
         raise SystemExit(0)
 
     def hand_over(self):
@@ -320,6 +322,8 @@ class Farm:
                 print(banner(self.cfg), flush=True)
                 shown = now()
             self.stop.wait(5)
+        if self.handoff:  # SIGHUP while it waited (for its login, for the store): exec the new release, as always
+            self.hand_over()
         raise SystemExit(0)
 
     def name_claude(self, st: dict):
