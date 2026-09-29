@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1 (2026-09-29)
+
+- **One Chromium per browser profile again.** In the image, `/usr/bin/chromium` is Debian's script that execs the
+  real Chromium with its own flags before the farm's, so 1.0.0 never recognised the Chromium it had started: it
+  started another at every check (3 a minute per profile) and could stop none of them, until the box ran out of
+  memory. A Chromium is now known by its profile (`--user-data-dir`), kept in its pid file.
+- **A new manager password in the environment signs the old manager sessions out.**
+- **The UI's port is one socket shared by every UI process** on Linux: nothing is dropped during a roll.
+
 ## 1.0.0 (2026-09-29)
 
 Your own Claude on a shared farm, missions that wait for your OK, a planner that works toward a goal all the time, a
