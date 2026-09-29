@@ -8,6 +8,12 @@
   that goes to the host's account page. `FARM_UI_PRIVATE=1` keeps the farm private whatever its settings say.
   `FARM_MAX_CLAUDES` caps the Claudes and bots the farm adds, for everyone including the manager, from the UI, the
   CLI and MCP alike.
+- **A new farm points at its first step.** Until a Claude is logged in, the big button bounces a START HERE
+  arrow, pulses and wobbles its egg. For the manager of a farm whose own Claude is still an egg, it reads LOG IN
+  YOUR CLAUDE, and so do its dialog and the welcome line. It greys out when the host's plan has no room.
+- **Google Ads without a developer token.** An OAuth client and a refresh token are enough now (Google checks the
+  Cloud project's API access level); the developer token is sent only when there is one. The API versions tried are
+  v25, v24 and v23.
 
 ## 1.3.1 (2026-09-29)
 
