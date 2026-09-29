@@ -1069,13 +1069,21 @@ class Critter {
     if (this.blinkT < 0) { this.blink = 0.14; this.blinkT = 2 + Math.random() * 4; }
     this.blink = Math.max(0, this.blink - dt);
     let goal = null;
-    if ((this.mode === "work" || this.mode === "subwait") && this.spot) goal = this.spot;
-    else if (this.mode === "sleep" || (this.mode === "offline" && this.home)) goal = this.home || world.restSpot(this);
+    if ((this.mode === "work" || this.mode === "subwait") && this.spot) {
+      // at work it doesn't just sit: now and then it walks round its plot to look at the crops, then goes back
+      this.strollT = (this.strollT ?? 4 + Math.random() * 10) - dt;
+      if (this.strollT < 0) {
+        if (this.stroll) { this.stroll = null; this.strollT = 6 + Math.random() * 12; }
+        else { this.stroll = { x: this.spot.x + 4 + Math.random() * 30, y: this.spot.y - 2 - Math.random() * 24 }; this.strollT = 2 + Math.random() * 2.5; }
+      }
+      goal = this.stroll || this.spot;
+    }
+    else if (this.mode === "sleep") goal = this.home || world.restSpot(this);
     else if (this.mode === "starting") goal = { x: L.door.x + ((hashStr(this.key) % 5) - 2) * 7, y: L.door.y + 8 };
     this.lookT -= dt; // idle: it looks round now and then
     if (this.lookT < 0) { this.look = this.look ? 0 : Math.random() < 0.5 ? -1 : 1; this.lookT = this.look ? 0.8 + Math.random() : 2 + Math.random() * 4; }
     if (goal) { this.tx = goal.x; this.ty = goal.y; }
-    else if (this.mode === "wander") {
+    else if (this.mode === "wander" || this.mode === "offline" || this.mode === "rest") { // strolling round the farm
       if (Math.abs(this.tx - this.x) + Math.abs(this.ty - this.y) < 1.5) {
         this.wait -= dt;
         if (this.wait <= 0) { const p = world.randomSpot(); this.tx = p.x; this.ty = p.y; this.wait = 1 + Math.random() * 4; }
@@ -1092,7 +1100,7 @@ class Critter {
       if (!inside(nx, ny) || inside(this.x, this.y)) { this.x = nx; this.y = ny; }
       else if (!inside(nx, this.y)) this.x = nx; // slide round the title instead of walking through it
       else if (!inside(this.x, ny)) this.y = ny;
-      else if (this.mode === "wander") { const p = world.randomSpot(); this.tx = p.x; this.ty = p.y; }
+      else if (this.mode === "wander" || this.mode === "offline" || this.mode === "rest") { const p = world.randomSpot(); this.tx = p.x; this.ty = p.y; }
       this.dir = Math.abs(dx) > 0.5 ? Math.sign(dx) : this.dir;
       this.phaseT += dt; // the walk: step, pass, the other step, pass
       if (this.phaseT > 0.11) { this.phaseT = 0; this.step = (this.step + 1) % 4; this.phase = [1, 0, 2, 0][this.step]; }
@@ -1510,10 +1518,11 @@ function reconcileNow(st) {
   for (const t of subs) { const o = ownerOf(t); if (!subsOf.has(o)) subsOf.set(o, []); subsOf.get(o).push(t); }
   const active = st.agents.filter(a => a.talking || subsOf.has(a.id)); // at work: a turn or sub-agents
   const isActive = new Set(active.map(a => a.id));
-  const modeOf = (a) => !a.loggedIn && !a.remote ? "egg" : !a.alive ? "offline" : !a.up ? "starting" : a.error ? "error"
+  const modeOf = (a) => !a.loggedIn && !a.remote ? "egg" : !a.alive && !a.up ? "offline" : !a.up ? "starting" : a.error ? "error"
     : isActive.has(a.id) ? "work" : st.paused ? "rest" : a.resting ? "sleep" : "wander";
   const modes = new Map(st.agents.map(a => [a.id, modeOf(a)]));
-  const yardIds = st.agents.filter(a => { const m = modes.get(a.id); return m === "sleep" || (m === "offline" && Scene.farm); }).map(a => a.id).sort();
+  // the yard is where napping Claudes (paced by their budget) sleep; everyone free walks round the farm
+  const yardIds = st.agents.filter(a => modes.get(a.id) === "sleep").map(a => a.id).sort();
   if (Scene.farm) Scene.setNeed({ plots: active.length + Math.min(2, (st.recent || []).length), yard: yardIds.length });
   const L = Scene.world.L, relayout = Scene.relayout || first;
   Scene.relayout = false;
