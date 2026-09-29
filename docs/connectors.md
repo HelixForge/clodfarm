@@ -6,7 +6,7 @@ Accounts the farm connects once, for every Claude on it. The **CONNECTORS** butt
 |---|---|
 | **Slack** | People give the farm work from Slack; a sub-agent answers in the thread ([slack.md](slack.md)). |
 | **Stripe** | Every Claude can use the farm's Stripe account: customers, products, prices, payment links, invoices, subscriptions, balances, and Stripe's docs. |
-| **Google Ads** | Every Claude can see the farm's ad accounts, run reports (GAQL), keep live dashboards of them, and make changes when its person asks. Connected from the shell. |
+| **Google Ads** | Every Claude can see the farm's ad accounts, run reports (GAQL), keep live dashboards of them, and make changes when its person asks. |
 
 ## Stripe
 
@@ -40,7 +40,8 @@ Google Ads has no single key: the API wants four things, and a fifth when you go
 | **Refresh token** | Sign in once, as a Google user who can see the ad accounts, with scope `https://www.googleapis.com/auth/adwords` (Google's `generate_user_credentials.py` example, or the OAuth Playground with your own client). |
 | **Login customer ID** (optional) | The manager account's ID (123-456-7890), when the ad accounts are reached through it. |
 
-The farm manager connects it from the box's shell (it has no panel on the farm):
+The farm manager connects it: **CONNECTORS → GOOGLE ADS**, paste the fields, **CONNECT**. The panel then lists the
+ad accounts, and shows the developer token's last 4 characters, never the secrets. Or from the box's shell:
 
 ```bash
 clodfarm gads connect          # asks for each field (the secrets aren't echoed)
@@ -52,8 +53,7 @@ clodfarm gads disconnect
 
 On AWS, run them in the container (`docker exec -i clodfarm clodfarm gads connect < creds.json` over SSM). The farm
 turns the refresh token into an access token, asks Google Ads which accounts it reaches (trying the newest API
-version first), and lists them. The farm manager can also connect it over the farm's API (`POST
-/api/connectors/google-ads` with the same fields).
+version first), and lists them.
 
 - **How the Claudes use it.** The credentials go in `/workspace/.farm/connectors/google-ads.json`, plus a
   `google-ads.yaml` for Google's own Python library (both readable by the farm's user only). Every Claude's farm guide

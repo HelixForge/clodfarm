@@ -2299,23 +2299,24 @@ const UI = {
     if (!person) return;
     const home = R.manager ? $("#grp-run") : $("#grp-farm");
     if (b.parentElement !== home) { if (R.manager) home.insertBefore(b, $("#manager-tool")); else home.append(b); }
-    const slack = st.slack?.state, n = (slack === "live" ? 1 : 0) + (st.connectors?.stripe ? 1 : 0), bad = slack === "error";
+    const slack = st.slack?.state, bad = slack === "error";
+    const n = (slack === "live" ? 1 : 0) + (st.connectors?.stripe ? 1 : 0) + (st.connectors?.google_ads ? 1 : 0);
     const badge = $("#conn-badge");
     badge.hidden = !n && !bad;
     badge.textContent = n ? String(n) : "!";
     badge.classList.toggle("bad", !n && bad);
-    b.dataset.desc = R.manager ? "Plug the farm into Slack and Stripe" : "What the farm is plugged into";
-    b.dataset.help = (R.manager ? "Plug the farm in: Slack gives it work, Stripe goes to every Claude." : "What the farm is plugged into: Slack, Stripe.")
+    b.dataset.desc = R.manager ? "Plug the farm into Slack, Stripe and Google Ads" : "What the farm is plugged into";
+    b.dataset.help = (R.manager ? "Plug the farm in: Slack gives it work, Stripe and Google Ads go to every Claude." : "What the farm is plugged into: Slack, Stripe, Google Ads.")
       + " The green number: how many are on.";
     b.dataset.tip = n ? `Connectors · ${n} on` : bad ? "Connectors · Slack needs a look" : "Connectors";
-    b.setAttribute("aria-label", `Connectors: Slack and Stripe, ${n ? n + " connected" : bad ? "Slack needs a look" : "none connected"} (S)`);
+    b.setAttribute("aria-label", `Connectors: Slack, Stripe and Google Ads, ${n ? n + " connected" : bad ? "Slack needs a look" : "none connected"} (S)`);
     if ($("#dlg-conn-menu").open) this.renderConnMenu();
   },
   async loadConnectors() {
     try { this.conn = await api("api/connectors"); } catch { /* keep what we had: the menu still shows /api/state's view */ }
     return this.conn;
   },
-  /** Slack and Stripe as the menu shows them: [pill class, pill text]. /api/state is fresh every poll; api/connectors
+  /** Slack, Stripe and Google Ads as the menu shows them: [pill class, pill text]. /api/state is fresh every poll; api/connectors
    * adds the details (Stripe's mode and account), used while it agrees with the state. */
   connView() {
     const st = App.state || {}, c = this.conn || {}, sl = st.slack || c.slack || {};
@@ -2325,7 +2326,10 @@ const UI = {
     const who = sp.account?.name || (sp.kind === "restricted" ? "restricted key" : "");
     const stripe = !sp.connected ? ["off", "NOT CONNECTED"] : sp.mode === "live" ? ["live", `LIVE MODE${who ? " · " + who.toUpperCase() : ""}`]
       : sp.mode ? ["on", `CONNECTED · TEST MODE${who ? " · " + who.toUpperCase() : ""}`] : ["on", "CONNECTED"];
-    return { slack: { pill: slack, ...sl }, stripe: { pill: stripe, ...sp } };
+    const gon = !!st.connectors?.google_ads, ga = c.google_ads && !!c.google_ads.connected === gon ? c.google_ads : { connected: gon };
+    const nAds = (ga.customers || []).filter(x => !x.manager).length;
+    const gads = !ga.connected ? ["off", "NOT CONNECTED"] : ["on", ga.customers ? `CONNECTED · ${nAds} AD ACCOUNT${nAds === 1 ? "" : "S"}` : "CONNECTED"];
+    return { slack: { pill: slack, ...sl }, stripe: { pill: stripe, ...sp }, gads: { pill: gads, ...ga } };
   },
   openConnMenu() {
     const d = $("#dlg-conn-menu");
@@ -2352,7 +2356,7 @@ const UI = {
   },
   renderConnMenu() {
     const R = role(), v = this.connView(), list = $("#connm-list");
-    const sig = JSON.stringify([R.manager, v.slack.pill, v.stripe.pill]);
+    const sig = JSON.stringify([R.manager, v.slack.pill, v.stripe.pill, v.gads.pill]);
     if (list.dataset.sig === sig) return;
     list.dataset.sig = sig;
     const at = [...list.children].indexOf(document.activeElement);
@@ -2364,7 +2368,8 @@ const UI = {
       h("span", { class: "conn-go", "aria-hidden": "true", text: "▶" }));
     fill(list,
       row("slack", "slack.svg", "SLACK", "Give the farm work from Slack", v.slack.pill, () => R.manager ? this.openSlack() : this.openConnector("slack")),
-      row("stripe", "stripe.svg", "STRIPE", "Every Claude can use your Stripe account", v.stripe.pill, () => this.openConnector("stripe")));
+      row("stripe", "stripe.svg", "STRIPE", "Every Claude can use your Stripe account", v.stripe.pill, () => this.openConnector("stripe")),
+      row("gads", "google-ads.svg", "GOOGLE ADS", "Reports and live dashboards of your ad accounts", v.gads.pill, () => this.openConnector("gads")));
     if (at >= 0) list.children[at]?.focus({ preventScroll: true });
     $("#connm-foot").textContent = R.manager ? "MORE CONNECTORS COMING" : "THE FARM'S MANAGER CONNECTS THESE";
   },
@@ -2380,9 +2385,9 @@ const UI = {
   /** A connector's panel: Stripe (the manager connects it; people see how it stands), or Slack for a person. */
   async openConnector(id) {
     for (const x of $$("dialog[open]")) x.close();
-    this.connPanel = id; this.stripeReplace = false;
-    $("#connector-logo").src = id === "slack" ? "slack.svg" : "stripe.svg";
-    $("#connector-h").textContent = id === "slack" ? "SLACK" : "STRIPE";
+    this.connPanel = id; this.stripeReplace = false; this.gadsReplace = false;
+    $("#connector-logo").src = { slack: "slack.svg", gads: "google-ads.svg" }[id] || "stripe.svg";
+    $("#connector-h").textContent = { slack: "SLACK", gads: "GOOGLE ADS" }[id] || "STRIPE";
     const body = $("#connector-body");
     body.dataset.key = "";
     if (this.conn) this.renderConnector(); else fill(body, h("p", { class: "muted", text: "Loading…" }));
@@ -2395,6 +2400,7 @@ const UI = {
   },
   renderConnector() {
     if (this.connPanel === "slack") return this.renderSlackInfo();
+    if (this.connPanel === "gads") return this.renderGads();
     return this.renderStripe();
   },
   pill([cls, text]) { return h("span", { class: `pill pill-${cls}` }, h("i", { "aria-hidden": "true" }), h("span", { text })); },
@@ -2539,6 +2545,131 @@ const UI = {
     });
     check();
     setTimeout(() => { if (!steps) input.focus({ preventScroll: true }); }, 30);
+    return form;
+  },
+
+  /** Google Ads: the manager connects it with the API's four credentials (and a manager account's ID); every Claude
+   * runs reports (`clodfarm gads`) and keeps live dashboards of the ad accounts. */
+  renderGads() {
+    const c = this.conn || {}, g = c.google_ads || { connected: false }, manage = !!c.manage, body = $("#connector-body");
+    const key = JSON.stringify([g, manage, this.gadsReplace]);
+    if (body.dataset.key === key) return;
+    body.dataset.key = key;
+    const lede = h("p", { class: "conn-lede" }, "Every Claude on the farm can read your ad accounts: campaigns, spend, clicks and conversions, as reports and ",
+      h("b", { text: "live dashboards" }), " the farm keeps fresh. ", h("b", { text: "They change budgets or campaigns only when their person asks." }));
+    const can = h("div", { class: "tool-chips conn-can" }, ["Accounts", "Campaign reports", "Live dashboards", "Budgets & bids", "Keywords", "GAQL"]
+      .map(t => h("span", { class: "tool-chip", text: t })));
+    if (!g.connected) {
+      if (!manage) return fill(body, lede, can,
+        h("p", { class: "banner-note" }, h("strong", { text: "NOT CONNECTED. " }), "Ask the farm's manager to connect Google Ads: then your Claude can use it too."));
+      return fill(body, lede, can, this.gadsForm(true, null));
+    }
+    const by = g.by ? String(g.by).replace(/^owner:/, "") : "";
+    const accts = g.customers || [];
+    const card = h("div", { class: "conn-card" },
+      h("div", { class: "conn-card-main" },
+        h("p", { class: "conn-card-top" }, this.pill(["on", "CONNECTED"]), g.api_version ? h("span", { class: "mode-chip test", text: `API ${g.api_version}` }) : null),
+        h("h3", { class: "conn-card-name", text: `${accts.length} ACCOUNT${accts.length === 1 ? "" : "S"}${g.more ? ` (+${g.more})` : ""}` }),
+        h("ul", { class: "gads-accts" }, accts.map(a => h("li", {},
+          h("code", { class: "conn-code", text: String(a.id).replace(/^(\d{3})(\d{3})(\d{4})$/, "$1-$2-$3") }), " ", a.name || "(no name)",
+          a.manager ? h("span", { class: "mode-chip", text: "MANAGER" }) : null)))),
+      h("dl", { class: "stat-row conn-dl" },
+        manage && g.developer_token_last4 ? [h("dt", { text: "TOKEN" }), h("dd", { text: `Developer token ending …${g.developer_token_last4}` })] : null,
+        manage && g.login_customer_id ? [h("dt", { text: "THROUGH" }), h("dd", { text: `Manager account ${String(g.login_customer_id).replace(/^(\d{3})(\d{3})(\d{4})$/, "$1-$2-$3")}` })] : null,
+        manage && g.at ? [h("dt", { text: "CONNECTED" }), h("dd", { text: `${nowS() - g.at < 20 ? "just now" : ago(g.at)}${by ? ` by ${by === "manager" ? "the manager" : by}` : ""}` })] : null,
+        h("dt", { text: "TOOLS" }), h("dd", {}, h("code", { class: "conn-code", text: "clodfarm gads" }), " on every Claude")));
+    const first = accts.find(a => !a.manager) || accts[0];
+    const ask = [h("h3", { class: "kicker", text: "ASK YOUR CLAUDE" }),
+      h("ul", { class: "examples" },
+        h("li", { text: "“Make a live dashboard of our Google Ads spend and conversions.”" }),
+        h("li", { text: "“Which campaigns had the worst cost per conversion last week?”" }),
+        h("li", { text: "“Pause the keywords that spent over $50 with no conversions.”" })),
+      first ? h("p", { class: "muted small" }, "Or a ready dashboard, refreshed hourly: ",
+        h("code", { class: "conn-code", text: `clodfarm dashboard push ads --run "clodfarm gads dashboard --customer ${first.id}" --every 1h` })) : null];
+    if (!manage) return fill(body, card, ask);
+    if (this.gadsReplace) return fill(body, card, h("h3", { class: "kicker", text: "REPLACE THE CREDENTIALS" }),
+      this.gadsForm(false, () => { this.gadsReplace = false; this.renderGads(); }));
+    const off = h("button", { class: "btn danger", type: "button" }, "DISCONNECT"), err = h("p", { class: "form-error", role: "alert" });
+    off.addEventListener("click", async () => {
+      if (off.dataset.sure !== "1") { off.dataset.sure = "1"; off.textContent = "SURE? THE CLAUDES LOSE GOOGLE ADS"; return; }
+      off.disabled = true; off.textContent = "DISCONNECTING…"; err.textContent = "";
+      try { this.conn = await api("api/connectors/google-ads/disconnect", {}); this.say("Google Ads is disconnected."); this.renderGads(); this.refresh(); }
+      catch (x) { err.textContent = x.message; off.disabled = false; off.dataset.sure = ""; off.textContent = "DISCONNECT"; }
+    });
+    const replace = h("button", { class: "btn", type: "button", onclick: () => { this.gadsReplace = true; this.renderGads(); $("#connector-body input")?.focus(); } }, "REPLACE");
+    fill(body, card, ask, err, h("div", { class: "dlg-actions" }, replace, off));
+  },
+  /** The Google Ads API's credentials: four, plus a manager account's ID when the ad accounts sit under one. */
+  gadsForm(steps, onCancel) {
+    const F = [
+      ["developer_token", "DEVELOPER TOKEN", true, "From a manager account: Admin → API Center"],
+      ["client_id", "OAUTH CLIENT ID", false, "…apps.googleusercontent.com"],
+      ["client_secret", "OAUTH CLIENT SECRET", true, "GOCSPX-…"],
+      ["refresh_token", "REFRESH TOKEN", true, "1//…"],
+      ["login_customer_id", "MANAGER ACCOUNT ID (OPTIONAL)", false, "123-456-7890"]];
+    const err = h("p", { class: "form-error", role: "alert" });
+    const go = h("button", { class: "btn primary", type: "submit", disabled: true }, "▶ CONNECT");
+    const inputs = {};
+    const fields = F.map(([name, label, secret, ph]) => {
+      const input = inputs[name] = h("input", { name, id: `gads-${name}`, type: secret ? "password" : "text", autocomplete: "off", spellcheck: "false",
+        autocapitalize: "off", maxlength: 600, placeholder: ph, "data-1p-ignore": "true", "data-lpignore": "true" });
+      const row = [input];
+      if (secret) {
+        const eye = h("button", { class: "btn tiny key-eye", type: "button", "aria-pressed": "false", "aria-label": `Show the ${label.toLowerCase()}`, text: "SHOW" });
+        eye.addEventListener("click", () => {
+          const show = input.type === "password";
+          input.type = show ? "text" : "password"; eye.textContent = show ? "HIDE" : "SHOW"; eye.setAttribute("aria-pressed", String(show)); input.focus();
+        });
+        row.push(eye);
+      }
+      return h("div", { class: "key-field" }, h("label", { for: `gads-${name}`, text: label }), h("div", { class: "key-row" }, row));
+    });
+    const hint = h("p", { class: "key-hint", "aria-live": "polite" });
+    const form = h("form", { class: "stripe-form gads-form", autocomplete: "off" });
+    const check = () => {
+      const v = k => inputs[k].value.trim(), lc = v("login_customer_id").replace(/\D/g, "");
+      const missing = F.slice(0, 4).filter(([k]) => !v(k)).map(([, l]) => l.toLowerCase());
+      let text = missing.length ? `Still needed: ${missing.join(", ")}.` : "Looks complete: the farm checks it with Google.", cls = missing.length ? "" : "ok";
+      if (v("client_id") && !/\.apps\.googleusercontent\.com$/.test(v("client_id"))) { text = "An OAuth client ID ends in .apps.googleusercontent.com."; cls = "bad"; }
+      if (v("login_customer_id") && lc.length !== 10) { text = "A manager account ID is 10 digits (123-456-7890)."; cls = "bad"; }
+      hint.textContent = text; hint.className = "key-hint" + (cls ? " " + cls : "");
+      go.disabled = !!missing.length || cls === "bad" || form.dataset.busy === "1";
+    };
+    for (const i of Object.values(inputs)) i.addEventListener("input", () => { err.textContent = ""; check(); });
+    if (steps) form.append(h("ol", { class: "hatch-steps" },
+      h("li", {}, "In a Google Ads ", h("b", { text: "manager account" }), ": Admin → ", h("b", { text: "API Center" }), ", copy the developer token.",
+        h("span", { class: "muted small step-note", text: "A new token has Test access (test accounts only): apply for Basic access for real ones." }),
+        h("a", { class: "btn login-link key-link", href: "https://ads.google.com/aw/apicenter", target: "_blank", rel: "noopener noreferrer" }, "OPEN API CENTER ↗")),
+      h("li", {}, "In Google Cloud, enable the ", h("b", { text: "Google Ads API" }), " and make an ", h("b", { text: "OAuth client ID" }), " (Desktop app).",
+        h("a", { class: "btn login-link key-link", href: "https://console.cloud.google.com/apis/credentials", target: "_blank", rel: "noopener noreferrer" }, "OPEN CREDENTIALS ↗")),
+      h("li", {}, "Get a ", h("b", { text: "refresh token" }), " for a Google user who can see the ad accounts (scope ", h("code", { class: "conn-code", text: "adwords" }), ").",
+        h("span", { class: "muted small step-note", text: "Google's generate_user_credentials.py, or the OAuth Playground with your own client." })),
+      h("li", {}, "Paste them here.", ...fields, hint, err)));
+    else form.append(...fields, hint, err);
+    form.append(
+      h("p", { class: "muted small", text: "The farm checks them with Google, then keeps them on its box. The secrets are never shown again." }),
+      h("div", { class: "dlg-actions save-bar" }, onCancel ? h("button", { class: "btn", type: "button", onclick: onCancel }, "CANCEL") : null, go));
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (go.disabled) return;
+      form.dataset.busy = "1"; go.disabled = true; err.textContent = "";
+      for (const i of Object.values(inputs)) i.readOnly = true;
+      go.replaceChildren(h("span", { class: "spin", "aria-hidden": "true" }), "CHECKING WITH GOOGLE…");
+      try {
+        const r = await api("api/connectors/google-ads", Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value.trim()])));
+        for (const i of Object.values(inputs)) i.value = "";
+        this.conn = r; this.gadsReplace = false;
+        const n = (r.google_ads?.customers || []).length;
+        this.say(`Google Ads is connected: ${n} account${n === 1 ? "" : "s"}. Every Claude can use it now.`);
+        this.renderGads(); this.refresh();
+        $("#dlg-connector").scrollTop = 0;
+      } catch (x) {
+        form.dataset.busy = ""; for (const i of Object.values(inputs)) i.readOnly = false;
+        go.textContent = "▶ CONNECT"; check(); hint.textContent = ""; hint.className = "key-hint"; err.textContent = x.message;
+        err.scrollIntoView({ block: "center" });
+      }
+    });
+    check();
     return form;
   },
 
@@ -3275,7 +3406,7 @@ const UI = {
         link("TASKS AND SCHEDULES", null, "J", "tasks"),
         person ? link("DASHBOARDS", null, "D", "dashboards") : null,
         R.owner ? link("YOUR CLAUDE'S BROWSER", null, "B", "browser") : null,
-        person ? link("CONNECTORS: SLACK, STRIPE", "connectors", "S") : null,
+        person ? link("CONNECTORS: SLACK, STRIPE, GOOGLE ADS", "connectors", "S") : null,
         R.manager ? link("RUN THE FARM", "manager", "G") : null,
         link("SEE THE WHOLE FARM", "fit", "0")),
       h("p", { class: "muted small", text: "Drag to look round the farm, scroll or pinch to zoom." }));

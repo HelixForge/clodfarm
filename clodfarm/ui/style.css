@@ -781,3 +781,8 @@ dialog.conn-menu::backdrop { background: transparent; }
 @media (prefers-reduced-motion: reduce) {
   .spin, dialog.conn-menu[open] { animation: none; }
 }
+/* Google Ads: the ad accounts the farm reaches, on the connector's card */
+.gads-accts { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; font: 16px/1.3 var(--font-body); }
+.gads-accts li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.gads-accts .mode-chip { margin-left: 2px; }
+.gads-form .key-field + .key-field { margin-top: 8px; }
