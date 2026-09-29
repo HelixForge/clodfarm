@@ -15,6 +15,10 @@ Who sees what:
 Behind a reverse proxy: FARM_UI_BASE=/team serves it under a path prefix, FARM_UI_SECURE=1 marks the cookie Secure,
 and FARM_UI_TRUST_PROXY=1 takes the client address from X-Forwarded-For (for the login lockout).
 
+An invite (MANAGE -> INVITE A CLAUDE, or `clodfarm invite`) is a link that lets one person hatch a Claude of their own
+here, once, whether the farm is private or its hatching is closed: it's used up at their login, not when it's opened
+(a chat app's preview doesn't spend it).
+
 Hosted for someone else: FARM_UI_PRIVATE=1 keeps the farm private whatever its settings say, FARM_UI_SSO_KEY lets the
 host sign its customer in with a one-time /sso link (sso.py), and FARM_MAX_CLAUDES caps the Claudes the farm hatches
 (agents.py), the manager's included.
@@ -53,6 +57,7 @@ UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
 COOKIE = "clodfarm_session"  # the farm manager
 OWNER_COOKIE = "clodfarm_owner"  # the person a Claude belongs to
 VIEWER_COOKIE = "clodfarm_viewer"  # someone with a private farm's viewer password
+INVITE_COOKIE = "clodfarm_invite"  # an invite this device holds (until its login spends it)
 SESSION_DAYS = 7
 OWNER_DAYS = 365
 PBKDF2_ROUNDS = 600_000
@@ -664,6 +669,15 @@ def make_handler(ui: FarmUI):
             return (f"{name}={value}; Path={BASE or ''}/; HttpOnly; SameSite={same}; Max-Age={max_age}"
                     + ("; Secure" if self._secure() else ""))
 
+        def _public_base(self) -> str:
+            """Where people reach this farm: FARM_PUBLIC_URL, or the address this request came to."""
+            base = (os.environ.get("FARM_PUBLIC_URL") or os.environ.get("FARM_UI_PUBLIC_URL") or "").rstrip("/")
+            if base:
+                return base
+            host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "localhost:8080"
+            host = host if re.fullmatch(r"[A-Za-z0-9.:\[\]-]{1,200}", host) else "localhost:8080"
+            return f"{'https' if self._secure() else 'http'}://{host}{BASE}"
+
         def _secure(self) -> bool:
             return os.environ.get("FARM_UI_SECURE") == "1" or self.headers.get("X-Forwarded-Proto", "") == "https"
 
@@ -904,6 +918,8 @@ def make_handler(ui: FarmUI):
                 return self._pair_link()
             if self.path.split("?", 1)[0] == f"{BASE}/sso":
                 return self._sso()
+            if self.path.split("?", 1)[0].startswith(f"{BASE}/invite/"):
+                return self._invite_link()
             if self._oauth_get(self.path.split("?", 1)[0]):
                 return
             path = self._path()
@@ -938,6 +954,7 @@ def make_handler(ui: FarmUI):
                     return self._json({**who.view(), "user": "farmer" if who.manager else None, "farm": ui.cfg.farm,
                                        "version": __version__, "private": ui.private(st),
                                        "sso_url": os.environ.get("FARM_UI_SSO_URL") or None,
+                                       "invite": bool(self._invited()),
                                        "hatch": self._hatch_view(who)}, 200 if who.can_view else 401)
                 if not who.can_view:
                     return self._err(401, "this farm is private: log in first")
@@ -1083,6 +1100,56 @@ def make_handler(ui: FarmUI):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
+        def _invite_link(self):
+            """GET /invite/<token>: keeps the invite on this device (a cookie) and opens the farm, which shows only
+            LOG IN WITH YOUR CLAUDE. The invite is spent at the login (_hatch_invited), not here."""
+            token = self.path.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+            th = hashlib.sha256(token.encode()).hexdigest() if re.fullmatch(r"[A-Za-z0-9_-]{16,80}", token) else ""
+            ok = bool(th) and bool(ui.store.invite(th))
+            self.send_response(302)
+            self.send_header("Location", f"{BASE}/" + ("?invited=1" if ok else "?invited=0"))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            if ok:
+                self.send_header("Set-Cookie", self._named_cookie(INVITE_COOKIE, ui.keys.make("invite", [th], 7), 7 * 86400))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def _invited(self) -> str | None:
+            """The invite this device holds, while it still works: its token's hash."""
+            c = SimpleCookie(self.headers.get("Cookie") or "")
+            got = ui.keys.read(c[INVITE_COOKIE].value if INVITE_COOKIE in c else None, "invite")
+            return got[0] if got and ui.store.invite(got[0]) else None
+
+        def _hatch_invited(self, data: dict):
+            """POST /api/agents {invite: true}: the invited person's own Claude, waiting for their login."""
+            th = self._invited()
+            if not th:
+                return self._err(410, "that invite was used or has expired: ask for a new one")
+            store, mgr = ui.store, ui.manager
+            a = mgr.create(str(data.get("name", "")), start=False)  # the plan's cap first (ValueError: 400)
+            if not store.take_invite(th):  # someone was quicker with the same link
+                mgr.remove(a["id"])
+                return self._err(410, "that invite was just used: ask for a new one")
+            tools = policy.clean(None)
+            store.put_claude(a["id"], name=a["name"], hat=a.get("hat"), approve_missions=True, tools=tools, owned=True,
+                             hatched_by="invite")
+            policy.save(a["config_dir"], tools, claude=a["id"])
+            store.event("agent.added", f"{a['id']} hatched with an invite (waiting for its login); its person approves "
+                        "every mission", by="ui")
+            ui._state_cache = None
+            ui._views.clear()
+            mgr.start_login(a["id"])
+            self.send_response(200)
+            body = json.dumps({"id": a["id"], "name": a["name"]}).encode()
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Set-Cookie", self._owner_cookie(a["id"]))
+            self.send_header("Set-Cookie", self._named_cookie(INVITE_COOKIE, "", 0))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def _hatch_view(self, who: Who) -> dict:
             st = ui.store.settings()
             n = len([a for a in ui.manager.all() if not a.get("primary")])
@@ -1164,6 +1231,8 @@ def make_handler(ui: FarmUI):
                         ui.lock.fail(self._ip())
                         return self._err(401, "that code is wrong or used up: ask your Claude for a new one")
                     return self._paired(cid)
+                if path == "/api/agents" and data.get("invite"):
+                    return self._hatch_invited(data)
                 if not self._who().can_view:
                     return self._err(401, "this farm is private: log in first")
                 return self._post(path, data)
@@ -1440,6 +1509,12 @@ def make_handler(ui: FarmUI):
                 store.put_claude(m.group(1), owner_ver=int(rec.get("owner_ver", 1)) + 1, owned=False)
                 store.event("owner.signout", f"{m.group(1)}'s person signed out everywhere by the manager", by="ui")
                 return self._json(self._manager_view())
+            if path == "/api/manager/invite":  # a link that lets one person hatch their own Claude here, once
+                token = secrets.token_urlsafe(24)
+                store.add_invite(hashlib.sha256(token.encode()).hexdigest(), by="manager")
+                store.event("farm.invite", "the manager made an invite link (works once, for 7 days)", by="ui")
+                return self._json({"link": f"{self._public_base()}/invite/{token}", "expires_in": 7 * 86400,
+                                   "room": ui.manager.max_claudes() != 0})
             if path == "/api/manager/roll-ui":
                 from . import procs
                 os.makedirs(procs.pids_dir(ui.cfg.workspace), exist_ok=True)

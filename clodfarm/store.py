@@ -892,6 +892,22 @@ class Store:
         self.b.put({"PK": "PAIR", "SK": token_hash, "ver": 1, "claude": claude, "code": code, "at": t,
                     "until": t + ttl, "expires_at": int(t + ttl + 3600)})
 
+    # ---------------------------------------------------------------- invites
+    def add_invite(self, token_hash: str, by: str, ttl: float = 7 * 86400):
+        """A link the manager sends someone: it lets them hatch a Claude of their own here, once."""
+        t = now()
+        self.b.put({"PK": "INVITE", "SK": token_hash, "ver": 1, "by": by, "at": t, "until": t + ttl,
+                    "expires_at": int(t + ttl + 3600)})
+
+    def invite(self, token_hash: str) -> dict | None:
+        it = self.b.get("INVITE", token_hash)
+        return it if it and float(it.get("until", 0)) >= now() else None
+
+    def take_invite(self, token_hash: str) -> bool:
+        """Use an invite: True the one time it works."""
+        it = self.invite(token_hash)
+        return bool(it) and self.b.delete("INVITE", token_hash, expect_ver=int(it.get("ver", 0)))
+
     def use_sso(self, nonce: str, until: float) -> bool:
         """Spend a sign-in link's nonce (see sso.py): True the first time, False ever after (until it has expired)."""
         return self.b.put({"PK": "SSO", "SK": nonce, "ver": 1, "at": now(), "expires_at": int(until) + 3600},

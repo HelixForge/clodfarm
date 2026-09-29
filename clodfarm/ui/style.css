@@ -130,6 +130,17 @@ output { color: var(--clay-2); }
 .chip .dot { width: 8px; height: 8px; background: var(--hp-good); box-shadow: 0 0 6px var(--hp-good); }
 .chip .dot.off { background: #999; box-shadow: none; }
 
+/* a public farm's visitor: the tokens burning and the Claudes at work, nothing to press but the key (sign in) */
+#hud.spectator .dock, #hud.spectator .chips, #hud.spectator #mine-block, #hud.spectator #approve-chip,
+#hud.spectator #textbox { display: none !important; }
+/* an invite: one button */
+.invite-h { font: 13px/1.5 var(--font-px); margin: 0 0 10px; }
+.acct-form.invite p { margin: 0 0 12px; }
+.invite-go { width: 100%; justify-content: center; padding: 16px 12px; font-size: 12px; animation: call-pulse 1.2s ease-in-out infinite; }
+.invite-row { flex-wrap: nowrap; }
+.invite-link { flex: 1; min-width: 0; font: 19px var(--font-body); padding: 8px 10px; border: 3px solid var(--ink); border-radius: 4px; background: #fff; }
+@media (prefers-reduced-motion: reduce) { .invite-go { animation: none; } }
+
 /* ------------------------------------------------------------------- the dock
  * What you can do, bottom right: wooden trays of labelled buttons, grouped (your Claude / the farm / running it), then
  * + NEW CLAUDE as the one clay-coloured sign. Hover or focus shows a sign with the shortcut and one line on what it does. */

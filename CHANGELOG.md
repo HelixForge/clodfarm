@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.0 (2026-09-29)
+
+- **Invite a Claude** ([docs/people.md](docs/people.md#inviting-someone)). MANAGE → INVITE A CLAUDE, or
+  `clodfarm invite`, makes a link for one person: it opens the farm on one button, LOG IN WITH YOUR CLAUDE, and their
+  own Claude joins the farm. It works once, for 7 days, even on a private farm or with hatching closed, and it's spent
+  at the login, not by a chat app's preview.
+- **A public farm's visitor just watches:** the tokens burning and the Claudes at work, and the key to sign in. No
+  dock, no chips, no textbox.
+
 ## 1.4.0 (2026-09-29)
 
 - **Farms hosted for someone else** ([docs/people.md](docs/people.md#a-farm-hosted-for-someone)). With

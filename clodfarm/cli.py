@@ -1016,6 +1016,27 @@ def cmd_pair(cfg, a):
     return 0
 
 
+def cmd_invite(cfg, a):
+    """A link that lets one person hatch a Claude of their own on this farm, once (for 7 days)."""
+    import hashlib
+    import secrets
+    if os.environ.get("FARM_TASK_ID"):  # a sub-agent's work never invites people in
+        print("clodfarm invite: only from the box's shell or a conversation with your person, not in a sub-agent", file=sys.stderr)
+        return 2
+    if os.environ.get("CLAUDECODE") and os.environ.get("CLAUDE_CODE_ENVIRONMENT_KIND") not in ("bridge", None, ""):
+        print("clodfarm invite: only in a conversation with your person (the Claude app)", file=sys.stderr)
+        return 2
+    token = secrets.token_urlsafe(24)
+    _store(cfg).add_invite(hashlib.sha256(token.encode()).hexdigest(), by="cli", ttl=7 * 86400)
+    base = (os.environ.get("FARM_PUBLIC_URL") or os.environ.get("FARM_UI_PUBLIC_URL") or f"http://localhost:{os.environ.get('FARM_UI_PORT', '8080')}"
+            + os.environ.get("FARM_UI_BASE", "")).rstrip("/")
+    link = f"{base}/invite/{token}"
+    _out({"link": link, "expires_in": 7 * 86400}, a.json,
+         f"Send this to one person (it works once, for 7 days): they log in with their Claude account and their own\n"
+         f"Claude joins the farm.\n  {link}")
+    return 0
+
+
 def cmd_approvals(cfg, a):
     store = _store(cfg)
     items = store.pending(a.claude)
@@ -1450,6 +1471,7 @@ def main(argv=None):
     stp = add("stripe", cmd_stripe, "the Stripe connector: status | connect (key on stdin) | disconnect")
     stp.add_argument("action", nargs="?", default="status", choices=["status", "connect", "disconnect"])
     pr = add("pair", cmd_pair, "a one-time link that signs your person in to you on the farm UI (for their phone)")
+    add("invite", cmd_invite, "a link that lets one person hatch a Claude of their own here, once (for 7 days)")
     ap = add("approvals", cmd_approvals, "missions and messages waiting for a person's approval")
     ap.add_argument("--claude", help="only the ones for this Claude")
     add("approve", cmd_approve, "approve a waiting mission or message (people only)").add_argument("id")

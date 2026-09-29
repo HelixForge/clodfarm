@@ -1656,9 +1656,12 @@ const UI = {
     const q = new URLSearchParams(location.search);
     this.approveId = q.get("approve") || null;
     this.paired = q.get("paired");
-    if (q.has("paired") || q.has("approve")) { q.delete("paired"); q.delete("approve"); history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q : "")); }
+    const invited = q.get("invited");
+    if (q.has("paired") || q.has("approve") || q.has("invited")) { q.delete("paired"); q.delete("approve"); q.delete("invited"); history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q : "")); }
     const me = await this.loadMe();
     if (this.paired === "0") this.notice("That link was used or expired: ask your Claude for a new one.");
+    if (invited === "0") this.notice("That invite was used or has expired: ask for a new one.");
+    if (me?.invite && !me.owner) return this.showInvite(me);
     if (me?.can_view) { if (!this.goNext()) this.showFarm(); }
     else this.showTitle();
   },
@@ -1696,6 +1699,26 @@ const UI = {
     App.seenAgents = null;
     const hats = ["straw", "beanie", "cap", "sprout", "bow", "headphones"];
     hats.forEach((hat, i) => { const p = Scene.randomSpot(), c = new Critter("demo" + i, p.x, p.y); c.hat = hat; c.color = HAT_COLORS[i + 1]; c.born -= 5000; Scene.critters.set(c.key, c); });
+  },
+  /** An invite: one thing to do, LOG IN WITH YOUR CLAUDE. Its login hatches this person's own Claude on the farm. */
+  showInvite(me) {
+    this.invited = true;
+    this.showTitle();
+    const err = h("p", { class: "form-error", role: "alert" });
+    const go = h("button", { class: "btn primary invite-go", type: "button" }, "▶ LOG IN WITH YOUR CLAUDE");
+    go.addEventListener("click", async () => {
+      go.disabled = true; err.textContent = "";
+      try {
+        const r = await api("api/agents", { invite: true });
+        this.hatchFor = r.id; $("#hatch-body").dataset.key = ""; $("#hatch-h").textContent = "LOG IN YOUR CLAUDE";
+        $("#dlg-hatch").showModal(); this.renderHatch({ state: "starting" }); this.beginLogin(r.id);
+      } catch (x) { err.textContent = x.message.toUpperCase(); go.disabled = false; }
+    });
+    fill($("#title-forms"), h("div", { class: "acct-form invite" },
+      h("h2", { class: "invite-h", text: `YOU'RE INVITED TO ${String(me.farm || "the farm").toUpperCase()}` }),
+      h("p", { text: "Log in with your Claude account and your own Claude joins this farm: it works around the clock on your plan, and you talk to it from the Claude app." }),
+      err, go,
+      h("p", { class: "muted small", text: "Anthropic's own sign-in: open its link, approve, paste the code back. Your login stays yours. This invite works once." })));
   },
   /** Sign-in forms, as tabs: a private farm's viewer password (FARM), and the code your Claude gives you in the Claude
    * app (MY CLAUDE). The farm's manager is the person of a manager Claude: they sign in to it like anyone. */
@@ -1828,6 +1851,7 @@ const UI = {
     if ($("#chips").dataset.sig !== sig) { $("#chips").dataset.sig = sig; fill($("#chips"), ...chips); }
     // the dock, by role: watchers see the farm and the tasks; people see their Claude; the manager sees everything
     const person = R.manager || !!R.owner;
+    $("#hud").classList.toggle("spectator", !person && !R.viewer); // a public farm's visitor: the tokens and the Claudes at work
     $("#talk-tool").hidden = !person;
     this.renderConnTool(st, R);
     $("#dash-tool").hidden = !person;
@@ -2872,8 +2896,8 @@ const UI = {
       const skin = agent ? agentSkin(agent) : this.draft ? skinOf(this.draft.skin.hat, this.draft.skin.colors, this.draft.skin.accessory) : skinOf("straw", null, "", colorFor(this.hatchFor || ""));
       paintSprite(cv, skinFrameHD(skin, { arms: 1, happy: true }), 96, { bg: tileBg, pad: 8, bottom: true });
       fill(body, cv, h("p", { class: "center", text: `${name} hatched! It's logged in and joins the farm in a few seconds.` }),
-        h("div", { class: "dlg-actions" }, h("button", { class: "btn primary", type: "button", onclick: () => $("#dlg-hatch").close() }, "▶ YAY")));
-      this.say(`${name} hatched!`); this.refresh();
+        h("div", { class: "dlg-actions" }, h("button", { class: "btn primary", type: "button", onclick: () => { $("#dlg-hatch").close(); if (this.invited) location.replace(location.pathname); } }, "▶ YAY")));
+      this.say(`${name} hatched!`); if (!this.invited) this.refresh();
       return;
     }
     if (s.state === "failed") {
@@ -3283,7 +3307,27 @@ const UI = {
       h("p", {}, "Version ", h("b", { text: m.version || "?" }), h("span", { class: "muted", text: ` · ${rel}` })),
       h("p", { class: "muted small", text: "ROLL UI restarts the web UI on the code that's installed now (the Claudes keep working, the page stays up)." }),
       rollErr, h("div", { class: "dlg-actions" }, roll));
-    fill($("#mgr-body"), managers, planner, privacy, hatching, owners, release);
+    // invites: a link for one person, who logs in with their own Claude account
+    const invOut = h("div", { class: "invite-out" }), invErr = h("p", { class: "form-error", role: "alert" });
+    const invBtn = h("button", { class: "btn primary", type: "button" }, "▶ INVITE A CLAUDE");
+    invBtn.addEventListener("click", async () => {
+      invErr.textContent = "";
+      try {
+        const r = await api("api/manager/invite", {});
+        const link = h("input", { class: "invite-link", readonly: true, value: r.link, "aria-label": "Invite link", onclick: (e) => e.target.select() });
+        const copy = h("button", { class: "btn", type: "button", text: "COPY", onclick: async (e) => {
+          try { await navigator.clipboard.writeText(r.link); e.target.textContent = "COPIED ✓"; } catch { link.select(); e.target.textContent = "SELECT IT"; }
+        } });
+        fill(invOut, h("div", { class: "dlg-actions left invite-row" }, link, copy),
+          h("p", { class: "muted small", text: r.room ? "Send it to one person. It works once, for 7 days: they log in with their Claude account and their own Claude joins the farm."
+            : "This farm's plan has room for just its own Claude, so the link will say there's no room." }));
+        link.select();
+      } catch (x) { invErr.textContent = x.message; }
+    });
+    const invite = h("div", { class: "mgr-sec" }, h("h3", { text: "INVITE A CLAUDE" }),
+      h("p", { class: "muted small", text: "A link for one person: they log in with their Claude account and get their own Claude here, even when the farm is private or hatching is closed." }),
+      h("div", { class: "dlg-actions left" }, invBtn), invOut, invErr);
+    fill($("#mgr-body"), managers, invite, planner, privacy, hatching, owners, release);
   },
 
   // ---------------------------------------------------------------- settings
