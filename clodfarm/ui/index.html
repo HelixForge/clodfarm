@@ -46,16 +46,24 @@
     <button type="button" class="tool cam" data-act="fit" id="fit-tool" data-tip="See the whole farm" data-key="0" aria-label="See the whole farm (0)"><img alt="" data-icon="fit"></button>
   </div>
 
-  <div class="toolbar" role="toolbar" aria-label="Farm actions">
-    <button type="button" class="tool mini" data-act="roster" id="roster-tool" data-tip="Every Claude" data-key="R" aria-label="Every Claude (R)"><img alt="" data-icon="roster"></button>
-    <button type="button" class="tool mini" data-act="talk" id="talk-tool" data-tip="Talk to your Claude" data-key="T" aria-label="Talk to your Claude (T)" hidden><img alt="" data-icon="chat"></button>
-    <button type="button" class="tool mini slack-tool desk" data-act="slack" id="slack-tool" data-tip="Connect Slack" data-key="S" aria-label="Connect Slack (S)" hidden><img alt="" src="slack.svg"></button>
-    <a class="tool mini" href="dashboards" id="dash-tool" data-tip="Dashboards and stats" data-key="D" aria-label="Dashboards and stats (D)" hidden><img alt="" data-icon="chart"></a>
-    <a class="tool mini" href="tasks" id="tasks-tool" data-tip="Tasks and schedules" data-key="J" aria-label="Tasks and schedules (J)"><img alt="" data-icon="tasks"></a>
-    <a class="tool mini" href="browser" id="browser-tool" data-tip="Your Claude's browser" data-key="B" aria-label="Your Claude's browser (B)" hidden><img alt="" data-icon="globe"></a>
-    <button type="button" class="tool mini" data-act="manager" id="manager-tool" data-tip="Run the farm" data-key="G" aria-label="Run the farm (G)" hidden><img alt="" data-icon="gear"></button>
-    <button type="button" class="tool wide-tool" data-act="hatch" id="hatch-tool" data-tip="Add a Claude or a bot" data-key="C" aria-label="Add a Claude or a bot (C)"><img alt="" data-icon="egg"><span>+ NEW CLAUDE</span></button>
-  </div>
+  <!-- the dock: what you can do, labelled and grouped (your Claude / the farm / running it), then + NEW CLAUDE -->
+  <nav class="dock" id="dock" aria-label="Farm actions">
+    <button type="button" class="tool help-tool" data-act="help" id="help-tool" data-tip="What's what" data-desc="Every button and everything on the farm, explained" data-key="?" aria-label="Help: what's what on the farm (?)"><span class="q" aria-hidden="true">?</span><span class="lbl">HELP</span></button>
+    <div class="dock-group" id="grp-mine" data-cap="YOUR CLAUDE">
+      <button type="button" class="tool" data-act="talk" id="talk-tool" data-tip="Talk to your Claude" data-desc="Open it in the Claude app and give it work" data-key="T" aria-label="Talk to your Claude (T)" hidden><img alt="" data-icon="chat"><span class="lbl">TALK</span></button>
+      <a class="tool" href="browser" id="browser-tool" data-tip="Your Claude's browser" data-desc="Watch and steer the web browser it uses" data-key="B" aria-label="Your Claude's browser (B)" hidden><img alt="" data-icon="globe"><span class="lbl" data-short="WEB">BROWSER</span></a>
+    </div>
+    <div class="dock-group" id="grp-farm" data-cap="THE FARM">
+      <button type="button" class="tool" data-act="roster" id="roster-tool" data-tip="Every Claude" data-desc="Find any Claude: who's busy, resting, and their usage" data-key="R" aria-label="Every Claude (R)"><img alt="" data-icon="roster"><span class="lbl" data-short="ALL">EVERYONE</span></button>
+      <a class="tool" href="tasks" id="tasks-tool" data-tip="Tasks and schedules" data-desc="Every sub-agent job, running or done, and what's scheduled" data-key="J" aria-label="Tasks and schedules (J)"><img alt="" data-icon="tasks"><span class="lbl">TASKS</span></a>
+      <a class="tool" href="dashboards" id="dash-tool" data-tip="Dashboards and stats" data-desc="Charts your Claudes keep, and the farm's numbers" data-key="D" aria-label="Dashboards and stats (D)" hidden><img alt="" data-icon="chart"><span class="lbl">STATS</span></a>
+    </div>
+    <div class="dock-group" id="grp-run" data-cap="MANAGE">
+      <button type="button" class="tool slack-tool desk" data-act="slack" id="slack-tool" data-tip="Connect Slack" data-desc="Let people give the farm work from Slack" data-key="S" aria-label="Connect Slack (S)" hidden><img alt="" src="slack.svg"><span class="lbl">SLACK</span></button>
+      <button type="button" class="tool" data-act="manager" id="manager-tool" data-tip="Run the farm" data-desc="Planner, privacy, hatching, people, release" data-key="G" aria-label="Run the farm (G)" hidden><img alt="" data-icon="gear"><span class="lbl">MANAGE</span></button>
+    </div>
+    <button type="button" class="tool hatch-tool" data-act="hatch" id="hatch-tool" data-tip="Add a Claude or a bot" data-desc="Hatch a new Claude: pick its look, log it in" data-key="C" aria-label="Add a Claude or a bot (C)"><img alt="" data-icon="egg"><span class="lbl"><span class="plus">+ </span>NEW<span class="long"> CLAUDE</span></span></button>
+  </nav>
 
   <div id="textbox" class="textbox" role="status" aria-live="polite">
     <p id="textbox-text"></p><span class="more" aria-hidden="true">▼</span>
@@ -65,14 +73,14 @@
 <!-- ================================= dialogs ================================= -->
 <dialog id="dlg-summary" class="panel dlg" aria-labelledby="sum-name">
   <div class="sum-head">
-    <canvas class="sum-sprite" id="sum-sprite" width="32" height="32" aria-hidden="true"></canvas>
+    <canvas class="sum-sprite" id="sum-sprite" width="96" height="96" aria-hidden="true"></canvas>
     <div>
       <h2 id="sum-name">CLAUDE</h2>
       <p class="muted" id="sum-sub"></p>
     </div>
   </div>
   <div id="sum-body"></div>
-  <div class="dlg-actions" id="sum-actions"></div>
+  <div class="dlg-actions save-bar" id="sum-actions"></div>
   <button class="x" type="button" data-close aria-label="Close">✕</button>
 </dialog>
 
@@ -84,7 +92,7 @@
   <button class="x" type="button" data-close aria-label="Close">✕</button>
 </dialog>
 
-<dialog id="dlg-hatch" class="panel dlg" aria-labelledby="hatch-h">
+<dialog id="dlg-hatch" class="panel dlg roomy" aria-labelledby="hatch-h">
   <h2 id="hatch-h">NEW CLAUDE</h2>
   <div id="hatch-body"></div>
   <button class="x" type="button" data-close aria-label="Close">✕</button>
@@ -132,7 +140,7 @@
 
 <dialog id="dlg-planner" class="panel dlg" aria-labelledby="plan-h">
   <div class="sum-head">
-    <canvas class="sum-sprite" id="plan-sprite" width="24" height="26" aria-hidden="true"></canvas>
+    <canvas class="sum-sprite" id="plan-sprite" width="96" height="96" aria-hidden="true"></canvas>
     <div><h2 id="plan-h">THE PLANNER</h2><p class="muted" id="plan-sub"></p></div>
   </div>
   <div id="plan-body"></div>
@@ -140,9 +148,15 @@
   <button class="x" type="button" data-close aria-label="Close">✕</button>
 </dialog>
 
-<dialog id="dlg-settings" class="panel dlg" aria-labelledby="set-h">
+<dialog id="dlg-settings" class="panel dlg roomy" aria-labelledby="set-h">
   <h2 id="set-h">SETTINGS</h2>
   <div id="set-body"></div>
+  <button class="x" type="button" data-close aria-label="Close">✕</button>
+</dialog>
+
+<dialog id="dlg-help" class="panel dlg wide sheet" aria-labelledby="help-h">
+  <h2 id="help-h">WHAT'S WHAT</h2>
+  <div id="help-body"></div>
   <button class="x" type="button" data-close aria-label="Close">✕</button>
 </dialog>
 

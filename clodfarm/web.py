@@ -438,14 +438,14 @@ class FarmUI:
                 "schedules": schedules, "claudes": claudes, "tz": os.environ.get("FARM_TZ") or "UTC"}
 
     def browser_view(self, who: "Who") -> dict:
-        """The farm's browser as this person sees it: only their Claude's profiles (the manager: all)."""
+        """The farm's browser as this person sees it: only their own Claude's profiles."""
         st = self.browsers.status()
-        # the browser is a Claude's tool: its person sees its profiles; the manager sees who owns which (to assign),
-        # and can open only its own Claude's
+        # the browser is a Claude's tool: everyone (the manager too) sees only their own Claude's profiles; the
+        # manager gives a profile to another Claude from a shell (`clodfarm browser assign`)
         for p in st["profiles"]:
             p["mine"] = self.profile_mine(p, who)
-        if not who.manager:
-            st["profiles"] = [p for p in st["profiles"] if p["mine"]]
+        st["profiles"] = [p for p in st["profiles"] if p["mine"]]
+        if not who.manager:  # the proxy's address and login stay the manager's
             st["proxy"] = {k: v for k, v in (st.get("proxy") or {}).items() if k in ("set", "host", "countries")} \
                 if st.get("proxy") else st.get("proxy")
         st["can_set_proxy"] = who.manager

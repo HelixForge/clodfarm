@@ -205,8 +205,7 @@ function render() {
   if (avail && p) renderConnection(p);
   if (on && avail) {
     $("#tools-note").textContent = `the Claudes use it with ${p.tools}`;
-    if (ready && !p.mine) { disconnect(); message("ONLY ITS CLAUDE'S PERSON SEES INSIDE THIS PROFILE"); }
-    else if (ready) connect(sel);
+    if (ready) connect(sel);
     else { disconnect(); message(p.error ? `NOT STARTED: ${p.error}` : "STARTING THE BROWSER…"); }
     renderTabs(p.tabs || []);
   } else disconnect();
