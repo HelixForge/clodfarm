@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>clodfarm: a farm of Claude Code agents that work 24/7</title>
-<meta name="description" content="Open-source Claude Code agents that split work into sub-agents, test it before it lands and pace on your real limits. Or we run a farm for your business.">
+<meta name="description" content="Open-source Claude Code agents that split work into sub-agents, test it before it lands and pace on your real limits. Or get your own farm for $5/mo, created for you.">
 <link rel="canonical" href="https://clod.farm/">
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
 <meta name="theme-color" content="#4f6b25">
@@ -18,7 +18,7 @@
 <meta property="og:site_name" content="clodfarm">
 <meta property="og:url" content="https://clod.farm/">
 <meta property="og:title" content="clodfarm: a farm of Claude Code agents that work 24/7">
-<meta property="og:description" content="Plant a mission tonight, harvest the work in the morning. Open source, or we run a farm for your business.">
+<meta property="og:description" content="Plant a mission tonight, harvest the work in the morning. Open source, or your own farm for $5/mo.">
 <meta property="og:image" content="https://clod.farm/og.png">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1280">
@@ -26,7 +26,7 @@
 <meta property="og:image:alt" content="The clodfarm UI: a pixel-art farm where Claude Code agents work at terminals, sub-agents help, and some nap while the budget paces them">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="clodfarm: a farm of Claude Code agents that work 24/7">
-<meta name="twitter:description" content="Plant a mission tonight, harvest the work in the morning. Open source, or we run a farm for your business.">
+<meta name="twitter:description" content="Plant a mission tonight, harvest the work in the morning. Open source, or your own farm for $5/mo.">
 <meta name="twitter:image" content="https://clod.farm/og.png">
 <meta name="twitter:image:alt" content="The clodfarm UI: a pixel-art farm where Claude Code agents work at terminals">
 
@@ -68,7 +68,7 @@
    "@id": "https://clod.farm/#page",
    "url": "https://clod.farm/",
    "name": "clodfarm: a farm of Claude Code agents that work 24/7",
-   "description": "Open-source Claude Code agents that split work into sub-agents, test it before it lands and pace on your real limits. Or we run a farm for your business.",
+   "description": "Open-source Claude Code agents that split work into sub-agents, test it before it lands and pace on your real limits. Or get your own farm for $5/mo, created for you.",
    "isPartOf": {
     "@id": "https://clod.farm/#website"
    },
@@ -105,9 +105,11 @@
   {
    "@type": "Service",
    "@id": "https://clod.farm/#hosted",
-   "name": "A clodfarm run for your business",
+   "name": "Your own clodfarm, hosted",
    "serviceType": "Managed Claude Code agent farm",
-   "description": "We set up and run a clodfarm for your business: online, on its own address, with a dashboard of what the agents shipped. Leave your email to get one.",
+   "description": "Your own clodfarm, created for you and always on at your-name.clod.farm, on your own Claude plan. $5 a month: what it costs us to host a farm.",
+   "offers": {"@type": "Offer", "price": "5", "priceCurrency": "USD", "url": "https://app.clod.farm/start",
+    "priceSpecification": {"@type": "UnitPriceSpecification", "price": "5", "priceCurrency": "USD", "billingDuration": "P1M"}},
    "provider": {
     "@id": "https://clod.farm/#org"
    },
@@ -115,8 +117,8 @@
    "url": "https://clod.farm/#get-farm",
    "potentialAction": {
     "@type": "Action",
-    "name": "Request a farm",
-    "target": "https://clod.farm/#get-farm"
+    "name": "Create my farm",
+    "target": "https://app.clod.farm/start"
    }
   },
   {
@@ -163,7 +165,7 @@
      "name": "Can you run a farm for my business?",
      "acceptedAnswer": {
       "@type": "Answer",
-      "text": "Yes. Leave your email under Get your own farm and we'll set up a farm online for you, on its own address, with a dashboard of what the agents shipped. You don't need to run Docker yourself."
+      "text": "Yes. Get your own farm for $5 a month (what it costs us to host one): we create it for you at your-name.clod.farm, always on, and you log in your own Claude inside it. You don't need to run Docker yourself."
      }
     },
     {
@@ -179,7 +181,7 @@
      "name": "What does it cost?",
      "acceptedAnswer": {
       "@type": "Answer",
-      "text": "clodfarm is free and open source (MIT). The agents run on your Claude subscription or an Anthropic API key, and never use paid overage unless you allow it. For a farm we run for your business, leave your email and we'll reply with what it takes."
+      "text": "clodfarm is free and open source (MIT). The agents run on your Claude subscription or an Anthropic API key, and never use paid overage unless you allow it. A farm we host for you is $5 a month, which is what hosting it costs us; your Claude plan stays your own."
      }
     },
     {
@@ -225,27 +227,41 @@
       <a class="btn" href="https://github.com/matank001/clodfarm" data-event="github"><svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.87.31-1.59.83-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.08-1.87 3.76-3.66 3.96.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg> GITHUB</a>
     </div>
     <p class="note">Open source, MIT. Runs anywhere Docker does.</p>
-    <a class="btn cta" href="#get-farm" data-event="get_farm"><span class="cta-main">▶ GET YOUR OWN FARM</span><span class="cta-sub">We set it up and run it for your business</span></a>
+    <a class="btn cta call" href="https://app.clod.farm/start" data-event="get_farm"><span class="cta-main">▶ GET YOUR OWN FARM</span><span class="cta-sub">$5/mo: what it costs us to host it. We create it for you.</span></a>
+    <a class="my-farm" href="https://app.clod.farm/account" data-event="my_farm">Have a farm? <b>▶ MY FARM</b></a>
     </section>
   </div>
 </main>
 
 <section id="get-farm" class="get panel" aria-labelledby="get-h">
   <h2 id="get-h">GET YOUR OWN FARM</h2>
-  <p class="get-lead">Don't want to run Docker yourself? Leave your email and we'll set up a farm for your business:
-    online, on its own address, with a dashboard that shows what your agents shipped.</p>
-  <form id="farm-form" class="get-form" novalidate>
-    <label for="f-email">Work email</label>
-    <input id="f-email" name="email" type="email" required maxlength="254" autocomplete="email" inputmode="email" placeholder="you@company.com">
-    <label for="f-business">Business <span class="opt">(optional)</span></label>
-    <input id="f-business" name="business" type="text" maxlength="120" autocomplete="organization" placeholder="Acme Inc.">
-    <label for="f-note">What should your farm do? <span class="opt">(optional)</span></label>
-    <textarea id="f-note" name="note" rows="3" maxlength="1000" placeholder="Fix our bug backlog, keep the docs up to date, build the admin panel..."></textarea>
-    <div class="hp" aria-hidden="true"><label for="f-website">Website</label><input id="f-website" name="website" type="text" tabindex="-1" autocomplete="off"></div>
-    <button class="btn primary cta-submit" type="submit">▶ CREATE MY FARM</button>
-  </form>
-  <p id="farm-status" class="farm-status" role="status" aria-live="polite" tabindex="-1"></p>
-  <p class="get-fine">We only use your email to set up your farm and to write to you about it.</p>
+  <p class="get-price"><b>$5 a month.</b> That's what it costs us to host a farm, and we'll create it for you: online, always on,
+    at <b>your-name.clod.farm</b>, on your own Claude plan. No Docker, nothing to install.</p>
+  <ul class="get-list">
+    <li>One Claude and its sub-agents, working through a queue around the clock</li>
+    <li>Talk to it from the Claude app on your phone</li>
+    <li>Paced on your plan's real limits: no surprise overage</li>
+    <li>Cancel any time; your farm is kept for 14 days</li>
+  </ul>
+  <div class="get-go">
+    <a class="btn cta call" href="https://app.clod.farm/start" data-event="start_farm"><span class="cta-main">▶ CREATE MY FARM · $5/MO</span></a>
+    <a class="my-farm" href="https://app.clod.farm/account" data-event="my_farm">Have a farm? <b>▶ MY FARM</b></a>
+  </div>
+  <details class="team">
+    <summary>A farm for a team or a whole business? Tell us what it should do</summary>
+    <form id="farm-form" class="get-form" novalidate>
+      <label for="f-email">Work email</label>
+      <input id="f-email" name="email" type="email" required maxlength="254" autocomplete="email" inputmode="email" placeholder="you@company.com">
+      <label for="f-business">Business <span class="opt">(optional)</span></label>
+      <input id="f-business" name="business" type="text" maxlength="120" autocomplete="organization" placeholder="Acme Inc.">
+      <label for="f-note">What should your farm do? <span class="opt">(optional)</span></label>
+      <textarea id="f-note" name="note" rows="3" maxlength="1000" placeholder="Fix our bug backlog, keep the docs up to date, build the admin panel..."></textarea>
+      <div class="hp" aria-hidden="true"><label for="f-website">Website</label><input id="f-website" name="website" type="text" tabindex="-1" autocomplete="off"></div>
+      <button class="btn primary cta-submit" type="submit">▶ TELL US</button>
+    </form>
+    <p id="farm-status" class="farm-status" role="status" aria-live="polite" tabindex="-1"></p>
+    <p class="get-fine">We only use your email to write to you about your farm.</p>
+  </details>
 </section>
 
 <section class="faq panel" aria-labelledby="faq-h">
@@ -268,7 +284,7 @@
     </details>
     <details>
       <summary>Can you run a farm for my business?</summary>
-      <p>Yes. Leave your email under Get your own farm and we&#x27;ll set up a farm online for you, on its own address, with a dashboard of what the agents shipped. You don&#x27;t need to run Docker yourself.</p>
+      <p>Yes. Get your own farm for $5 a month (what it costs us to host one): we create it for you at your-name.clod.farm, always on, and you log in your own Claude inside it. You don&#x27;t need to run Docker yourself.</p>
     </details>
     <details>
       <summary>What can a farm do for my business?</summary>
@@ -276,7 +292,7 @@
     </details>
     <details>
       <summary>What does it cost?</summary>
-      <p>clodfarm is free and open source (MIT). The agents run on your Claude subscription or an Anthropic API key, and never use paid overage unless you allow it. For a farm we run for your business, leave your email and we&#x27;ll reply with what it takes.</p>
+      <p>clodfarm is free and open source (MIT). The agents run on your Claude subscription or an Anthropic API key, and never use paid overage unless you allow it. A farm we host for you is $5 a month, which is what hosting it costs us; your Claude plan stays your own.</p>
     </details>
     <details>
       <summary>Is clodfarm made by Anthropic?</summary>
