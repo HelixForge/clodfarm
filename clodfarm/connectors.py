@@ -140,12 +140,14 @@ def guide_section(workspace: str) -> str:
 
 
 # ------------------------------------------------------------------ Google Ads
-# The Google Ads API needs a developer token (from a manager account's API Center), an OAuth client (id + secret) and
-# a refresh token for a Google account that can see the ad accounts, plus the manager account's ID when working
-# through one (login-customer-id). The farm checks them (refresh token -> access token -> the accounts it can reach),
+# The Google Ads API needs an OAuth client (id + secret) in a Cloud project with the Google Ads API enabled (the
+# project's access level, Test or Explorer and up, is what Google checks now) and a refresh token for a Google account
+# that can see the ad accounts, plus the manager account's ID when working through one (login-customer-id). A
+# developer token (the old API Center one) is optional: sent as the developer-token header only when there is one. The farm checks them (refresh token -> access token -> the accounts it can reach),
 # keeps them in .farm/connectors/google-ads.json (and a google-ads.yaml for Google's Python library), and every Claude
 # uses them through `clodfarm gads` (accounts, GAQL reports, an access token for changes).
-GADS_FIELDS = ("developer_token", "client_id", "client_secret", "refresh_token")
+GADS_FIELDS = ("client_id", "client_secret", "refresh_token")  # required; developer_token is optional
+GADS_OPTIONAL = ("developer_token", "login_customer_id")
 
 
 def _gads_oauth() -> str:
@@ -157,7 +159,7 @@ def _gads_api() -> str:
 
 
 def _gads_versions() -> list[str]:
-    return [v.strip() for v in (os.environ.get("FARM_GOOGLE_ADS_VERSIONS") or "v22,v21,v20").split(",") if v.strip()]
+    return [v.strip() for v in (os.environ.get("FARM_GOOGLE_ADS_VERSIONS") or "v25,v24,v23").split(",") if v.strip()]
 
 
 def _gads_paths(workspace: str) -> tuple[str, str]:
@@ -216,7 +218,9 @@ def gads_access_token(creds: dict) -> str:
 
 
 def _gads_headers(creds: dict, token: str) -> dict:
-    h = {"Authorization": f"Bearer {token}", "developer-token": creds["developer_token"]}
+    h = {"Authorization": f"Bearer {token}"}
+    if creds.get("developer_token"):
+        h["developer-token"] = creds["developer_token"]
     if creds.get("login_customer_id"):
         h["login-customer-id"] = _digits(creds["login_customer_id"])
     return h
@@ -224,7 +228,7 @@ def _gads_headers(creds: dict, token: str) -> dict:
 
 def gads_check(creds: dict) -> dict:
     """The accounts these credentials reach, and the API version that answered. Raises ValueError."""
-    creds = {k: str(creds.get(k) or "").strip() for k in (*GADS_FIELDS, "login_customer_id")}
+    creds = {k: str(creds.get(k) or "").strip() for k in (*GADS_FIELDS, *GADS_OPTIONAL)}
     missing = [k.replace("_", " ") for k in GADS_FIELDS if not creds[k]]
     if missing:
         raise ValueError("missing: " + ", ".join(missing))
@@ -258,14 +262,12 @@ def gads_connect(workspace: str, creds: dict, by: str = "") -> dict:
     info = gads_check(creds)
     js, yml = _gads_paths(workspace)
     os.makedirs(os.path.dirname(js), mode=0o700, exist_ok=True)
-    data = {**{k: str(creds.get(k) or "").strip() for k in GADS_FIELDS}, **info, "by": by, "at": time.time()}
-    for path, text in ((js, json.dumps(data)), (yml, "".join(
-            f"{k}: {json.dumps(v)}\n" for k, v in (("developer_token", data["developer_token"]),
-                                                  ("client_id", data["client_id"]),
-                                                  ("client_secret", data["client_secret"]),
-                                                  ("refresh_token", data["refresh_token"]),
-                                                  ("use_proto_plus", True))) +
-            (f"login_customer_id: \"{info['login_customer_id']}\"\n" if info["login_customer_id"] else ""))):
+    data = {**{k: str(creds.get(k) or "").strip() for k in (*GADS_FIELDS, "developer_token")}, **info, "by": by,
+            "at": time.time()}
+    yaml = [(k, data[k]) for k in ("developer_token", "client_id", "client_secret", "refresh_token") if data[k]]
+    yaml += [("use_proto_plus", True)] + ([("login_customer_id", info["login_customer_id"])]
+                                         if info["login_customer_id"] else [])
+    for path, text in ((js, json.dumps(data)), (yml, "".join(f"{k}: {json.dumps(v)}\n" for k, v in yaml))):
         fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(text)
@@ -279,7 +281,7 @@ def gads_view(workspace: str) -> dict:
         return {"connected": False}
     return {"connected": True, "customers": d.get("customers") or [], "more": d.get("more", 0),
             "login_customer_id": d.get("login_customer_id"), "api_version": d.get("api_version"),
-            "developer_token_last4": d["developer_token"][-4:], "client_id": d["client_id"], "by": d.get("by"),
+            "developer_token_last4": (d.get("developer_token") or "")[-4:] or None, "client_id": d["client_id"], "by": d.get("by"),
             "at": d.get("at"), "yaml": _gads_paths(workspace)[1]}
 
 

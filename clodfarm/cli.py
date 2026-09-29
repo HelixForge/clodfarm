@@ -1230,7 +1230,8 @@ def _gads_connect(cfg, a):
         return 0
     if sys.stdin.isatty():
         import getpass
-        creds = {"developer_token": getpass.getpass("Developer token: "), "client_id": input("OAuth client ID: "),
+        creds = {"developer_token": getpass.getpass("Developer token (Enter for none): "),
+                 "client_id": input("OAuth client ID: "),
                  "client_secret": getpass.getpass("OAuth client secret: "),
                  "refresh_token": getpass.getpass("Refresh token: "),
                  "login_customer_id": input("Manager account ID (Enter for none): ")}
@@ -1238,8 +1239,9 @@ def _gads_connect(cfg, a):
         try:
             creds = json.loads(sys.stdin.read() or "{}")
         except ValueError:
-            print("clodfarm gads connect: give the credentials as JSON on stdin: {\"developer_token\": ..., "
-                  "\"client_id\": ..., \"client_secret\": ..., \"refresh_token\": ..., \"login_customer_id\": ...}",
+            print("clodfarm gads connect: give the credentials as JSON on stdin: {\"client_id\": ..., "
+                  "\"client_secret\": ..., \"refresh_token\": ..., \"login_customer_id\": ... (optional), "
+                  "\"developer_token\": ... (optional)}",
                   file=sys.stderr)
             return 2
     try:

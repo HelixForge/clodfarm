@@ -31,22 +31,22 @@ only the permissions you're happy for any of its Claudes to use ([security.md](s
 
 ## Google Ads
 
-Google Ads has no single key: the API wants four things, and a fifth when you go through a manager account.
+Google Ads has no single key: the API wants three things, and a fourth when you go through a manager account.
 
 | Field | Where it comes from |
 |---|---|
-| **Developer token** | Google Ads, in a **manager account** → Admin → API Center. A new token starts at *Test* access (test accounts only); apply for *Basic* access to use real accounts. |
-| **OAuth client ID + secret** | Google Cloud console → APIs & Services → Credentials → Create OAuth client ID (*Desktop app*), in a project with the **Google Ads API** enabled. |
+| **OAuth client ID + secret** | Google Cloud console → APIs & Services → Credentials → Create OAuth client ID (*Desktop app*), in a project with the **Google Ads API** enabled. The project's **access level** is what Google checks: a new one has *Test* (test accounts only); on the Google Ads API page, Access levels → Manage, apply for *Explorer* to reach real accounts (usually granted in minutes). |
 | **Refresh token** | Sign in once, as a Google user who can see the ad accounts, with scope `https://www.googleapis.com/auth/adwords` (Google's `generate_user_credentials.py` example, or the OAuth Playground with your own client). |
 | **Login customer ID** (optional) | The manager account's ID (123-456-7890), when the ad accounts are reached through it. |
+| **Developer token** (optional) | Only if you have one from a manager account's API Center (Google's older access model). The farm sends it as the `developer-token` header when it's there. |
 
 The farm manager connects it: **CONNECTORS → GOOGLE ADS**, paste the fields, **CONNECT**. The panel then lists the
-ad accounts, and shows the developer token's last 4 characters, never the secrets. Or from the box's shell:
+ad accounts (and a developer token's last 4 characters, if there is one), never the secrets. Or from the box's shell:
 
 ```bash
 clodfarm gads connect          # asks for each field (the secrets aren't echoed)
-clodfarm gads connect < creds.json   # or: {"developer_token": ..., "client_id": ..., "client_secret": ...,
-                                     #      "refresh_token": ..., "login_customer_id": "1234567890"}
+clodfarm gads connect < creds.json   # or: {"client_id": ..., "client_secret": ..., "refresh_token": ...,
+                                     #      "login_customer_id": "1234567890"}   (+ "developer_token", optional)
 clodfarm gads                  # status
 clodfarm gads disconnect
 ```
@@ -77,7 +77,7 @@ version first), and lists them.
 
   For other views, a Claude writes a dashboard script in the repo that calls `clodfarm gads query` with its own GAQL.
 - **API versions.** Google retires a Google Ads API version about a year after it ships. The farm tries
-  `v22,v21,v20` in that order; set `FARM_GOOGLE_ADS_VERSIONS` to change the list.
+  `v25,v24,v23` in that order; set `FARM_GOOGLE_ADS_VERSIONS` to change the list.
 - **Disconnect** removes both files. To cut access for good, revoke the refresh token too (the Google account's
   security page → third-party access).
 

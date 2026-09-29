@@ -166,7 +166,7 @@ def test_the_manager_connects_google_ads(ui, google):
     code, body, _ = manager(base + "/api/connectors/google-ads", GADS)
     assert code == 200, body
     g = body["google_ads"]
-    assert g["connected"] and g["api_version"] == "v21", "v22 isn't there: the one before answers"
+    assert g["connected"] and g["api_version"] == "v24", "v25 isn't there: the one before answers"
     assert [c["name"] for c in g["customers"]] == ["Jestr Ads (manager)", "Jestr Shop", "Jestr App installs"]
     assert g["customers"][0]["manager"] and g["login_customer_id"] == "1234567890"
     assert g["developer_token_last4"] == "1234" and "GOCSPX" not in json.dumps(body) and "devtok" not in json.dumps(body)
@@ -207,7 +207,18 @@ def test_the_gads_cli(ui, google, env):
     assert r.returncode == 0 and json.loads(r.stdout)[0]["metrics"]["clicks"] == "80"
     t = json.loads(run("token").stdout)
     assert t["headers"]["developer-token"] == GADS["developer_token"] and t["headers"]["login-customer-id"] == "1234567890"
-    assert t["base"].endswith("/v21")
+    assert t["base"].endswith("/v24")
+
+
+
+def test_google_ads_connects_without_a_developer_token(ui, google):
+    _, farm_ui = ui
+    creds = {k: v for k, v in GADS.items() if k != "developer_token"}
+    v = connectors.gads_connect(farm_ui.cfg.workspace, creds)
+    assert v["connected"] and len(v["customers"]) == 3 and v["developer_token_last4"] is None
+    d = connectors.gads_load(farm_ui.cfg.workspace)
+    assert "developer-token" not in connectors._gads_headers(d, "ya29.fake"), "no empty header for Google to refuse"
+    assert "developer_token" not in open(connectors._gads_paths(farm_ui.cfg.workspace)[1]).read()
 
 
 def test_the_manager_connects_google_ads_from_a_shell_and_a_live_dashboard_uses_it(ui, google, env):

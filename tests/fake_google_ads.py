@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ACCOUNTS = {"1234567890": ("Jestr Ads (manager)", True), "2345678901": ("Jestr Shop", False),
             "3456789012": ("Jestr App installs", False)}
-RETIRED = {"v22"}  # answers 404, as a version Google hasn't opened (or has closed) does
+RETIRED = {"v25"}  # answers 404, as a version Google hasn't opened (or has closed) does
 
 
 class FakeGoogle(BaseHTTPRequestHandler):

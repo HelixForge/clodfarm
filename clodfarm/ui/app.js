@@ -2599,14 +2599,15 @@ const UI = {
     const replace = h("button", { class: "btn", type: "button", onclick: () => { this.gadsReplace = true; this.renderGads(); $("#connector-body input")?.focus(); } }, "REPLACE");
     fill(body, card, ask, err, h("div", { class: "dlg-actions" }, replace, off));
   },
-  /** The Google Ads API's credentials: four, plus a manager account's ID when the ad accounts sit under one. */
+  /** The Google Ads API's credentials: three, plus a manager account's ID when the ad accounts sit under one, and an
+   *  old API Center developer token if the farm has one (Google checks the Cloud project's access level now). */
   gadsForm(steps, onCancel) {
     const F = [
-      ["developer_token", "DEVELOPER TOKEN", true, "From a manager account: Admin → API Center"],
       ["client_id", "OAUTH CLIENT ID", false, "…apps.googleusercontent.com"],
       ["client_secret", "OAUTH CLIENT SECRET", true, "GOCSPX-…"],
       ["refresh_token", "REFRESH TOKEN", true, "1//…"],
-      ["login_customer_id", "MANAGER ACCOUNT ID (OPTIONAL)", false, "123-456-7890"]];
+      ["login_customer_id", "MANAGER ACCOUNT ID (OPTIONAL)", false, "123-456-7890"],
+      ["developer_token", "DEVELOPER TOKEN (OPTIONAL)", true, "Only if you have one from API Center"]];
     const err = h("p", { class: "form-error", role: "alert" });
     const go = h("button", { class: "btn primary", type: "submit", disabled: true }, "▶ CONNECT");
     const inputs = {};
@@ -2628,7 +2629,7 @@ const UI = {
     const form = h("form", { class: "stripe-form gads-form", autocomplete: "off" });
     const check = () => {
       const v = k => inputs[k].value.trim(), lc = v("login_customer_id").replace(/\D/g, "");
-      const missing = F.slice(0, 4).filter(([k]) => !v(k)).map(([, l]) => l.toLowerCase());
+      const missing = F.slice(0, 3).filter(([k]) => !v(k)).map(([, l]) => l.toLowerCase());
       let text = missing.length ? `Still needed: ${missing.join(", ")}.` : "Looks complete: the farm checks it with Google.", cls = missing.length ? "" : "ok";
       if (v("client_id") && !/\.apps\.googleusercontent\.com$/.test(v("client_id"))) { text = "An OAuth client ID ends in .apps.googleusercontent.com."; cls = "bad"; }
       if (v("login_customer_id") && lc.length !== 10) { text = "A manager account ID is 10 digits (123-456-7890)."; cls = "bad"; }
@@ -2637,11 +2638,11 @@ const UI = {
     };
     for (const i of Object.values(inputs)) i.addEventListener("input", () => { err.textContent = ""; check(); });
     if (steps) form.append(h("ol", { class: "hatch-steps" },
-      h("li", {}, "In a Google Ads ", h("b", { text: "manager account" }), ": Admin → ", h("b", { text: "API Center" }), ", copy the developer token.",
-        h("span", { class: "muted small step-note", text: "A new token has Test access (test accounts only): apply for Basic access for real ones." }),
-        h("a", { class: "btn login-link key-link", href: "https://ads.google.com/aw/apicenter", target: "_blank", rel: "noopener noreferrer" }, "OPEN API CENTER ↗")),
       h("li", {}, "In Google Cloud, enable the ", h("b", { text: "Google Ads API" }), " and make an ", h("b", { text: "OAuth client ID" }), " (Desktop app).",
         h("a", { class: "btn login-link key-link", href: "https://console.cloud.google.com/apis/credentials", target: "_blank", rel: "noopener noreferrer" }, "OPEN CREDENTIALS ↗")),
+      h("li", {}, "On the project's ", h("b", { text: "Google Ads API" }), " page: Access levels → ", h("b", { text: "Manage" }), ", apply for ", h("b", { text: "Explorer" }), ".",
+        h("span", { class: "muted small step-note", text: "A new project has Test access (test accounts only). Explorer, usually granted in minutes, reaches real ones." }),
+        h("a", { class: "btn login-link key-link", href: "https://console.cloud.google.com/google/ads-apis/overview", target: "_blank", rel: "noopener noreferrer" }, "OPEN ACCESS LEVELS ↗")),
       h("li", {}, "Get a ", h("b", { text: "refresh token" }), " for a Google user who can see the ad accounts (scope ", h("code", { class: "conn-code", text: "adwords" }), ").",
         h("span", { class: "muted small step-note", text: "Google's generate_user_credentials.py, or the OAuth Playground with your own client." })),
       h("li", {}, "Paste them here.", ...fields, hint, err)));

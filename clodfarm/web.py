@@ -1479,11 +1479,12 @@ def make_handler(ui: FarmUI):
             if path == "/api/connectors/google-ads":  # connect (checked with Google first), or change the credentials
                 if not who.manager:
                     return self._err(403, "the farm manager connects the farm's Google Ads")
-                creds = {k: str(data.get(k) or "")[:600] for k in (*connectors.GADS_FIELDS, "login_customer_id")}
+                creds = {k: str(data.get(k) or "")[:600] for k in (*connectors.GADS_FIELDS, *connectors.GADS_OPTIONAL)}
                 v = connectors.gads_connect(ui.cfg.workspace, creds, by=f"owner:{who.owner}" if who.owner else "manager")
                 ui.manager.share_connectors()
-                store.event("connector.google_ads", f"Google Ads connected ({len(v['customers'])} account(s), developer "
-                            f"token …{v['developer_token_last4']}): every Claude can use `clodfarm gads`", by="ui")
+                tok = f", developer token …{v['developer_token_last4']}" if v.get("developer_token_last4") else ""
+                store.event("connector.google_ads", f"Google Ads connected ({len(v['customers'])} account(s){tok}): "
+                            "every Claude can use `clodfarm gads`", by="ui")
                 return self._json(ui.connectors_view(who))
             if path == "/api/connectors/google-ads/disconnect":
                 if not who.manager:
