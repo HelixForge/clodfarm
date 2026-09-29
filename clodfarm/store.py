@@ -20,12 +20,20 @@ Items (PK / SK):
     SESSION            / <session id>      a Claude Code session: which Claude, what kind, its task, title, turns
     TURN#<session id>  / <n>               one turn of its conversation (see sessions.py)
     CONTROL            / GLOBAL | HEALTH
+    CONTROL            / SETTINGS          the farm manager's switches: private farm, hatching (see web.py)
+    CONTROL            / PLANNER           the planner: on/off, its goal, its Claude, its cadence (see planner.py)
+    CONTROL            / BOX#<host>        `clodfarm drain` on that box
+    CLAUDE             / <id>              a Claude's settings: skin, tools, approve every mission, owner cookie version
+    HELD               / <message id>      a message waiting for its recipient's person to approve it
+    STATS              / TOKENS[#day|@claude]  tokens burned (input, output, cache write, cache read)
+    PAIR               / <token hash>      a one-time link (or code) that signs a person in to their Claude
     EVENT#<yyyy-mm-dd> / <ts>#<rand>       event log (expires after 30 days)
 """
 
 from __future__ import annotations
 
 import copy
+import hmac
 import json
 import os
 import re
@@ -37,6 +45,7 @@ from .governor import Snapshot
 from .schedule import next_run
 
 EVENT_TTL = 30 * 86400
+APPROVAL_TTL = 86400  # a mission nobody approved in a day is denied
 DEFAULT_SEAT = "default"  # single-account farms and tests
 _RETRIES = 50
 
@@ -54,6 +63,11 @@ def new_id() -> str:
 
 
 TASK_ID = re.compile(r"\d{12}[0-9a-f]{6}")  # what new_id() makes: a message to one is for that sub-agent
+CLAUDE_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
+
+
+def hmac_eq(a: str, b: str) -> bool:
+    return hmac.compare_digest(a.encode(), b.encode())
 
 
 def _prio_key(priority: int, created: float, tid: str) -> str:
@@ -120,27 +134,101 @@ class Store:
                 raise ValueError(f"sub-agent depth {depth} exceeds FARM_MAX_DEPTH={max_depth}; "
                                  "do the work yourself instead of splitting further")
         tid, t = new_id(), now()
-        item = {"PK": f"TASK#{tid}", "SK": "META", "GSI1PK": "STATUS#queued", "GSI1SK": _prio_key(priority, t, tid),
-                "ver": 1, "id": tid, "title": title[:300], "prompt": prompt, "status": "queued", "priority": priority,
+        # a Claude whose person approves every mission: work others send it waits for their OK (on their phone)
+        gate = self.needs_approval(to, owner, created_by)
+        status = "pending" if gate else "queued"
+        item = {"PK": f"TASK#{tid}", "SK": "META", "GSI1PK": f"STATUS#{status}",
+                "GSI1SK": _prio_key(priority, t, tid) if status == "queued" else f"{t:017.6f}#{tid}",
+                "ver": 1, "id": tid, "title": title[:300], "prompt": prompt, "status": status, "priority": priority,
                 "kind": kind, "parent": parent, "depth": depth, "created": t, "updated": t, "created_by": created_by,
                 "attempts": 0, "max_attempts": max_attempts, "resumes": 0, "children_open": 0, "to": to or None,
                 "owner": owner or None}
+        if gate:
+            item["approval"] = {"asked_at": t, "from": owner or created_by, "expires_at": t + APPROVAL_TTL}
         item = {k: v for k, v in item.items() if v is not None}
         self.b.put(item, expect_ver=0)
         if parent:
             self._update(*self._tkey(parent), lambda x: {**x, "children_open": int(x.get("children_open", 0)) + 1,
                                                           "children": list(x.get("children") or []) + [tid]})
         self.event("task.added", f"{tid} {title[:120]}" + (f" (for {to})" if to else ""), task=tid, by=created_by)
+        if gate:
+            self.event("approval.asked", f"{tid}: {owner or created_by} asks {to} for \"{title[:100]}\"; waiting for "
+                       f"{to}'s person to approve", task=tid, by=created_by)
+            self._ask(to, title, owner or created_by, tid)
         return item
+
+    def _ask(self, to: str, what: str, frm: str, pid: str):
+        from . import notify
+        base = (os.environ.get("FARM_PUBLIC_URL") or os.environ.get("FARM_UI_PUBLIC_URL") or "").rstrip("/")
+        notify.ask_approval(self.claude(to).get("notify_topic") or "", to, what[:200], frm,
+                            f"{base}/?approve={pid}" if base else "")
+
+    # ------------------------------------------------------------- approvals
+    def approving(self, claude: str | None) -> bool:
+        return bool(claude) and bool(self.claude(claude).get("approve_missions"))
+
+    def needs_approval(self, to: str | None, owner: str | None, created_by: str | None) -> bool:
+        """Work for ``to`` needs its person's OK when they asked for that, unless it comes from that Claude itself (or
+        its own sub-agents: they carry it as ``owner``), or from its person (the farm UI or its own conversation)."""
+        if not to or not self.approving(to):
+            return False
+        if owner == to or created_by in (to, f"owner:{to}", f"person:{to}"):
+            return False
+        return True
+
+    def pending(self, claude: str | None = None) -> list[dict]:
+        """Missions and messages waiting for approval (for one Claude's person, or all)."""
+        tasks = [t for t in self.b.query_index("STATUS#pending", 500) if not claude or t.get("to") == claude]
+        msgs = [m for m in self.b.query("HELD") if not claude or m.get("to") == claude]
+        return [{"type": "task", **t} for t in tasks] + [{"type": "message", **m} for m in msgs]
+
+    def approve(self, tid: str, by: str) -> bool:
+        """Let a waiting mission run (or a held message through)."""
+        if self.b.get("HELD", tid):
+            return self._release_message(tid, by)
+        ok = self._set_status(tid, "queued", when=lambda x: x.get("status") == "pending", extra={
+            "approval": {**((self.get_task(tid) or {}).get("approval") or {}), "decided_by": by, "decided_at": now(),
+                         "ok": True}})
+        if ok:
+            self.event("approval.ok", f"{tid}: approved by {by}", task=tid, by=by)
+        return ok
+
+    def deny(self, tid: str, by: str, reason: str = "") -> bool:
+        if self.b.get("HELD", tid):
+            return self._release_message(tid, by, deliver=False)
+        task = self.get_task(tid) or {}
+        ok = self._set_status(tid, "denied", when=lambda x: x.get("status") == "pending", extra={
+            "approval": {**(task.get("approval") or {}), "decided_by": by, "decided_at": now(), "ok": False},
+            "finished": now(), "result": f"not approved by {task.get('to')}'s person" + (f": {reason}" if reason else "")})
+        if ok:
+            self.event("approval.denied", f"{tid}: denied by {by}" + (f" ({reason})" if reason else ""), task=tid, by=by)
+            self._child_finished(tid)
+            asker = task.get("parent") or task.get("owner") or task.get("created_by")
+            if asker and (TASK_ID.fullmatch(asker) or CLAUDE_NAME.fullmatch(asker)):
+                self.send_message(task.get("to") or "farm", asker,
+                                  f"Your request \"{task.get('title', '')[:120]}\" ({tid}) to {task.get('to')} was not "
+                                  f"approved by its person" + (f" ({reason})" if reason else "") + ". Do it another way.")
+        return ok
+
+    def expire_approvals(self) -> int:
+        n = 0
+        for t in self.b.query_index("STATUS#pending", 500):
+            if float((t.get("approval") or {}).get("expires_at", 0)) < now() and self.deny(t["id"], "farm", "expired"):
+                n += 1
+        for m in self.b.query("HELD"):
+            if float(m.get("expires_at_held", 0)) < now():
+                self._release_message(m["SK"], "farm", deliver=False)
+        return n
 
     def get_task(self, tid: str) -> dict | None:
         return self.b.get(*self._tkey(tid))
 
     def list_tasks(self, status: str | None = None, limit: int = 50) -> list[dict]:
-        statuses = [status] if status else ["running", "queued", "waiting", "done", "failed", "cancelled"]
+        statuses = [status] if status else ["running", "queued", "waiting", "pending", "done", "failed", "cancelled",
+                                            "denied"]
         out = []
         for s in statuses:
-            out += self.b.query_index(f"STATUS#{s}", limit, desc=s in ("done", "failed", "cancelled"))
+            out += self.b.query_index(f"STATUS#{s}", limit, desc=s in ("done", "failed", "cancelled", "denied"))
         return out[:limit] if status else out
 
     def count(self, status: str) -> int:
@@ -170,9 +258,12 @@ class Store:
 
         A task waiting to be *resumed* keeps its conversation on the box it last ran on (``home``). For ``affinity``
         seconds only that box may take it; after that anyone may, starting fresh with the results so far."""
+        careful = self.approving(agent)  # its person approves every mission: it takes only its own, or approved work
         for item in self.b.query_index("STATUS#queued", 100):
             tid = item["id"]
             if (item.get("to") or sent_only) and item.get("to") != agent:
+                continue
+            if careful and not item.get("to") and item.get("owner") != agent:
                 continue
             if farm and item.get("resume") and item.get("home") and item["home"] != farm \
                     and now() - float(item.get("updated", 0)) < affinity:
@@ -275,7 +366,8 @@ class Store:
     def cancel(self, tid: str) -> bool:
         """Cancel a sub-agent and every sub-agent under it. A running one is stopped by its box within seconds
         (Farm.run_task watches its status) and nothing it did lands."""
-        ok = self._set_status(tid, "cancelled", when=lambda x: x.get("status") in ("queued", "waiting", "running"),
+        ok = self._set_status(tid, "cancelled", when=lambda x: x.get("status") in ("queued", "waiting", "running",
+                                                                                "pending"),
                               remove=("lease_until",))
         if ok:
             self.event("task.cancelled", tid, task=tid)
@@ -292,8 +384,12 @@ class Store:
         return ok
 
     def reap_expired(self) -> int:
-        """Re-queue running tasks whose worker died (lease ran out)."""
+        """Re-queue running tasks whose worker died (lease ran out); drop approvals nobody gave in time."""
         n = 0
+        try:
+            self.expire_approvals()
+        except Exception:  # noqa: BLE001 - never hold up the reaping
+            pass
         for task in self.b.query_index("STATUS#running"):
             if float(task.get("lease_until", 0)) >= now():
                 continue
@@ -347,6 +443,15 @@ class Store:
             item["wake"] = True
         if person:
             item["person"] = True
+        if not person and self._hold(frm, to):
+            # for a Claude whose person approves every mission: kept aside until they do (no bell, no wake)
+            held = {**item, "PK": "HELD", "SK": item["id"], "wake_after": wake_after,
+                    "expires_at_held": t + APPROVAL_TTL}
+            self.b.put(held)
+            self.event("approval.asked", f"message {item['id']} from {frm} to {to} waits for {to}'s person: "
+                       f"{text[:120]}", by=frm)
+            self._ask(to, "a message: " + text[:160], frm, item["id"])
+            return {**item, "held": True}
         self.b.put(item)
         self.ring(to)
         if wake:
@@ -356,6 +461,32 @@ class Store:
         flags = " (urgent)" if urgent else " (wake)" if wake else ""
         self.event("msg.sent", f"{frm} -> {to}: {text[:200]}{flags}", by=frm)
         return item
+
+    def _hold(self, frm: str, to: str) -> bool:
+        if TASK_ID.fullmatch(to) or not self.approving(to) or frm == to:
+            return False
+        sender = self.get_task(frm) if TASK_ID.fullmatch(frm or "") else None
+        return not (sender and sender.get("owner") == to)  # its own sub-agents may write to it
+
+    def _release_message(self, mid: str, by: str, deliver: bool = True) -> bool:
+        it = self.b.get("HELD", mid)
+        if not it or not self.b.delete("HELD", mid, expect_ver=int(it.get("ver", 0))):
+            return False
+        if not deliver:
+            self.event("approval.denied", f"message {mid} from {it.get('from')} to {it.get('to')} not delivered "
+                       f"({by})", by=by)
+            return True
+        msg = {k: v for k, v in it.items() if k not in ("wake_after", "expires_at_held")}
+        msg.update(PK=f"MSG#{it['to']}", SK=f"{now():017.6f}#{secrets.token_hex(2)}", ver=1)
+        self.b.put(msg)
+        self.ring(it["to"])
+        if it.get("wake"):
+            t = now()
+            self.b.put({"PK": "WAKEQ", "SK": f"{t + float(it.get('wake_after', 120)):017.6f}#{secrets.token_hex(2)}",
+                        "ver": 1, "msg_pk": msg["PK"], "msg_sk": msg["SK"], "to": it["to"],
+                        "due": t + float(it.get("wake_after", 120)), "expires_at": int(t + EVENT_TTL)})
+        self.event("approval.ok", f"message {mid} from {it.get('from')} to {it.get('to')} approved by {by}", by=by)
+        return True
 
     def ring(self, to: str):
         """Tell the boxes of whoever should read a message for ``to`` to look now: that Claude's, or the box running
@@ -450,7 +581,7 @@ class Store:
                        **fields) -> dict | None:
         """Register (or update) a session and append its conversation: the ``transcript`` lines written since the last
         call (tracked by byte offset, claimed atomically so two hooks never copy a turn twice) and/or ``turns``."""
-        from .sessions import read_transcript
+        from .sessions import read_transcript, usage_total
         t, got = now(), {}
 
         def fn(x):
@@ -461,6 +592,10 @@ class Store:
                 read, off, meta = read_transcript(transcript, int(x.get("offset", 0)))
                 new += read
                 x.update(offset=off, transcript=transcript)
+                per = meta.pop("usage", None) or {}
+                if per:  # tokens it used since the last call (a message split over two reads counts once)
+                    got["usage"] = usage_total(per, skip=x.get("usage_last") or "")
+                    x["usage_last"] = list(per)[-1]
                 x.update({k: v for k, v in meta.items() if v})
             x.update({k: v for k, v in fields.items() if v is not None}, last_at=t)
             if not x.get("title"):
@@ -474,6 +609,9 @@ class Store:
         for n, turn in enumerate(got["turns"]):
             self.b.put({"PK": f"TURN#{sid}", "SK": f"{got['first'] + n:06d}", "ver": 1,
                         **{k: v for k, v in turn.items() if v is not None}})
+        # a conversation's tokens count here; a sub-agent's are counted once from its run's result (supervisor)
+        if got.get("usage") and it and it.get("kind") == "conversation":
+            self.add_tokens(got["usage"], it.get("claude"))
         return it
 
     def sessions(self, claude: str | None = None, limit: int = 100) -> list[dict]:
@@ -655,7 +793,130 @@ class Store:
         return [i for i in self.b.query("SLOT", sk_prefix=f"{seat}#" if seat else None)
                 if float(i.get("lease_until", 0)) > now()]
 
+    # ---------------------------------------------------------------- claudes
+    def claude(self, cid: str) -> dict:
+        """A Claude's settings, shared by every box: its look (skin), what it may use, whether its person approves
+        every mission sent to it, and its owner cookie's version (bumped to sign its person out everywhere)."""
+        return (self.b.get("CLAUDE", cid) or {}) if cid else {}
+
+    def claudes(self) -> list[dict]:
+        return self.b.query("CLAUDE")
+
+    def put_claude(self, cid: str, **fields) -> dict:
+        def fn(x):
+            if not x:
+                x = {"id": cid, "created": now(), "owner_ver": 1}
+            x.update({k: v for k, v in fields.items() if v is not None})
+            x["updated"] = now()
+            return x
+        return self._update("CLAUDE", cid, fn, create=True)
+
+    def forget_claude(self, cid: str):
+        it = self.b.get("CLAUDE", cid)
+        if it:
+            self.b.delete("CLAUDE", cid, expect_ver=int(it.get("ver", 0)))
+
+    # --------------------------------------------------------------- settings
+    SETTINGS = {"private": False, "hatch_open": True, "max_claudes": 100, "hatch_per_ip_hour": 3}
+
+    def settings(self) -> dict:
+        """The farm manager's switches: a private farm (a viewer password), hatching open or not, its limits."""
+        it = self.b.get("CONTROL", "SETTINGS") or {}
+        return {**self.SETTINGS, **{k: v for k, v in it.items() if k not in ("PK", "SK", "ver")}}
+
+    def set_settings(self, **fields) -> dict:
+        return self._update("CONTROL", "SETTINGS", lambda x: {**x, **fields, "at": now()}, create=True)
+
+    # ---------------------------------------------------------------- planner
+    def planner(self) -> dict:
+        it = self.b.get("CONTROL", "PLANNER") or {}
+        return {"on": False, "goal": "", "host": "", "every_s": 900, "cycles": 0,
+                **{k: v for k, v in it.items() if k not in ("PK", "SK", "ver")}}
+
+    def set_planner(self, **fields) -> dict:
+        return self._update("CONTROL", "PLANNER", lambda x: {**x, **{k: v for k, v in fields.items()}, "at": now()},
+                            create=True)
+
+    def planner_claim(self, holder: str, lease: float) -> bool:
+        """One farm daemon at a time drives the planner (across boxes)."""
+        return self._update("CONTROL", "PLANNER", lambda x: None if x.get("holder") not in (None, holder)
+                            and float(x.get("lease_until", 0)) > now() else
+                            {**x, "holder": holder, "lease_until": now() + lease}, create=True) is not None
+
+    # ----------------------------------------------------------------- tokens
+    TOKEN_KINDS = ("input", "output", "cache_write", "cache_read")
+
+    @staticmethod
+    def token_counts(usage: dict | None) -> dict:
+        u = usage or {}
+        return {"input": int(u.get("input_tokens") or 0), "output": int(u.get("output_tokens") or 0),
+                "cache_write": int(u.get("cache_creation_input_tokens") or 0),
+                "cache_read": int(u.get("cache_read_input_tokens") or 0)}
+
+    def add_tokens(self, counts: dict, claude: str | None = None):
+        """Tokens burned, farm-wide, per day and per Claude (for the counter on the farm)."""
+        counts = {k: int(counts.get(k) or 0) for k in self.TOKEN_KINDS}
+        n = sum(counts.values())
+        if n <= 0:
+            return
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+
+        def add(x):
+            for k, v in counts.items():
+                x[k] = int(x.get(k, 0)) + v
+            x["total"] = int(x.get("total", 0)) + n
+            x["at"] = now()
+            return x
+        for sk in ["TOKENS", f"TOKENS#{day}"] + ([f"TOKENS@{claude}", f"TOKENS#{day}@{claude}"] if claude else []):
+            try:
+                self._update("STATS", sk, add, create=True)
+            except RuntimeError:  # never let the counter hold up the work
+                pass
+
+    def tokens_today_by(self) -> dict:
+        """Per Claude, today (from the per-day, per-Claude counter)."""
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+        return {i["SK"].split("@", 1)[1]: {k: int(i.get(k, 0)) for k in (*self.TOKEN_KINDS, "total")}
+                for i in self.b.query("STATS", sk_prefix=f"TOKENS#{day}@")}
+
+    def tokens(self) -> dict:
+        day = time.strftime("%Y-%m-%d", time.gmtime())
+        strip = lambda it: {k: int(it.get(k, 0)) for k in (*self.TOKEN_KINDS, "total")}  # noqa: E731
+        by = {i["SK"][7:]: strip(i) for i in self.b.query("STATS", sk_prefix="TOKENS@")}
+        return {"total": strip(self.b.get("STATS", "TOKENS") or {}), "today": strip(self.b.get("STATS", f"TOKENS#{day}") or {}),
+                "by_claude": by, "at": now()}
+
+    # ---------------------------------------------------------------- pairing
+    def add_pairing(self, claude: str, token_hash: str, code: str, ttl: float = 600):
+        t = now()
+        self.b.put({"PK": "PAIR", "SK": token_hash, "ver": 1, "claude": claude, "code": code, "at": t,
+                    "until": t + ttl, "expires_at": int(t + ttl + 3600)})
+
+    def take_pairing(self, token_hash: str | None = None, code: str | None = None) -> str | None:
+        """Use a pairing link (its token's hash) or code once: returns the Claude it signs in to."""
+        items = [self.b.get("PAIR", token_hash)] if token_hash else \
+            [i for i in self.b.query("PAIR") if code and hmac_eq(str(i.get("code", "")), code.strip().upper())]
+        for it in items:
+            if not it or float(it.get("until", 0)) < now():
+                continue
+            if self.b.delete("PAIR", it["SK"], expect_ver=int(it.get("ver", 0))):
+                return it.get("claude")
+        return None
+
     # --------------------------------------------------------------- control
+    def box_control(self, host: str) -> dict:
+        """`clodfarm drain` on one box (host): {draining, exit, by, at}."""
+        return self.b.get("CONTROL", f"BOX#{host}") or {}
+
+    def set_draining(self, host: str, draining: bool, exit_: bool = False, by: str = "human"):
+        if not draining:
+            it = self.b.get("CONTROL", f"BOX#{host}")
+            if it:
+                self.b.delete("CONTROL", f"BOX#{host}", expect_ver=int(it.get("ver", 0)))
+            return
+        self._update("CONTROL", f"BOX#{host}", lambda x: {"draining": True, "exit": exit_, "by": by, "at": now()},
+                     create=True)
+
     def set_paused(self, paused: bool, reason: str = "", by: str = "human"):
         self._update("CONTROL", "GLOBAL", lambda x: {"paused": paused, "reason": reason, "by": by, "at": now()},
                      create=True)

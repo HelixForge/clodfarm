@@ -45,7 +45,8 @@ import urllib.request
 DEFAULT = "default"
 MCP_NAME = "browser"  # the default profile's MCP server in each Claude's config (mcp__browser__*); others browser-<name>
 MCP_BIN = "playwright-mcp"
-MAX_PROFILES = 8
+MAX_PROFILES = int(os.environ.get("FARM_BROWSER_MAX") or 16)  # each one is a Chromium: memory is the limit
+PER_CLAUDE = int(os.environ.get("FARM_BROWSER_PER_CLAUDE") or 2)
 NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,23}")
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_FRAME = 1 << 20  # a client (keyboard, mouse, clipboard) never needs a bigger WebSocket frame
@@ -72,6 +73,12 @@ def cdp_port(slot: int = 0) -> int:
 
 def vnc_port(slot: int = 0) -> int:
     return int(_env("FARM_BROWSER_VNC_PORT", "5900")) + slot
+
+
+def relay_port(slot: int = 0) -> int:
+    """The proxy relay's port: fixed per slot, so a Chromium started by one UI process keeps working when another
+    one (a new release) takes the relay over."""
+    return int(_env("FARM_BROWSER_RELAY_PORT", "9400")) + slot
 
 
 def cdp_url(slot: int = 0) -> str:
@@ -175,12 +182,6 @@ class Registry:
             profiles = json.load(open(self.path)).get("profiles") or []
         except (OSError, ValueError):
             profiles = []
-        if not any(p.get("name") == DEFAULT for p in profiles):
-            try:  # the one browser of 0.7's first build: its on/off becomes the default profile's
-                on = bool(json.load(open(os.path.join(self.farm, "browser.json"))).get("on"))
-            except (OSError, ValueError):
-                on = False
-            profiles.insert(0, {"name": DEFAULT, "slot": 0, "on": on, "created": 0})
         return profiles
 
     def _write(self, profiles: list[dict]):
@@ -200,7 +201,9 @@ class Registry:
             return _env("FARM_BROWSER_PROFILE", os.path.join(self.farm, "browser"))
         return os.path.join(self.farm, "browsers", name)
 
-    def add(self, name: str, by: str = "") -> dict:
+    def add(self, name: str, by: str = "", owner: str | None = None) -> dict:
+        """A new profile. ``owner``: the Claude it belongs to; only that Claude gets its tools and only its person
+        sees it (the farm manager sees every profile). Without one it is the farm's own (its manager's Claude)."""
         name = (name or "").strip().lower()
         if not NAME_RE.fullmatch(name):
             raise ValueError("a profile name is up to 24 lowercase letters, digits or -")
@@ -210,22 +213,39 @@ class Registry:
                 raise ValueError(f"there is already a profile named {name}")
             if len(profiles) >= MAX_PROFILES:
                 raise ValueError(f"at most {MAX_PROFILES} profiles; remove one first")
+            if owner and len([p for p in profiles if p.get("owner") == owner]) >= PER_CLAUDE:
+                raise ValueError(f"a Claude has at most {PER_CLAUDE} profiles; remove one first")
             used = {int(p["slot"]) for p in profiles}
             p = {"name": name, "slot": min(set(range(MAX_PROFILES)) - used), "on": False, "created": time.time(),
                  "by": by}
+            if owner:
+                p["owner"] = owner
             self._write(profiles + [p])
         return p
 
-    def remove(self, name: str) -> bool:
-        """Forget a profile and delete its logins (the default profile stays)."""
-        if name == DEFAULT:
-            raise ValueError("the default profile can't be removed (stop it, or log out of its sites)")
+    def set_owner(self, name: str, owner: str | None):
+        with self._locked():
+            profiles = self._read()
+            for p in profiles:
+                if p["name"] == name:
+                    if owner:
+                        p["owner"] = owner
+                    else:
+                        p.pop("owner", None)
+            self._write(profiles)
+
+    def remove(self, name: str, keep_files: str = "") -> bool:
+        """Forget a profile and delete its logins (``keep_files``: move them there instead)."""
         with self._locked():
             profiles = self._read()
             if not any(p["name"] == name for p in profiles):
                 return False
             self._write([p for p in profiles if p["name"] != name])
-        shutil.rmtree(self.dir(name), ignore_errors=True)
+        if keep_files and os.path.exists(self.dir(name)):
+            os.makedirs(os.path.dirname(keep_files), exist_ok=True)
+            shutil.move(self.dir(name), keep_files)
+        else:
+            shutil.rmtree(self.dir(name), ignore_errors=True)
         return True
 
     def want(self, name: str, on: bool, by: str = "") -> bool:
@@ -421,11 +441,16 @@ class Relay:
     ``--proxy-server`` takes no login, and its login prompt would stop the Claudes. It answers only proxy requests
     (CONNECT, or a full http:// address), so a page can't use it as a way out."""
 
-    def __init__(self, upstream: dict):
+    def __init__(self, upstream: dict, port: int = 0):
         self.upstream = upstream
         self.error = ""
         self.sock = socket.socket()
-        self.sock.bind(("127.0.0.1", 0))
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            self.sock.bind(("127.0.0.1", port))
+        except OSError:
+            self.sock.close()
+            raise
         self.sock.listen(128)
         self.sock.settimeout(0.5)
         self.port = self.sock.getsockname()[1]
@@ -510,15 +535,33 @@ def _pipe(src: socket.socket, dst: socket.socket):
                 s.shutdown(socket.SHUT_RDWR)
 
 
+def _proxy_key(proxy: dict | None) -> str:
+    return hashlib.sha256(json.dumps(proxy, sort_keys=True).encode()).hexdigest()[:16] if proxy else ""
+
+
+class _Procs(dict):
+    """The processes a Browser started and hasn't seen exit (name -> pid): one that is gone without a stop crashed."""
+
+    def __init__(self, browser):
+        super().__init__()
+        self.b = browser
+
+    def pop(self, name, default=None):
+        pid = super().pop(name, default)
+        return pid if pid and not self.b.alive(name) else default
+
+
 class Browser:
     """One profile's Chromium: keeps its Xvfb, x11vnc and Chromium running while it is on."""
 
     ORDER = ("xvfb", "vnc", "chromium")
 
-    def __init__(self, name: str, slot: int, profile: str, log_path: str):
+    def __init__(self, name: str, slot: int, profile: str, log_path: str, workspace: str = ""):
         self.name, self.slot, self.profile, self.log_path = name, slot, profile, log_path
+        self.workspace = workspace or os.environ.get("FARM_WORKSPACE") or os.path.dirname(os.path.abspath(profile))
         self.display = f":{int(_env('FARM_BROWSER_DISPLAY', ':99').lstrip(':').split('.')[0]) + slot}"
-        self.procs: dict[str, subprocess.Popen] = {}
+        # its processes run detached, each with a pid file: they keep running while the UI process is replaced
+        self.procs = _Procs(self)
         self.started: dict[str, list[float]] = {}  # recent start times per process, for the crash back-off
         self.error = ""
         self.hold_until = 0.0
@@ -527,9 +570,19 @@ class Browser:
         self.relay: Relay | None = None
         self._lock = threading.RLock()
 
+    def pidfile(self, name: str) -> str:
+        from . import procs
+        return os.path.join(procs.pids_dir(self.workspace), f"browser-{self.name}-{name}.json")
+
+    def marker(self, name: str) -> str | None:
+        return None  # the start of the command line it was started with (kept in its pid file)
+
+    def pid(self, name: str) -> int:
+        from . import procs
+        return procs.live_pid(self.pidfile(name))
+
     def alive(self, name: str) -> bool:
-        p = self.procs.get(name)
-        return bool(p and p.poll() is None)
+        return bool(self.pid(name))
 
     def running(self) -> bool:
         return all(self.alive(n) for n in self.ORDER)
@@ -540,14 +593,16 @@ class Browser:
     def sync(self, on: bool, proxy: dict | None = None):
         with self._lock:
             if not (on and available()):
-                if self.procs:
+                if self.running_any():
                     self.shutdown()
                 return
             if time.time() < self.hold_until:
                 return
-            if self.alive("chromium") and proxy != self.proxy:
+            if self.alive("chromium") and _proxy_key(proxy) != self._started_with():
                 self._stop("chromium")  # Chromium takes its proxy when it starts: turning it on or off restarts it
             self.proxy = proxy
+            if proxy and self.alive("chromium"):
+                self._relay()  # adopted (a new UI process): take the relay over
             if not self.alive("xvfb"):
                 self.shutdown()  # everything draws on it
                 self._start("xvfb")
@@ -558,10 +613,13 @@ class Browser:
                 self.error = ""
                 self.since = self.since or time.time()
 
+    def _started_with(self) -> str:
+        from . import procs
+        return procs.read_json(self.pidfile("chromium")).get("proxy_key") or ""
+
     def _start(self, name: str):
-        old = self.procs.pop(name, None)
-        if old is not None and old.poll() not in (None, 0, -signal.SIGTERM):
-            self.error = f"{name} exited with code {old.returncode}: {self._tail()}"
+        if self.procs.pop(name, None):  # it ran and exited without being stopped
+            self.error = f"{name} exited: {self._tail()}"
         recent = [t for t in self.started.get(name, []) if t > time.time() - 60]
         if len(recent) >= 3:  # three starts in a minute: wait instead of spinning
             self.error = self.error or f"{name} keeps exiting: {self._tail()}"
@@ -580,15 +638,15 @@ class Browser:
         self._rotate_log()
         with open(self.log_path, "ab") as log:
             log.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} starting {name}: {' '.join(cmd)}\n".encode())
-            log.flush()
-            p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=log, stderr=log, env=env,
-                                 start_new_session=True)
-        self.procs[name] = p
+        from . import procs
+        pid = procs.spawn_detached(self.workspace, cmd, env=env, log=self.log_path, pidfile=self.pidfile(name),
+                                   meta={"proxy_key": _proxy_key(self.proxy)} if name == "chromium" else None)
+        self.procs[name] = pid
         if name == "xvfb":
             self.since = 0.0
-            self._wait(lambda: os.path.exists(self._socket()), p, 10)
+            self._wait(lambda: os.path.exists(self._socket()), pid, 10)
         elif name == "chromium":
-            self._wait(lambda: cdp_up(self.slot), p, 30)
+            self._wait(lambda: cdp_up(self.slot), pid, 30)
 
     def _relay(self):
         """The relay this Chromium goes out through: one for its proxy, none without."""
@@ -596,7 +654,10 @@ class Browser:
             self.relay.close()
             self.relay = None
         if self.proxy and not self.relay:
-            self.relay = Relay(self.proxy)
+            try:
+                self.relay = Relay(self.proxy, relay_port(self.slot))
+            except OSError:  # the UI process this one replaces still holds it: taken over at the next sync
+                self.relay = None
 
     def _socket(self) -> str:
         return f"/tmp/.X11-unix/X{self.display.lstrip(':')}"
@@ -619,8 +680,8 @@ class Browser:
             return ["x11vnc", "-display", self.display, "-rfbport", str(vnc_port(self.slot)), "-localhost",
                     "-forever", "-shared", "-nopw", "-quiet", "-xkb", "-noprimary", "-noxrecord"]
         # through the farm's proxy: WebRTC too (its UDP would show the box's own address), and localhost stays direct
-        proxy = [f"--proxy-server=http://127.0.0.1:{self.relay.port}",
-                 "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"] if self.relay else []
+        proxy = [f"--proxy-server=http://127.0.0.1:{relay_port(self.slot)}",
+                 "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"] if self.proxy else []
         return [chromium_bin() or "chromium", f"--user-data-dir={self.profile}",
                 f"--remote-debugging-port={cdp_port(self.slot)}", "--remote-debugging-address=127.0.0.1",
                 "--no-first-run", "--no-default-browser-check", "--password-store=basic",
@@ -652,9 +713,10 @@ class Browser:
             os.replace(prefs + ".tmp", prefs)
 
     @staticmethod
-    def _wait(ready, p: subprocess.Popen, seconds: float):
+    def _wait(ready, pid: int, seconds: float):
+        from . import procs
         end = time.time() + seconds
-        while time.time() < end and p.poll() is None and not ready():
+        while time.time() < end and procs.alive(pid) and not ready():
             time.sleep(0.2)
 
     def _tail(self, n: int = 400) -> str:
@@ -673,16 +735,18 @@ class Browser:
             pass
 
     def _stop(self, name: str):
-        p = self.procs.pop(name, None)
-        if not p or p.poll() is not None:
-            return
+        from . import procs
+        self.procs.pop(name, None)
+        pid = self.pid(name)
+        if pid:
+            procs.terminate(pid, grace=10)
         try:
-            os.killpg(p.pid, signal.SIGTERM)
-            p.wait(10)
-        except subprocess.TimeoutExpired:
-            os.killpg(p.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
+            os.remove(self.pidfile(name))
+        except OSError:
             pass
+
+    def running_any(self) -> bool:
+        return any(self.alive(n) for n in self.ORDER)
 
     def shutdown(self):
         """Stop Chromium first (so it saves its cookies), then the screen."""
@@ -710,7 +774,8 @@ class Browsers:
             if b:
                 b.shutdown()
             log = os.path.join(self.registry.farm, "browser.log" if p["name"] == DEFAULT else f"browsers/{p['name']}.log")
-            b = self.running[p["name"]] = Browser(p["name"], int(p["slot"]), self.registry.dir(p["name"]), log)
+            b = self.running[p["name"]] = Browser(p["name"], int(p["slot"]), self.registry.dir(p["name"]), log,
+                                                  self.workspace)
         return b
 
     def slot(self, name: str) -> int:
@@ -765,7 +830,14 @@ class Browsers:
         return changed
 
     def sync(self):
-        with self._lock:
+        # the UI process runs this, and during a roll two of them do: one at a time across processes
+        os.makedirs(self.registry.farm, exist_ok=True)
+        with self._lock, open(os.path.join(self.registry.farm, "browsers-sync.lock"), "a") as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX)
+            self._sync()
+
+    def _sync(self):
+        if True:
             profiles, proxy = self.registry.all(), load_proxy(self.workspace)
             for p in profiles:
                 b = self._browser(p)
@@ -779,6 +851,7 @@ class Browsers:
                 self.running.pop(name).shutdown()
 
     def keep(self, stop: threading.Event, every: float = 2.0):
+        """Keep every profile as it should be. When this process goes (a UI roll) the browsers keep running."""
         while True:
             try:
                 self.sync()
@@ -786,12 +859,16 @@ class Browsers:
                 print(f"browser: {type(e).__name__}: {str(e)[:200]}", flush=True)
             if stop.wait(every):
                 break
-        self.shutdown()
-
-    def shutdown(self):
         with self._lock:
             for b in self.running.values():
-                b.shutdown()
+                if b.relay:
+                    b.relay.close()
+
+    def shutdown(self):
+        """Stop every profile's processes (from any process: they are found by their pid files)."""
+        with self._lock:
+            for p in self.registry.all():
+                self._browser(p).shutdown()
 
     def status(self) -> dict:
         lack = missing() if enabled() else ["FARM_BROWSER=0"]
@@ -800,7 +877,7 @@ class Browsers:
         for p in self.registry.all():
             b = self.running.get(p["name"])
             up = not lack and cdp_up(int(p["slot"]))
-            out.append({"name": p["name"], "on": bool(p.get("on")), "ready": up,
+            out.append({"name": p["name"], "owner": p.get("owner"), "on": bool(p.get("on")), "ready": up,
                         "running": bool(b and b.running()) or up, "tabs": tabs(int(p["slot"])) if up else [],
                         "error": b.error if b else "", "since": (b.since or None) if b else None,
                         "tools": f"mcp__{mcp_name(p['name'])}__*", "proxy": bool(p.get("proxy")),
@@ -813,7 +890,7 @@ class Browsers:
 
 
 # ------------------------------------------------------- the Claudes' tools
-def mcp_servers(workspace: str | None = None) -> dict[str, dict]:
+def mcp_servers(workspace: str | None = None, claude: str | None = "*", unowned: bool = False) -> dict[str, dict]:
     """The MCP servers every Claude gets, one per profile: Playwright attached to that profile's Chromium over
     DevTools, so it works in the logins made from the farm UI. Empty when this image has no browser."""
     exe = shutil.which(MCP_BIN)
@@ -822,6 +899,8 @@ def mcp_servers(workspace: str | None = None) -> dict[str, dict]:
     workspace = workspace or _env("FARM_WORKSPACE", "/workspace")
     out = {}
     for p in Registry(workspace).all():
+        if claude != "*" and p.get("owner") != claude and not ((claude == "" or unowned) and not p.get("owner")):
+            continue  # another Claude's profile (``unowned``: the farm's own Claude also gets the ones nobody owns)
         # its screenshots and logs go to the farm's folder, not into the Claude's worktree (where they'd be committed)
         files = os.path.join(workspace, ".farm", "browser-files", p["name"])
         out[mcp_name(p["name"])] = {"type": "stdio", "command": exe, "env": {},

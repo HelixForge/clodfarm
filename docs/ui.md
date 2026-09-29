@@ -82,17 +82,36 @@ Ollama, any Anthropic-compatible API), with no login. The farm checks that the m
 The token and API key from the container's environment (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) are never
 passed to hatched Claudes: each one uses only its own login.
 
-## Password
+## Who sees what, and the passwords
 
-One password, no username.
+A farm is public by default: anyone who reaches the UI watches it (the farm, every Claude, task titles, schedules,
+tokens, the planner's goal) and can hatch one Claude of their own. A Claude's person sees and manages everything about
+it; the farm manager sees and manages everything. See [people.md](people.md): your own Claude, signing in from your
+phone ("farm login"), approvals, tool choices, private farms.
 
+**The manager's password**, no username:
 - `FARM_UI_PASSWORD` in `.env` wins; or
-- `docker exec -it clodfarm clodfarm ui-passwd` sets a stored one (and signs every session out); or
+- `docker exec -it clodfarm clodfarm manager-passwd` (same as `ui-passwd`) sets a stored one and signs the manager out
+  everywhere; or
 - with neither, a random password is generated on first start and printed once in `docker logs clodfarm`.
 
-Stored as a PBKDF2-SHA256 hash (600,000 rounds) in `/workspace/.farm/ui-auth.json` (mode 600). Sessions are
-HMAC-signed, `HttpOnly`, `SameSite=Strict` cookies that last 7 days. Every write needs a JSON body and an
-`X-Clodfarm: 1` header, five wrong passwords lock that address out for five minutes, and pages are served with a
-strict Content-Security-Policy and `frame-ancestors 'none'`.
+**A private farm** needs a viewer password to watch: the manager panel (the gear), or
+`clodfarm farm private --password ...`. People who own a Claude on it get in with their owner cookie.
 
-Anyone with the password can run agents on your Claude accounts and read your repo: treat it like an SSH key.
+Passwords are stored as PBKDF2-SHA256 hashes (600,000 rounds): the manager's in `/workspace/.farm/ui-auth.json`
+(mode 600), the viewer's in the store. Manager and viewer sessions are HMAC-signed, `HttpOnly`, `SameSite=Strict`
+cookies that last 7 days; owner cookies last a year and are `SameSite=Lax`, so the pairing link from the Claude app
+signs you in. Every write needs a JSON body and an `X-Clodfarm: 1` header, five wrong passwords (or pairing codes)
+lock that address out for five minutes, and pages are served with a strict Content-Security-Policy and
+`frame-ancestors 'none'`.
+
+Whoever has the manager password can run agents on every Claude account on the farm and read your repo: treat it like
+an SSH key.
+
+## Many Claudes, many watchers
+
+The farm grows with its Claudes: drag to pan, pinch or scroll to zoom, and the ROSTER (R) lists every Claude with what
+it's doing, its tokens and its usage; tap one to go to it. The TASKS page filters by status and Claude, searches and
+pages on the server. The UI builds the farm's state once a second for everyone and answers with ETags, and it is its
+own process: however many people watch, the agents don't notice. `scripts/seed_farm.py` and
+`scripts/loadtest_ui.py` fill a farm with a hundred made-up Claudes and a crowd, to see it for yourself.

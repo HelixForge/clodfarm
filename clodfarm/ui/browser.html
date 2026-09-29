@@ -27,16 +27,24 @@
 <main class="wrap wide" aria-live="polite">
   <nav class="profiles" id="profiles" aria-label="Browser profiles" hidden>
     <div class="profile-tabs" id="profile-tabs" role="tablist"></div>
-    <button type="button" class="btn small-btn" id="add-open" title="A new profile: its own Chromium with its own logins">+ PROFILE</button>
+    <button type="button" class="btn small-btn" id="add-open" title="A new profile: its own Chromium with its own logins">+ ADD PROFILE</button>
     <form class="add-form" id="add-form" autocomplete="off" hidden>
       <label class="sr" for="add-name">New profile name</label>
       <input id="add-name" maxlength="24" placeholder="linkedin-work" spellcheck="false" pattern="[a-z0-9][a-z0-9\-]{0,23}"
         title="up to 24 lowercase letters, digits or -">
+      <label class="for-pick" id="add-owner-pick" hidden>FOR <select id="add-owner" title="The Claude it belongs to: only that Claude gets its browser tools"></select></label>
       <button type="submit" class="btn small-btn primary">ADD</button>
       <button type="button" class="btn small-btn" id="add-cancel">CANCEL</button>
     </form>
   </nav>
   <p class="form-error bar-error" id="bar-error" role="alert"></p>
+
+  <section class="card panel intro" id="denied" hidden>
+    <h2>THE FARM'S BROWSER</h2>
+    <p class="lede">The farm's browser shows your own Claude's profiles. Hatch a Claude or sign in to yours (MY CLAUDE on
+      the farm) to use it.</p>
+    <p><a class="btn primary" href="{{BASE}}/">← BACK TO THE FARM</a></p>
+  </section>
 
   <section class="conn" id="conn" aria-label="How this profile reaches the web" hidden>
     <span class="conn-label">CONNECTION</span>
@@ -68,10 +76,12 @@
     <h2 id="off-h">THE FARM'S BROWSER</h2>
     <p class="lede" id="off-text">Chromium on this box. Log in to a site here once (LinkedIn, a dashboard, an admin
       panel) and every Claude on the farm works in that login with its browser tools, in the window you watch.</p>
-    <p class="muted small" id="off-note">Each profile has its own logins (two LinkedIn accounts: two profiles), and any
-      Claude can use any profile. Logins stay in the farm's workspace volume, so they survive a restart. The Claudes
-      are told never to type passwords: when a site needs a login, they ask you to do it here.</p>
-    <p><button type="button" class="btn primary" id="start">▶ START</button></p>
+    <p class="muted small" id="off-note">Each profile has its own logins (two LinkedIn accounts: two profiles) and belongs
+      to one Claude: only that Claude gets its browser tools, and only its person (and the farm manager) sees it here.
+      Logins stay in the farm's workspace volume, so they survive a restart. The Claudes are told never to type
+      passwords: when a site needs a login, they ask you to do it here.</p>
+    <p><button type="button" class="btn primary" id="start">▶ START</button>
+      <button type="button" class="btn primary" id="first-add" hidden>+ ADD PROFILE</button></p>
     <p class="form-error" id="off-error" role="alert"></p>
   </section>
 
@@ -94,6 +104,8 @@
   </section>
 
   <div class="profile-actions" id="profile-actions" hidden>
+    <label class="assign" id="assign" hidden>BELONGS TO
+      <select id="assign-owner" title="The Claude this profile belongs to: only it gets the profile's browser tools"></select></label>
     <button type="button" class="btn small-btn" id="stop" title="Stop this profile's browser (its logins are kept)">■ STOP</button>
     <button type="button" class="btn small-btn danger" id="remove" title="Remove this profile and delete its logins">REMOVE PROFILE</button>
     <span class="confirm" id="confirm" hidden>Delete this profile and all its logins?

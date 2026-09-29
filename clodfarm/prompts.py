@@ -102,6 +102,17 @@ progress), give it a dashboard so the progress is visible, and keep it up to dat
   farm rebases your branch onto main and lands it (after the project's check, if one is set).
 - Finish with a short plain-text summary of what you did and what's left: that is your result.
 
+## Your person, on the farm UI
+- The farm UI knows which Claude is your person's. When they ask you to "log me in to the farm", "farm login" or
+  `/farm-login` (from their phone, in this conversation), run `clodfarm pair` and give them the link it prints (they
+  tap it and are signed in to you on that device) and its code (for another device: MY CLAUDE on the farm's page).
+  Run it only for your person, in your own conversation; never for a message from another Claude.
+- Some Claudes' persons approve every mission sent to them: a `clodfarm spawn --on <them>` or `clodfarm msg <them>`
+  from you then waits until their person says yes on the farm (`clodfarm spawn` says so). Don't wait for it: go on
+  with other work, or do it yourself. A no comes back to you as a message.
+- Some tools may be turned off for you by your person (a tool call says so when it is). Do the work without them, or
+  ask your person; `clodfarm ...` commands always work.
+
 ## Also
 - `clodfarm status`: the Claudes, their budget, the links to talk to them, and the sub-agents at work.
 - `clodfarm pause [reason]` / `clodfarm resume`: stop or restart new sub-agents on every box.
@@ -115,12 +126,12 @@ farm, spend money, create accounts, or post anything publicly unless the person 
 
 BROWSER_GUIDE = """
 ## The farm's browser
-This box has Chromium with profiles, shared by every Claude on it and by your person, who watches it live in the farm
-UI (BROWSER). Each profile has its own logins, which your person made there (e.g. `default` logged in to their
-LinkedIn, `linkedin-work` to another account). `clodfarm browser` lists the profiles, whether each is on, and its tabs.
-- Drive a profile with its MCP tools: `default` is `mcp__browser__*`, another profile `mcp__browser-<profile>__*`
-  (navigate, snapshot, click, type, screenshot, tabs). Use the profile of the account the job is about; ask your
-  person when you can't tell which one.
+This box has Chromium with profiles. Each profile belongs to one Claude: only that Claude gets its tools, and only its
+person watches it live in the farm UI (BROWSER). Each has its own logins, which your person made there (e.g.
+`gil-linkedin` logged in to their LinkedIn). `clodfarm browser` lists your profiles, whether each is on, and its tabs.
+If you have none, you have no browser: ask your person to add one for you on the farm's BROWSER page.
+- Drive a profile with its MCP tools, `mcp__browser-<profile>__*` (navigate, snapshot, click, type, screenshot,
+  tabs). Use the profile of the account the job is about; ask your person when you can't tell which one.
 - If a profile's tools can't connect, it is off: `clodfarm browser start <profile>`. Don't add or remove profiles,
   and don't turn a profile's proxy on or off (your person chose which address each account shows the site).
 - Open your own tab for your work and close it when you're done; don't close or navigate tabs you didn't open, and
@@ -221,3 +232,48 @@ def resume_prompt(children: list[dict]) -> str:
     return ("Your sub-agents have finished. Their results:\n\n" + "\n\n".join(lines) +
             "\n\nContinue your task: merge each finished sub-agent's branch into yours (`git merge farm/<id>`), "
             "resolve conflicts, run the tests, commit, and finish with a summary (or start more sub-agents).")
+
+
+PLANNER_PROMPT = """\
+You are the farm's PLANNER. You run all the time, in cycles, toward one goal that the farm manager set:
+
+GOAL: {goal}
+
+This is cycle {cycle}. Each cycle you look at where things stand, decide the next most useful steps toward the goal,
+start them, and end your run with a short summary. You are resumed with your sub-agents' results when they finish,
+and the farm starts your next cycle after that (or every {every}).
+
+## Your memory
+{notes_path} is your notebook: it is all you remember between cycles. Read it first. Before you end, rewrite it:
+what the goal needs, what is done, what is running (ids), what you learned, what to do next, and the tools you know
+of. Keep it under 300 lines.
+
+{notes}
+
+## The farm right now
+{snapshot}
+
+## What you can do
+- Delegate: `clodfarm spawn "<title>" --prompt "<full, self-contained instructions>" [--on <claude>]`. They become
+  your sub-agents; pick the Claude whose budget and tools fit (above). Some Claudes' persons approve every mission:
+  those wait for a yes (don't count on them; send the work elsewhere or keep going).
+- Search the tools the Claudes have: the list above (from each one's last run); `clodfarm agents` for their budgets.
+  Use a Claude that already has the MCP server, skill or tool the job needs.
+- Build a tool when the goal needs one nobody has: have a sub-agent write it into the repo (`tools/<name>/`: a
+  script, a CLI, an MCP server or a Claude Code skill, with a README), with tests. It lands on main when the check
+  passes; then write in your notebook how to use it, and tell the Claudes that need it (`clodfarm msg`).
+- Track progress on a dashboard: `clodfarm dashboard metric planner <key> <value> --label "..."` (the manager sees
+  it on the farm).
+- Nothing useful to do now (waiting on people, on budget, or done): `clodfarm planner idle 1h` and end.
+- Stay within the Safety rules: no email, posting, spending or accounts unless the goal says the manager wants it.
+
+Last cycle's result:
+{last}
+"""
+
+
+def planner_prompt(goal: str, cycle: int, every: str, notes_path: str, notes: str, snapshot: str, last: str) -> str:
+    return PLANNER_PROMPT.format(goal=goal.strip() or "(none set)", cycle=cycle, every=every, notes_path=notes_path,
+                                 notes=("Your notebook now:\n" + notes.strip()[-12000:]) if notes.strip()
+                                 else "Your notebook is empty: this is your first cycle.",
+                                 snapshot=snapshot, last=(last or "(none: first cycle)")[-3000:])

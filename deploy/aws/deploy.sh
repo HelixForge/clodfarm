@@ -8,6 +8,11 @@
 #   deploy/aws/deploy.sh logs       # follow the container logs
 #   deploy/aws/deploy.sh shell      # a shell inside the container
 #   deploy/aws/deploy.sh down       # delete the stack (the DynamoDB table is kept)
+#   deploy/aws/deploy.sh upgrade [--ref main | --from <pip/git URL>]
+#                                   # new clodfarm code (daemon, UI, CLI) on the running box: every agent keeps
+#                                   # running, the phone conversations too (docs/deploy-aws.md#upgrading)
+#   deploy/aws/deploy.sh roll       # a new image (Claude Code, system packages): the box stops taking work,
+#                                   # finishes what runs, then the container is recreated on the new image
 #
 # Optional, so the farm can build and run its own apps on AWS (apps-role.yaml; docs/deploy-aws.md):
 #   deploy/aws/deploy.sh apps-role --email you@example.com [--budget 50] [--domain apps.example.com]
@@ -138,6 +143,31 @@ EOF
     apps_aws cloudformation delete-stack --stack-name "$APPS_STACK"
     apps_aws cloudformation wait stack-delete-complete --stack-name "$APPS_STACK"
     echo "apps role removed. Apps the farm deployed are separate stacks: they keep running until you delete them." ;;
+  upgrade)
+    args=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --ref) args+=(--ref "$2"); shift 2 ;;
+        --from) args+=(--from "$2"); shift 2 ;;
+        --dry-run) DRY=1; shift ;;
+        *) echo "unknown option $1" >&2; exit 2 ;;
+      esac
+    done
+    script="docker exec clodfarm clodfarm upgrade ${args[*]:-} && docker exec clodfarm clodfarm upgrade --status"
+    if [[ -n "${DRY:-}" ]]; then echo "would run on $(out InstanceId): $script"; exit 0; fi
+    box_run "set -e; $script" ;;
+  roll)
+    # drain: no new sub-agents here, running ones finish (a multi-box farm's other boxes take the queue meanwhile)
+    script='set -e; cd /opt/clodfarm; docker compose pull -q
+docker exec clodfarm clodfarm drain --exit
+for i in $(seq 1 360); do   # up to 6 h: the longest a sub-agent may run is FARM_TASK_TIMEOUT
+  docker logs --since 30s clodfarm 2>&1 | grep -q "farm.drained" && break
+  [ "$(docker inspect -f {{.State.Running}} clodfarm)" = true ] || break
+  sleep 60
+done
+docker compose up -d --force-recreate && echo "rolled onto the new image"'
+    if [[ "${1:-}" == "--dry-run" ]]; then echo "would run on $(out InstanceId):"; echo "$script"; exit 0; fi
+    box_run "$script" ;;
   login)  on_box "sudo docker exec -it clodfarm clodfarm login" ;;
   status) on_box "sudo docker exec -it clodfarm clodfarm status" ;;
   logs)   on_box "sudo docker logs -f --tail 100 clodfarm" ;;
@@ -146,5 +176,5 @@ EOF
     aws cloudformation delete-stack --region "$REGION" --stack-name "$STACK"
     aws cloudformation wait stack-delete-complete --region "$REGION" --stack-name "$STACK"
     echo "stack deleted. The DynamoDB table is retained; delete it by hand if you no longer need the history." ;;
-  *) sed -n '2,18p' "$0" ;;
+  *) sed -n '2,23p' "$0" ;;
 esac

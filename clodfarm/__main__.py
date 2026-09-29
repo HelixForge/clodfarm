@@ -1,5 +1,3 @@
-import sys
+from .boot import main
 
-from .cli import main
-
-sys.exit(main())
+main()

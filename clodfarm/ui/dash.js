@@ -334,7 +334,8 @@ async function listPage(quiet) {
   crumbs(parts(here).at(-1) || null, parts(here).slice(0, -1).join("/"));
   $("#range").hidden = true;
   let rows;
-  try { rows = await api("dashboards"); } catch (e) { if (!quiet) fill($("#main"), h("p", { class: "muted", text: e.message })); return; }
+  try { rows = await api("dashboards"); }
+  catch (e) { if (e.status === 403) return App.key === "403" ? null : forPeople(); if (!quiet) fill($("#main"), h("p", { class: "muted", text: e.message })); return; }
   const key = JSON.stringify([rows, here, App.editing]);
   if (key === App.key || (quiet && App.editing)) return; // never redraw under a half-typed folder name
   App.key = key;
@@ -375,12 +376,25 @@ async function listPage(quiet) {
 }
 const upperName = n => String(n || "").toUpperCase();
 
+/** Someone only watching the farm (403): dashboards are for its people. No redirect: the farm can't log them in. */
+function forPeople() {
+  crumbs(null);
+  $("#range").hidden = true;
+  App.key = "403";
+  return fill($("#main"), h("div", { class: "page-head" }, h("h1", { text: "DASHBOARDS" })),
+    h("section", { class: "card empty" },
+      h("h2", { text: "Dashboards are for the farm's people" }),
+      h("p", { class: "lede", text: "Sign in to your Claude (MY CLAUDE on the farm) or as the manager to see them." }),
+      h("p", {}, h("a", { class: "btn primary", href: `${BASE}/`, text: "← BACK TO THE FARM" }))));
+}
+
 async function dashPage(slug, quiet) {
   $("#range").hidden = false;
   for (const b of $$("#range button")) b.setAttribute("aria-pressed", String(Number(b.dataset.days) === App.days));
   let d;
   try { d = await api(`dashboards/${slug}?days=${App.days}`); }
   catch (e) {
+    if (e.status === 403) return App.key === "403" ? null : forPeople();
     if (quiet) return;
     crumbs(slug);
     return fill($("#main"), h("h1", { text: e.status === 404 ? "No such dashboard" : "Could not load it" }),

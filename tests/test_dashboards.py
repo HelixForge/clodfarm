@@ -114,7 +114,7 @@ def test_cli(env, store, tmp_path, capsys):
 def test_pages_and_api(ui):  # noqa: F811
     base, farm_ui = ui
     call = client()
-    assert call(base + "/api/dashboards")[0] == 401
+    assert call(base + "/api/dashboards")[0] == 403  # for the farm's people, not the public
     with urllib.request.urlopen(base + "/dashboards/tests") as r:              # the page itself is public HTML
         html = r.read().decode()
     assert 'href="/dash.css"' in html and "{{BASE}}" not in html
@@ -151,7 +151,7 @@ def test_tools_record_and_api(ui):  # noqa: F811
     st.put_tools("gil", {**init, "model": "usage"}, where="usage check", keep_newer=86400)  # a fresh task record wins
     assert st.tools()["gil"]["model"] == "m" and st.tools()["gil"]["plugins"] == [{"name": "p", "version": ""}]
     call = client()
-    assert call(base + "/api/agents/gil/tools")[0] == 401
+    assert call(base + "/api/agents/gil/tools")[0] == 403
     login(call, base)
     code, t, _ = call(base + "/api/agents/gil/tools")
     assert code == 200 and t["tools"] == ["Bash", "mcp__x__y"] and "PK" not in t

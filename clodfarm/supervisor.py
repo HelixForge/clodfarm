@@ -19,24 +19,28 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import signal
+import socket
 import subprocess
 import sys
 import threading
 import time
 
-from . import awsapps, dashboards, gitops, notify, prompts
-from .auth import (accept_remote_control, auth_status, banner, claude_name, install_browser_mcp, install_guide,
+from . import awsapps, boot, dashboards, gitops, notify, planner, procs, prompts
+from .auth import (accept_remote_control, auth_status, banner, claude_name, install_browser_mcp, install_commands,
+                   install_guide,
                    install_hooks, install_messaging, install_model, seat_id, trust_directory)
 from .config import primary_name_file
 from .config import Config, load
 from .governor import Snapshot, decide
-from .runner import Live, build_cmd, kill_tree, run_agent, session_name
+from .runner import Live, RunHandle, build_cmd, kill_tree, run_agent, session_name, start_run
 from .store import Store, iso, now
 
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\]8;;[^\x07\x1b]*(?:\x07|\x1b\\)?")
 RC_IDLE = 900  # Remote Control is restarted on a new Claude Code only when no conversation was active for this long
+DRAINED_MARK = "/tmp/clodfarm-drained" if os.path.exists("/.dockerenv") else "/nonexistent/clodfarm-drained"
 CANCEL_POLL = 3  # seconds between two looks at a running sub-agent's status: a cancel stops it within about this long
 
 
@@ -53,21 +57,53 @@ class Farm:
         self.ui = None
         self.rc_version = ""  # the Claude Code version Remote Control is running
         self.rc_updating = False  # Remote Control was stopped to restart on a new version
+        self.abandoned: set[str] = set()  # tasks whose run goes on past this process (handing over)
+        self.handoff = False  # SIGHUP: exec the current release, leaving every run going (it adopts them)
+        self.threads: list[threading.Thread] = []
+        self.agents = None  # the farm's own daemon keeps the Claudes added in the UI running
+        self.ui_keeper = None
+        self._drain: tuple[float, dict] = (0.0, {})
+        self.started = now()
+
+    @property
+    def runs(self) -> str:
+        """Where this Claude's runs keep their files (see runshim.py)."""
+        return procs.runs_dir(self.cfg.workspace, self.cfg.farm_id)
+
+    def pidfile(self) -> str:
+        return os.path.join(procs.pids_dir(self.cfg.workspace),
+                            f"farmd-{os.environ.get('FARM_NAME') if os.environ.get('FARM_HATCHED') else 'primary'}.json")
+
+    def write_pidfile(self, ready: bool):
+        try:
+            procs.write_json(self.pidfile(), {"pid": os.getpid(), "release": boot.running(), "ready": ready,
+                                              "name": self.cfg.name, "at": now()})
+        except OSError as e:
+            print(f"pid file not written: {e}", flush=True)
+
+    def _on_hup(self, *_):
+        self.handoff = True
+        self.stop.set()
 
     # ------------------------------------------------------------ lifecycle
     def run(self):
         if threading.current_thread() is threading.main_thread():
             signal.signal(signal.SIGTERM, lambda *_: self.stop.set())
             signal.signal(signal.SIGINT, lambda *_: self.stop.set())
-        if self.cfg.ui:
-            # up before the login, so the first agent can be hatched (logged in) from the browser
-            try:
-                from .web import serve
-                self.ui = serve(self.cfg, self.store, block=False)
-            except OSError as e:
-                print(f"farm UI not started: {e}", flush=True)
+            signal.signal(signal.SIGHUP, self._on_hup)
+        self.write_pidfile(ready=False)
+        if not os.environ.get("FARM_HATCHED"):
+            from .agents import AgentManager
+            self.agents = AgentManager(self.cfg)
+            threading.Thread(target=self.agents.keep_alive, name="agents", daemon=True).start()
+            if self.cfg.ui:
+                # its own process, up before the login, so the first agent can be hatched (logged in) from the browser
+                from .uikeeper import UIKeeper
+                self.ui_keeper = UIKeeper(self.cfg)
+                threading.Thread(target=self.ui_keeper.keep, args=(self.stop,), name="ui", daemon=True).start()
         self.wait_for_auth()
         self.ensure_table()
+        self.clear_stale_drain()
         gitops.ensure_repo(self.cfg.repo_dir, self.cfg.repo_url)
         if self.cfg.manage_claude_config:
             if self.cfg.remote_control:
@@ -82,9 +118,11 @@ class Farm:
             if awsapps.settings():  # the CLI the Claudes deploy with; in the background so startup isn't held up
                 threading.Thread(target=self._ensure_aws_cli, name="aws-cli", daemon=True).start()
             install_hooks()
+            install_commands()  # /farm-login: its person signs in to it on the farm UI from the Claude app
             install_messaging()
             install_model(self.cfg.model)
-            install_browser_mcp()  # the farm's browser as the `browser` MCP tools, when the image has one
+            # the farm's browser as the `browser` MCP tools (its own profiles), when the image has one
+            install_browser_mcp(claude=self.cfg.name, unowned=not os.environ.get("FARM_HATCHED"))
             trust_directory(self.cfg.repo_dir)
             trust_directory(self.cfg.workspace)
         # this Claude's conversations (Remote Control and every session opened from it) inherit their mail flag
@@ -106,6 +144,8 @@ class Farm:
             threads.append(threading.Thread(target=self.worker_loop, args=(i,), name=f"w{i}", daemon=True))
         for t in threads:
             t.start()
+        self.threads = threads
+        self.write_pidfile(ready=True)
         last_status = last_rc_check = 0.0
         while not self.stop.is_set():
             try:
@@ -118,15 +158,24 @@ class Farm:
                                      daemon=True).start()
                 for tid in self.store.dispatch_wakes(self.cfg.mail_max_hops, self.cfg.mail_wakes_per_hour):
                     print(f"mail: {tid} started for an unread --wake message", flush=True)
+                if not os.environ.get("FARM_HATCHED"):  # the farm's own daemon drives the planner (one per farm)
+                    planner.tick(self.store, self.cfg, self.cfg.farm_id, self.cfg.name)
                 if now() - last_status > 600:
                     self.print_status()
                     last_status = now()
                 if now() - last_rc_check > int(os.environ.get("FARM_RC_VERSION_CHECK", "300")):
                     self.restart_stale_rc()
                     last_rc_check = now()
+                if self.drained():
+                    self.store.event("farm.drained", f"{self.cfg.farm_id}: drained, exiting")
+                    if os.path.exists("/.dockerenv"):  # gone with the container, kept across its restarts
+                        open(DRAINED_MARK, "a").close()
+                    break
             except Exception as e:  # keep the farm alive through transient AWS errors
                 print(f"housekeeping error: {e}", flush=True)
             self.stop.wait(int(os.environ.get("FARM_TICK_SECONDS", "15")))  # schedules fire within a tick
+        if self.handoff:
+            self.hand_over()
         self.shutdown()
 
     def ensure_table(self):
@@ -143,21 +192,97 @@ class Farm:
                 delay = min(delay * 2, 60)
         raise SystemExit(0)
 
+    def hand_over(self):
+        """SIGHUP (`clodfarm upgrade`): exec the current release in this same process, leaving every run, Remote
+        Control and added Claude running. The new code adopts them from their files (see runshim.py). A worker that
+        is landing a finished run's work (merge, check) finishes that first; the others only read files."""
+        wait = int(os.environ.get("FARM_HANDOFF_WAIT", "900"))
+        print(f"handing over to release {os.path.basename(boot.target()) or 'image'}: runs keep going", flush=True)
+        deadline = now() + wait
+        for t in self.threads:
+            if t.name.startswith("w"):
+                t.join(max(0.0, deadline - now()))
+        self.store.event("farm.handoff", f"{self.cfg.farm_id}: {boot.running()} -> "
+                         f"{os.path.basename(boot.target()) or 'image'}; {len(self.running)} run(s) keep going")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.environ["CLODFARM_HANDOFF"] = "1"
+        os.execv(sys.executable, boot.command(sys.argv[1:] or ["run"]))
+
+    def denied_tools(self) -> list[str]:
+        """The built-in tools this Claude's person turned off, for --disallowedTools (the hook covers the rest)."""
+        from . import policy
+        return policy.disallowed_flags(policy.load(os.environ.get("CLAUDE_CONFIG_DIR") or ""))
+
+    def _run_names(self) -> list[str]:
+        try:
+            return sorted(os.listdir(self.runs))
+        except OSError:
+            return []
+
+    # ----------------------------------------------------------------- drain
+    def drain_state(self) -> dict:
+        """`clodfarm drain`: this box stops taking sub-agents, finishes the ones it runs, and (with --exit) stops."""
+        t, d = self._drain
+        if now() - t > 10:
+            try:
+                d = self.store.box_control(socket.gethostname())
+            except Exception:  # noqa: BLE001 - keep the last answer while the store is unreachable
+                pass
+            self._drain = (now(), d)
+        return d
+
+    def clear_stale_drain(self):
+        """A drain left by the container this one replaced (same host name, `deploy.sh roll`): start fresh. A
+        hand-over (SIGHUP) keeps it: the drain is this box's own."""
+        if os.environ.get("CLODFARM_HANDOFF") or os.path.exists(DRAINED_MARK):
+            return  # this same container, restarted by Docker after it drained: it stays drained until recreated
+        try:
+            d = self.store.box_control(socket.gethostname())
+            if d.get("draining") and float(d.get("at") or 0) < self.started:
+                self.store.set_draining(socket.gethostname(), False)
+                self.store.event("farm.undrained", f"{self.cfg.farm_id}: a drain from before this start was cleared")
+        except Exception as e:  # noqa: BLE001
+            print(f"drain: {e!r}", flush=True)
+
+    def drained(self) -> bool:
+        d = self.drain_state()
+        if not (d.get("draining") and d.get("exit")) or self.running:
+            return False
+        if self.agents and any(self.agents.alive(a["id"]) for a in self.agents._load()):
+            return False  # the added Claudes stop first (each drains its own runs)
+        busy = [s for s in self.store.sessions(self.cfg.name, 50) if s.get("kind") == "conversation"
+                and s.get("busy") and not s.get("ended") and now() - float(s.get("last_at", 0)) < RC_IDLE]
+        return not busy  # no conversation cut off mid-turn
+
     def shutdown(self):
         """Stop cleanly: end the agents, hand this box's running tasks back to the queue (their attempt is given back)
         and free its slots right away, so another box, or this one after a restart, continues without waiting for
         leases to expire."""
         print("stopping: handing running tasks back to the queue", flush=True)
-        if self.ui:
-            self.ui.ui.manager.shutdown()  # the agents added in the UI hand their tasks back too
-            self.ui.ui.stopping.set()
-            self.ui.ui.browsers.shutdown()  # Chromium saves its cookies on the way out
-        for p in list(self.procs.values()):
+        if self.agents:
+            self.agents.shutdown()  # the agents added in the UI hand their tasks back too
+        if self.ui_keeper:
+            self.ui_keeper.shutdown()
+        if not os.environ.get("FARM_HATCHED"):
             try:
-                os.killpg(p.pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                pass
-        time.sleep(3)
+                from .browser import Browsers
+                Browsers(self.cfg.workspace).shutdown()  # Chromium saves its cookies on the way out
+            except Exception as e:  # noqa: BLE001
+                print(f"browser: not stopped cleanly: {e!r}", flush=True)
+        handles = [RunHandle(os.path.join(self.runs, n)) for n in self._run_names()]
+        for h in handles:
+            if h.poll() is None:
+                h.stop()
+        for p in list(self.procs.values()):
+            if not isinstance(p, RunHandle):
+                try:
+                    os.killpg(p.pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    pass
+        t0 = now()
+        while now() - t0 < 8 and any(h.poll() is None for h in handles):
+            time.sleep(0.2)
         mine = f"{self.cfg.farm_id}/"
         try:
             for t in self.store.list_tasks("running", 200):
@@ -169,6 +294,8 @@ class Farm:
         except Exception as e:  # noqa: BLE001 - leases expire on their own if the store is unreachable
             print(f"could not hand tasks back ({e!r}); their leases will expire", flush=True)
         self.store.event("farm.stopped", self.cfg.farm_id)
+        if not os.environ.get("FARM_HATCHED"):
+            boot.mark_clean(self.cfg.workspace)  # a stop on purpose: not a crash for the release's crash guard
 
     def billing(self) -> str:
         if self.cfg.bot:
@@ -231,44 +358,70 @@ class Farm:
 
     # ------------------------------------------------------- remote control
     def remote_control_loop(self):
+        """Keep ``claude remote-control`` running. It runs under the run shim, so the phone conversations it holds
+        outlive this process: a new release (or this one after a crash) finds it running and only reads its output."""
         backoff = 10
+        rundir = os.path.join(self.runs, "remote-control")
         while not self.stop.is_set():
-            # the session and every one you open from the app are marked [clodfarm], so they stand out in the app
-            cmd = [self.cfg.claude_bin, "remote-control", "--name", session_name(self.cfg),
-                   "--remote-control-session-name-prefix", session_name(self.cfg), "--spawn", self.cfg.rc_spawn,
-                   "--capacity", str(self.cfg.rc_capacity), "--permission-mode", self.cfg.permission_mode]
-            t0 = now()
-            self.rc_version = self.claude_version()
-            try:
-                p = subprocess.Popen(cmd, cwd=self.cfg.repo_dir, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                     stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=True)
-            except FileNotFoundError:
-                print("remote-control: claude binary not found", flush=True)
-                return
-            self.procs["remote-control"] = p
-            self.store.event("rc.started", f"Remote Control session '{self.cfg.name}' starting (pid {p.pid})")
-            seen, connected = set(), False
-            for raw in p.stdout:
-                # its screen redraws: drop terminal escapes and print each distinct line once
-                line = ANSI.sub("", raw).replace("\x07", "").strip()
-                if not line or line in seen:
+            h = RunHandle(rundir)
+            meta = procs.read_json(os.path.join(rundir, "meta.json"))
+            adopted = h.started() and h.poll() is None and meta.get("kind") == "rc"
+            if adopted:
+                t0, self.rc_version = float(meta.get("started") or now()), meta.get("version") or self.claude_version()
+                print(f"remote-control: still running (pid {h.pid}), adopted", flush=True)
+            else:
+                # the session and every one you open from the app are marked [clodfarm], so they stand out in the app
+                cmd = [self.cfg.claude_bin, "remote-control", "--name", session_name(self.cfg),
+                       "--remote-control-session-name-prefix", session_name(self.cfg), "--spawn", self.cfg.rc_spawn,
+                       "--capacity", str(self.cfg.rc_capacity), "--permission-mode", self.cfg.permission_mode]
+                t0 = now()
+                self.rc_version = self.claude_version()
+                if not shutil.which(self.cfg.claude_bin):
+                    print("remote-control: claude binary not found", flush=True)
+                    return
+                h = start_run(self.cfg.workspace, rundir, cmd, self.cfg.repo_dir, dict(os.environ),
+                              meta={"kind": "rc", "started": t0, "version": self.rc_version}, merge_stderr=True)
+                self.store.event("rc.started", f"Remote Control session '{self.cfg.name}' starting (pid {h.pid})")
+            self.procs["remote-control"] = h
+            seen, connected = set(), adopted
+            out = os.path.join(rundir, "out.jsonl")
+            pos = os.path.getsize(out) if adopted and os.path.exists(out) else 0
+            buf = ""
+            while True:
+                try:
+                    with open(out, "rb") as f:
+                        f.seek(pos)
+                        chunk = f.read()
+                except FileNotFoundError:
+                    chunk = b""
+                pos += len(chunk)
+                *lines, buf = (buf + chunk.decode(errors="replace")).split("\n")
+                for raw in lines:
+                    # its screen redraws: drop terminal escapes and print each distinct line once
+                    line = ANSI.sub("", raw).replace("\x07", "").strip()
+                    if not line or line in seen:
+                        continue
+                    seen.add(line)
+                    print(f"[remote-control] {line}", flush=True)
+                    url = re.search(r"https://claude\.ai/code/session_\w+", raw)
+                    if url and not connected:
+                        connected = True
+                        self.store.event("rc.connected", f"Remote Control '{self.cfg.name}' is live: {url.group(0)}")
+                if chunk:
                     continue
-                seen.add(line)
-                print(f"[remote-control] {line}", flush=True)
-                url = re.search(r"https://claude\.ai/code/session_\w+", raw)
-                if url and not connected:
-                    connected = True
-                    self.store.event("rc.connected", f"Remote Control '{self.cfg.name}' is live: {url.group(0)}")
-            p.wait()
-            self.procs.pop("remote-control", None)
+                if h.poll() is not None or self.stop.is_set():
+                    break
+                time.sleep(0.5)
             if self.stop.is_set():
-                return
+                return  # it keeps running: the next release adopts it (or shutdown stops it)
+            self.procs.pop("remote-control", None)
+            code = h.poll()
             if self.rc_updating:  # stopped by restart_stale_rc: start again on the new version right away
                 self.rc_updating = False
                 continue
             ran = now() - t0
             backoff = 10 if ran > 300 else min(backoff * 2, 1800)
-            self.store.event("rc.exited", f"code {p.returncode} after {ran:.0f}s; restarting in {backoff}s")
+            self.store.event("rc.exited", f"code {code} after {ran:.0f}s; restarting in {backoff}s")
             self.stop.wait(backoff)
 
     def restart_stale_rc(self):
@@ -286,10 +439,7 @@ class Farm:
         self.store.event("rc.updating", f"Remote Control '{self.cfg.name}': restarting on Claude Code {cur} "
                          f"(was {self.rc_version})")
         self.rc_updating = True
-        try:
-            os.killpg(p.pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            self.rc_updating = False
+        p.stop()
 
     # ------------------------------------------------------------ Claude Code
     def claude_version(self) -> str:
@@ -347,10 +497,12 @@ class Farm:
             res = run_agent(build_cmd(self.cfg, "Answer in one word.", name=session_name(self.cfg, "usage check")),
                             "Reply with: ok", self.cfg.workspace, env, 180,
                             on_snapshot=lambda sn: self.store.put_snapshot(sn, self.seat),
-                            on_start=lambda p: self.procs.__setitem__("usage", p))
+                            on_start=lambda p: self.procs.__setitem__("usage", p), workspace=self.cfg.workspace,
+                            rundir=os.path.join(procs.runs_dir(self.cfg.workspace, "misc"), f"usage-{self.cfg.farm_id}"))
         finally:
             self.procs.pop("usage", None)
         self.store.add_spend(res.cost_usd, self.seat)
+        self.store.add_tokens(self.store.token_counts(res.usage), self.cfg.name)
         self.store.put_tools(self.cfg.name, res.init, where="usage check", keep_newer=86400)
         if not res.snapshots:
             return False
@@ -394,6 +546,10 @@ class Farm:
         wid = f"w{i}"
         holder = f"{self.cfg.farm_id}/{wid}"
         os.environ.setdefault("FARM_FARM_ID", self.cfg.farm_id)
+        try:
+            self.adopt(wid, holder)
+        except Exception as e:  # noqa: BLE001 - a run it couldn't adopt is re-queued when its lease runs out
+            print(f"{wid}: could not adopt its run: {e!r}", flush=True)
         while not self.stop.is_set():
             try:
                 self.worker_step(wid, holder)
@@ -402,6 +558,47 @@ class Farm:
                 self.store.heartbeat(self.cfg.farm_id, wid, f"error: {e}"[:200], seat=self.seat)
                 self.stop.wait(30)
 
+    def adopt(self, wid: str, holder: str):
+        """Take over the run this worker had going before the farm handed over to a new release (or crashed): it
+        kept running under its shim. Its task still has to be this worker's; otherwise the run is stopped."""
+        cfg, store = self.cfg, self.store
+        for name in self._run_names():
+            rundir = os.path.join(self.runs, name)
+            meta = procs.read_json(os.path.join(rundir, "meta.json"))
+            if meta.get("kind") != "task" or meta.get("wid") != wid:
+                continue
+            h, tid = RunHandle(rundir), meta.get("tid")
+            cur = store.get_task(tid) or {}
+            if cur.get("status") != "running" or cur.get("worker") != holder:
+                if h.poll() is None:
+                    print(f"{wid}: {tid} isn't this worker's any more ({cur.get('status', 'gone')}): stopping its run",
+                          flush=True)
+                    kill_tree(h)
+                shutil.rmtree(rundir, ignore_errors=True)
+                continue
+            slot = meta.get("slot")
+            store.renew_lease(tid, holder, cfg.lease_seconds)
+            if slot and not store.renew_slot(slot, holder, cfg.lease_seconds):
+                slot = store.acquire_slot(holder, cfg.policy.max_workers, cfg.lease_seconds, self.seat) or slot
+            state = "running" if h.poll() is None else f"finished (code {h.poll()})"
+            print(f"{wid}: adopted {tid} ({state}, pid {h.pid or '-'})", flush=True)
+            store.event("task.adopted", f"{tid}: adopted by {holder} after a hand-over ({state})", task=tid)
+            try:
+                self.run_task(cur, wid, holder, slot, adopt=rundir)
+            except Exception as e:  # a farm bug must not strand the task until its lease runs out
+                store.finish(tid, holder, False, f"farm error: {e!r}", cfg.max_resumes)
+                raise
+            finally:
+                if not self.stop.is_set():
+                    self.clean_runs(tid)
+                    if slot:
+                        store.release_slot(slot, holder)
+
+    def clean_runs(self, tid: str):
+        for name in self._run_names():
+            if name.startswith(f"{tid}-"):
+                shutil.rmtree(os.path.join(self.runs, name), ignore_errors=True)
+
     def worker_step(self, wid: str, holder: str):
         cfg, store = self.cfg, self.store
         ctl = store.control()
@@ -409,9 +606,14 @@ class Farm:
             store.heartbeat(cfg.farm_id, wid, f"paused: {ctl.get('reason') or 'by hand'}", seat=self.seat)
             self.stop.wait(cfg.idle_sleep)
             return
+        if self.drain_state().get("draining"):
+            store.heartbeat(cfg.farm_id, wid, "draining", seat=self.seat)
+            self.stop.wait(cfg.idle_sleep)
+            return
         # this seat's own budget decides; other seats in the farm are paced separately
         d = decide(store.get_snapshot(self.seat), cfg.policy, now(), store.spent_today(self.seat))
         slot = store.acquire_slot(holder, d.workers, cfg.lease_seconds, self.seat) if d.workers else None
+        task = None
         if slot is None:
             wait = cfg.idle_sleep if not d.pause_until else max(10, min(300, d.pause_until - now()))
             store.heartbeat(cfg.farm_id, wid, f"throttled: {d.reason}", seat=self.seat)
@@ -431,14 +633,35 @@ class Farm:
             except Exception as e:  # a farm bug must not strand the task until its lease runs out
                 store.finish(task["id"], holder, False, f"farm error: {e!r}", cfg.max_resumes)
                 raise
+            finally:
+                if not self.stop.is_set():
+                    self.clean_runs(task["id"])
         finally:
-            if slot is not None:
+            # handing over: the run goes on, and so does its slot (the next release adopts both)
+            if slot is not None and not (task and task["id"] in self.abandoned):
                 store.release_slot(slot, holder)
 
-    def run_task(self, task: dict, wid: str, holder: str, slot: int):
+    def run_task(self, task: dict, wid: str, holder: str, slot, adopt: str | None = None):
         cfg, store = self.cfg, self.store
         tid = task["id"]
         store.heartbeat(cfg.farm_id, wid, "running", tid, seat=self.seat)
+        if adopt:
+            m = procs.read_json(os.path.join(adopt, "meta.json"))
+            ctx = {k: m.get(k) for k in ("cwd", "branch", "parent_branch", "name", "sysprompt", "fresh_text",
+                                         "session", "started", "before", "live", "run_started")}
+            ctx["env"] = procs.read_json(os.path.join(adopt, "cmd.json")).get("env") or dict(os.environ)
+            ctx["text"] = ""
+        else:
+            ctx = self.prepare(task, wid, holder)
+            if ctx is None:
+                return
+        self.execute(task, wid, holder, slot, ctx, adopt)
+
+    def prepare(self, task: dict, wid: str, holder: str) -> dict | None:
+        """Everything a sub-agent's run starts from: its worktree, its prompt (and the one it would get fresh), its
+        environment. Kept with the run, so a new release that adopts it knows all of it."""
+        cfg, store = self.cfg, self.store
+        tid = task["id"]
         resume = bool(task.get("resume"))
         session = task.get("session_id") if resume else None
         # messages left for it (a "mail" sub-agent: for its Claude) come with its prompt; they are kept on the task, so
@@ -451,7 +674,7 @@ class Farm:
             store.update_task(tid, mail=mail)
         if kind == "mail" and not mail:
             store.finish(tid, holder, True, "no messages were left to handle", cfg.max_resumes)
-            return
+            return None
         use_git = gitops.is_repo(cfg.repo_dir)
         branch = None
         parent_branch = f"farm/{task['parent']}" if task.get("parent") else None
@@ -497,6 +720,19 @@ class Farm:
         # its session name carries its id, so other Claudes find it in ListAgents and message it with SendMessage
         name = f"[clodfarm] {task.get('owner') or cfg.name} · {task['title'][:50]} · {tid}"
         sysprompt = prompts.task_system_prompt(cfg, task, cwd, branch, name)
+        before = store.get_snapshot(self.seat)
+        return {"cwd": cwd, "branch": branch, "parent_branch": parent_branch, "name": name, "sysprompt": sysprompt,
+                "session": session, "text": compose(fresh=not session),
+                "fresh_text": compose(fresh=True) if session else None, "started": now(),
+                "before": before.to_dict() if before else None, "live": bool(cfg.live_stdin), "env": env,
+                "new_mail": new}
+
+    def execute(self, task: dict, wid: str, holder: str, slot, ctx: dict, adopt: str | None = None):
+        cfg, store = self.cfg, self.store
+        tid = task["id"]
+        cwd, branch, parent_branch, name = ctx["cwd"], ctx["branch"], ctx["parent_branch"], ctx["name"]
+        env, sysprompt, session = ctx["env"], ctx["sysprompt"], ctx["session"]
+        started = float(ctx.get("started") or now())
 
         keep = threading.Event()
 
@@ -523,40 +759,58 @@ class Farm:
 
         threading.Thread(target=renew, daemon=True).start()
         threading.Thread(target=watch, daemon=True).start()
-        before = store.get_snapshot(self.seat)
+        before = ctx.get("before")
         on_snap = lambda sn: store.put_snapshot(sn, self.seat)  # noqa: E731
-        started = now()
 
-        def run(resume_session, text):
-            live = Live() if cfg.live_stdin else None
+        def run(resume_session, text, rundir=None):
+            live = Live() if ctx.get("live") else None
             self.running[tid] = live
-            return run_agent(build_cmd(cfg, sysprompt, resume_session, name, live=bool(live)), text, cwd, env,
+            run_started = float(ctx.get("run_started") or now()) if rundir else now()
+            ctx["run_started"] = run_started
+            meta = {"kind": "task", "tid": tid, "wid": wid, "holder": holder, "slot": slot, "seat": self.seat,
+                    **{k: ctx.get(k) for k in ("cwd", "branch", "parent_branch", "name", "sysprompt", "fresh_text",
+                                               "started", "before", "live")},
+                    "session": resume_session, "run_started": run_started}
+            return run_agent(build_cmd(cfg, sysprompt, resume_session, name, live=bool(live),
+                                       disallowed=self.denied_tools()), text, cwd, env,
                              cfg.task_timeout, on_snapshot=on_snap, on_start=lambda p: self.procs.__setitem__(tid, p),
-                             live=live)
+                             live=live, workspace=cfg.workspace, meta=meta, stop=self.stop, adopt=bool(rundir),
+                             started=run_started,
+                             rundir=rundir or os.path.join(self.runs, f"{tid}-{time.time_ns()}"))
+        abandoned = False
         try:
-            res = run(session, compose(fresh=not session))
-            if session and not res.ok and res.num_turns == 0 and "conversation" in res.text.lower():
+            res = run(session, ctx["text"], adopt)
+            abandoned = res.abandoned
+            if not abandoned and session and not res.ok and res.num_turns == 0 and \
+                    "conversation" in res.text.lower() and ctx.get("fresh_text"):
                 # session file gone (e.g. new container): start fresh with full context
-                res = run(None, compose(fresh=True))
+                self.clean_runs(tid)
+                ctx["run_started"] = None
+                res = run(None, ctx["fresh_text"])
+                abandoned = res.abandoned
         finally:
             keep.set()
             self.procs.pop(tid, None)
             self.running.pop(tid, None)
-            try:
-                os.remove(os.path.join(cfg.mail_dir, tid))
-            except OSError:
-                pass
-        if self.stop.is_set():
-            return  # stopping: shutdown() hands this task back to the queue
+            if abandoned:
+                self.abandoned.add(tid)
+            else:
+                try:
+                    os.remove(os.path.join(cfg.mail_dir, tid))
+                except OSError:
+                    pass
+        if abandoned or self.stop.is_set():
+            return  # handing over: the run goes on and the next release adopts it; stopping: shutdown() hands it back
 
         after = res.snapshots[-1] if res.snapshots else None
         store.add_spend(res.cost_usd, self.seat)
+        store.add_tokens(store.token_counts(res.usage), cfg.name)
         store.put_tools(cfg.name, res.init)  # what this Claude can use, as its last sub-agent saw it
         store.add_run(tid, {
             "worker": holder, "started": started, "duration_s": round(res.duration_s, 1), "ok": res.ok,
             "cost_usd_list_price": res.cost_usd, "turns": res.num_turns, "terminal_reason": res.terminal_reason,
-            "output_tokens": (res.usage or {}).get("output_tokens"),
-            "util_before": before.to_dict() if before else None, "util_after": after.to_dict() if after else None,
+            "output_tokens": (res.usage or {}).get("output_tokens"), "tokens": store.token_counts(res.usage),
+            "util_before": before, "util_after": after.to_dict() if after else None,
         })
         if res.session_id:
             store.update_task(tid, session_id=res.session_id, cwd=cwd, branch=branch, home=cfg.farm_id, seat=self.seat)

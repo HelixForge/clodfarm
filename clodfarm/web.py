@@ -1,7 +1,16 @@
 """The farm UI: a pixel-art farm where you watch your Claude agents work and hatch (or release) new ones.
 
     clodfarm ui            serve it on its own (the farm daemon also serves it when FARM_UI=1, the default)
-    clodfarm ui-passwd     set the UI password
+    clodfarm ui-passwd     set the farm manager's password
+
+Who sees what:
+  * the public (a public farm, the default) and viewers (a private farm's viewer password) watch: the farm, every
+    Claude, the tasks' titles, schedules, tokens burned and the planner's goal; never prompts, results, conversations,
+    tools, logins or the browser. They can hatch a Claude of their own (once per browser).
+  * an owner (the `clodfarm_owner` cookie, set when they hatched their Claude, or by the pairing link their Claude
+    gives them in the Claude app) sees and manages their own Claude: its conversations, results, tools, skin and
+    settings, the missions waiting for their approval, and their browser profiles.
+  * the farm manager (the password) sees and manages everything: the planner, a private farm, hatching, every Claude.
 
 Behind a reverse proxy: FARM_UI_BASE=/team serves it under a path prefix, FARM_UI_SECURE=1 marks the cookie Secure,
 and FARM_UI_TRUST_PROXY=1 takes the client address from X-Forwarded-For (for the login lockout).
@@ -30,7 +39,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from . import __version__, bots, browser, dashboards
+from . import __version__, boot, bots, browser, dashboards, policy
 from . import mcp
 from .agents import AgentManager
 from .slack import SlackBridge
@@ -38,8 +47,11 @@ from .store import Store, now
 
 BASE = "/" + os.environ.get("FARM_UI_BASE", "").strip("/") if os.environ.get("FARM_UI_BASE", "").strip("/") else ""
 UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
-COOKIE = "clodfarm_session"
+COOKIE = "clodfarm_session"  # the farm manager
+OWNER_COOKIE = "clodfarm_owner"  # the person a Claude belongs to
+VIEWER_COOKIE = "clodfarm_viewer"  # someone with a private farm's viewer password
 SESSION_DAYS = 7
+OWNER_DAYS = 365
 PBKDF2_ROUNDS = 600_000
 MAX_BODY = 256 * 1024
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self'; font-src 'self'; script-src 'self'; "
@@ -155,20 +167,121 @@ class Auth:
         return user
 
 
+class Keys:
+    """Signs owner and viewer cookies. Its own secret (not the manager's): a new manager password signs the manager
+    out, not every person who owns a Claude."""
+
+    def __init__(self, path: str):
+        self.path = path
+        try:
+            self.key = bytes.fromhex(json.load(open(path))["key"])
+        except (OSError, ValueError, KeyError):
+            self.key = secrets.token_bytes(32)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                json.dump({"key": self.key.hex()}, f)
+            os.replace(path + ".tmp", path)
+
+    def make(self, kind: str, fields: list[str], days: int) -> str:
+        payload = "|".join([kind, *fields, str(int(time.time() + days * 86400)), secrets.token_hex(6)])
+        sig = hmac.new(self.key, payload.encode(), hashlib.sha256).hexdigest()
+        return base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=") + "." + sig
+
+    def read(self, token: str | None, kind: str) -> list[str] | None:
+        if not token or "." not in token:
+            return None
+        b, sig = token.rsplit(".", 1)
+        try:
+            payload = base64.urlsafe_b64decode(b + "=" * (-len(b) % 4)).decode()
+        except (ValueError, UnicodeDecodeError):
+            return None
+        if not hmac.compare_digest(sig, hmac.new(self.key, payload.encode(), hashlib.sha256).hexdigest()):
+            return None
+        parts = payload.split("|")
+        if len(parts) < 3 or parts[0] != kind or not parts[-2].isdigit() or int(parts[-2]) < time.time():
+            return None
+        return parts[1:-2]
+
+
+def _pw_hash(password: str, salt_b64: str | None = None) -> tuple[str, str]:
+    salt = base64.b64decode(salt_b64) if salt_b64 else secrets.token_bytes(16)
+    return base64.b64encode(salt).decode(), _hash(password, salt)
+
+
+class Who:
+    """Who is asking: the manager, the owner of one Claude, someone who may watch, or someone who may not."""
+
+    def __init__(self, manager: bool = False, owner: str | None = None, viewer: bool = False, public: bool = False):
+        self.manager, self.owner, self.viewer, self.public = manager, owner, viewer, public
+
+    @property
+    def can_view(self) -> bool:
+        return self.manager or bool(self.owner) or self.viewer or self.public
+
+    def owns(self, claude: str | None) -> bool:
+        return self.manager or (bool(self.owner) and claude == self.owner)
+
+    @property
+    def key(self) -> str:
+        """What the state it gets depends on (the cache key)."""
+        return "manager" if self.manager else f"owner:{self.owner}" if self.owner else "public"
+
+    def view(self) -> dict:
+        return {"manager": self.manager, "owner": self.owner, "viewer": self.viewer, "can_view": self.can_view,
+                "role": "manager" if self.manager else "owner" if self.owner else "viewer" if self.can_view else None}
+
+
+HATS = ("straw", "beanie", "cap", "flower", "headphones", "bow", "crown", "sprout", "leaf", "wizard", "chef", "none")
+ACCESSORIES = ("", "scarf", "glasses", "bowtie", "backpack", "cape")
+COLOR = re.compile(r"#[0-9a-fA-F]{6}")
+
+
+def _skin(d) -> dict:
+    """A Claude's look, from the hatch or SETTINGS form: its hat, the hat's colours, its body tint, an accessory."""
+    if not isinstance(d, dict):
+        return {}
+    out: dict = {}
+    if d.get("hat") in HATS:
+        out["hat"] = d["hat"]
+    cols = d.get("colors") if isinstance(d.get("colors"), dict) else {}
+    cols = {k: str(v) for k, v in cols.items() if k in ("hat", "band", "body") and COLOR.fullmatch(str(v))}
+    if cols:
+        out["colors"] = cols
+    if d.get("accessory") in ACCESSORIES:
+        out["accessory"] = d["accessory"]
+    return out
+
+
+def _redact_event(e: dict) -> dict:
+    """Events as the public sees them: what happened and who, not what was said."""
+    out = {"at": e["at"], "type": e["type"], "task": e.get("task"), "by": e.get("by")}
+    if e["type"].startswith(("msg.", "rc.", "mcp.", "slack.", "browser.", "approval.")) or e["type"] in (
+            "task.failed", "task.retry", "verify.failed"):
+        who = re.match(r"^(\S+ -> \S+):", e["msg"])
+        out["msg"] = (who.group(1) + ": (a message)") if who else e["type"].replace(".", " ")
+    else:
+        out["msg"] = e["msg"][:240]
+    return out
+
+
 # ---------------------------------------------------------------------- state
 def _from(seen: dict | None) -> str:
     """Where a proxy check came out, for the event log: " (203.0.113.7, US)"."""
     return f" ({seen['ip']}{', ' + seen['country'].upper() if seen.get('country') else ''})" if seen else ""
 
 
-def _public_task(t: dict, full: bool = False) -> dict:
+def _public_task(t: dict, full: bool = False, summary: bool = True) -> dict:
     keep = ["id", "title", "status", "priority", "kind", "parent", "children", "depth", "created", "updated",
             "started", "finished", "attempts", "max_attempts", "worker", "branch", "created_by", "children_open", "owner",
             "to"]
     out = {k: t.get(k) for k in keep if t.get(k) is not None}
+    if t.get("approval"):
+        out["approval"] = {k: t["approval"].get(k) for k in ("asked_at", "from", "expires_at", "decided_by", "ok")
+                           if t["approval"].get(k) is not None}
     if full:
         out.update(prompt=t.get("prompt", ""), result=t.get("result", ""))
-    else:
+    elif summary:
         out["summary"] = (t.get("result") or "")[-240:] if t.get("status") in ("done", "failed") else ""
     return out
 
@@ -179,11 +292,16 @@ class FarmUI:
         self.store = store or Store.from_config(cfg)
         self.manager = manager or AgentManager(cfg)
         self.auth = Auth(os.path.join(cfg.workspace, ".farm", "ui-auth.json"))
+        self.keys = Keys(os.path.join(cfg.workspace, ".farm", "ui-keys.json"))
+        self.hatches: dict[str, list[float]] = {}  # per client address: when it hatched (the per-hour limit)
         self.slack = SlackBridge(cfg, self.store)
         self.oauth = mcp.OAuthStore(mcp.oauth_path(cfg.workspace))
         self.browsers = browser.Browsers(cfg.workspace)  # the farm's Chromium profiles: BROWSER on the farm, /browser
         self.stopping = threading.Event()
         self._state_cache: tuple[float, dict] | None = None
+        self._views: dict[str, tuple[float, bytes, str]] = {}  # per viewer kind: (at, JSON, ETag)
+        self._tasks_cache: dict[str, tuple[float, bytes, str]] = {}
+        self._tasks_lock = threading.Lock()
         self._lock = threading.Lock()
 
     def state(self) -> dict:
@@ -193,6 +311,77 @@ class FarmUI:
             s = self._build_state()
             self._state_cache = (time.time(), s)
             return s
+
+    def state_for(self, who: "Who") -> tuple[bytes, str]:
+        """The farm as ``who`` may see it, as JSON and its ETag: built once a second per kind of viewer, however
+        many people watch."""
+        key = who.key
+        hit = self._views.get(key)
+        if hit and time.time() - hit[0] < 1.0 and self._state_cache and hit[0] >= self._state_cache[0]:
+            return hit[1], hit[2]
+        st = self.state()
+        with self._tasks_lock:  # many watchers asking at once: one of them builds it
+            hit, built = self._views.get(key), self._state_cache
+            if hit and built and time.time() - hit[0] < 1.0 and hit[0] >= built[0]:
+                return hit[1], hit[2]
+            body = json.dumps(self.redact(st, who), default=str).encode()
+            tag = '"' + hashlib.sha256(body).hexdigest()[:20] + '"'
+            self._views[key] = (time.time(), body, tag)
+            return body, tag
+
+    TASKS_FOR = 2.0
+
+    def tasks_for(self, who: "Who", q: dict) -> tuple[bytes, str]:
+        """The TASKS page's data, built once per two seconds per kind of viewer and query, however many watch."""
+        q = {k: str(q.get(k) or "")[:100] for k in ("status", "claude", "q", "page", "mine") if q.get(k)}
+        key = who.key + "|" + json.dumps(q, sort_keys=True)
+        with self._tasks_lock:
+            hit = self._tasks_cache.get(key)
+            if hit and time.time() - hit[0] < self.TASKS_FOR:
+                return hit[1], hit[2]
+            body = json.dumps(self.tasks_view(who, q), default=str).encode()
+            tag = '"' + hashlib.sha256(body).hexdigest()[:20] + '"'
+            if len(self._tasks_cache) > 500:
+                self._tasks_cache.clear()
+            self._tasks_cache[key] = (time.time(), body, tag)
+            return body, tag
+
+    def redact(self, st: dict, who: "Who") -> dict:
+        out = dict(st)
+        agents = []
+        for a in st["agents"]:
+            if who.owns(a["id"]):
+                agents.append({**a, "mine": a["id"] == who.owner})
+                continue
+            agents.append({**{k: v for k, v in a.items() if k not in ("email", "login", "remote_control", "seat")},
+                           "talking": {k: v for k, v in (a.get("talking") or {}).items() if k != "title"} or None,
+                           "login": {"state": a["login"]["state"]} if a.get("login") else None, "mine": False})
+        out["agents"] = agents
+        if not who.manager:
+            def task(t):
+                return t if who.owns(t.get("owner")) or who.owns(t.get("to")) else \
+                    {k: v for k, v in t.items() if k != "summary"}
+            out["subagents"] = [task(t) for t in st["subagents"]]
+            out["recent"] = [task(t) for t in st["recent"]]
+            out["events"] = [e if who.owner and who.owner in (e.get("by") or "") else _redact_event(e)
+                             for e in st["events"]]
+            out.pop("slack", None)
+        tok = st.get("tokens") or {}
+        out["tokens"] = {"total": tok.get("total"), "today": tok.get("today"),
+                         "by_claude": {k: v.get("total", 0) for k, v in (tok.get("by_claude") or {}).items()}}
+        me = None
+        if who.owner:
+            mine = next((a for a in st["agents"] if a["id"] == who.owner), None)
+            me = {"claude": who.owner, "name": (mine or {}).get("name") or who.owner,
+                  "tokens": (tok.get("by_claude") or {}).get(who.owner) or {},
+                  "tokens_today": (st.get("tokens_today_by") or {}).get(who.owner) or {},
+                  "budget": (mine or {}).get("budget"),
+                  "pending": len([p for p in st.get("pending", []) if p.get("to") == who.owner])}
+        out["me"] = {**who.view(), **(me or {}),
+                     "pending_all": len(st.get("pending", [])) if who.manager else None}
+        out.pop("pending", None)
+        out.pop("tokens_today_by", None)
+        return out
 
     def _build_state(self) -> dict:
         from .cli import _seats  # budget per seat, the same numbers `clodfarm agents` shows
@@ -230,9 +419,18 @@ class FarmUI:
         for a, remote in claudes:
             ws = by_name.get(a["id"], [])
             seat = next((w.get("seat") for w in ws if w.get("seat")), None)
-            agents.append(self._agent_view(a, {"loggedIn": True} if remote else self.manager.auth(a), ws, seat,
+            st = {"loggedIn": True} if remote else self.manager.auth(
+                a, max_age=300 if ws else 20, wait=False, guess={"loggedIn": True} if ws else None)
+            agents.append(self._agent_view(a, st, ws, seat,
                                            seats, stats, rc.get(a["id"]) or rc.get(a.get("name"))))
             agents[-1]["talking"] = talking.get(a["id"])
+        recs = {c["id"]: c for c in store.claudes()}
+        for v in agents:  # its skin and its person's choices (store CLAUDE/<id>)
+            rec = recs.get(v["id"]) or {}
+            v.update(hat=rec.get("hat") or v["hat"], colors=rec.get("colors"), accessory=rec.get("accessory"),
+                     name=rec.get("name") or v["name"], approve_missions=bool(rec.get("approve_missions")),
+                     tools_off=policy.clean(rec.get("tools"))["deny"], owned=bool(rec.get("owned")),
+                     planner_host_ok=bool(rec.get("planner_host_ok")) or v["primary"])
         primary = self.cfg.name
         subs = []
         for s in ("running", "waiting", "queued"):
@@ -245,9 +443,15 @@ class FarmUI:
                   for t in store.list_tasks("done", 12) + store.list_tasks("failed", 4)
                   if not t.get("parent") and now() - float(t.get("finished") or t.get("updated") or 0) < 6 * 3600]
         ctl = store.control()
+        settings, pl = store.settings(), store.planner()
         return {
-            "farm": self.cfg.farm, "version": __version__, "now": now(),
+            "farm": self.cfg.farm, "version": __version__, "release": boot.running(), "now": now(),
             "paused": bool(ctl.get("paused")), "pause_reason": ctl.get("reason") or "",
+            "tokens": store.tokens(), "tokens_today_by": store.tokens_today_by(),
+            "pending": [{"id": p.get("id"), "to": p.get("to")} for p in store.pending()],
+            "private": bool(settings.get("private")), "hatch_open": bool(settings.get("hatch_open")),
+            "planner": {k: pl.get(k) for k in ("on", "goal", "host", "state", "last_at", "next_at", "cycles",
+                                                "every_s", "idle_until", "task")},
             "slack": {"state": self.slack.state, "team": (self.slack.info or {}).get("team")},
             "agents": agents, "subagents": subs, "recent": recent,
             "events": [{"at": e["at"], "type": e["type"], "msg": e["msg"][:240], "task": e.get("task"), "by": e.get("by")}
@@ -255,30 +459,129 @@ class FarmUI:
         }
 
     FINISHED_FOR = 86400  # the TASKS page lists sub-agents that finished in the last day
+    PAGE = 100
 
-    def tasks_view(self) -> dict:
-        """Everything the TASKS page shows: every sub-agent at work or waiting, the ones that finished in the last
-        day, every schedule, and whether the farm is paused."""
+    def health(self) -> dict:
+        """The container's health check: the UI answers, and the farm daemon's workers beat."""
+        try:
+            beats = [float(w.get("at", 0)) for w in self.store.workers(300)]
+        except Exception:  # noqa: BLE001
+            beats = []
+        return {"ok": True, "version": __version__, "release": boot.running(),
+                "farm_beat_age": round(now() - max(beats), 1) if beats else None}
+
+    def tasks_view(self, who: "Who | None" = None, q: dict | None = None) -> dict:
+        """Everything the TASKS page shows: every sub-agent at work, waiting for approval or waiting, the ones that
+        finished in the last day, every schedule, and whether the farm is paused. Filtered, searched and paged on
+        the server (``q``: status, claude, q, page), so a farm of a hundred Claudes stays quick to read."""
         from .schedule import describe
+        who = who or Who(manager=True)
+        q = q or {}
         store, t0 = self.store, now()
 
         def view(t):
-            v = _public_task(t)
+            mine = who.owns(t.get("owner")) or who.owns(t.get("to"))
+            v = _public_task(t, summary=mine)
             v["on"] = t.get("worker", "").split("@")[0] if t.get("status") == "running" else t.get("to")
             v["owner"] = t.get("owner") or self.cfg.name
+            v["mine"] = bool(who.owner) and who.owner in (t.get("owner"), t.get("to"))
             return v
-        active = [view(t) for s in ("running", "waiting", "queued") for t in store.list_tasks(s, 200)]
-        finished = sorted((view(t) for s in ("done", "failed", "cancelled") for t in store.list_tasks(s, 60)
+        active = [view(t) for s in ("running", "pending", "waiting", "queued") for t in store.list_tasks(s, 500)]
+        finished = sorted((view(t) for s in ("done", "failed", "cancelled", "denied") for t in store.list_tasks(s, 300)
                            if t0 - float(t.get("finished") or t.get("updated") or 0) < self.FINISHED_FOR),
-                          key=lambda v: -float(v.get("finished") or v.get("updated") or 0))[:60]
-        schedules = [{**{k: v for k, v in r.items() if k not in ("PK", "SK", "ver")}, "when": describe(r)}
+                          key=lambda v: -float(v.get("finished") or v.get("updated") or 0))
+        claude, text, status = q.get("claude") or "", (q.get("q") or "").strip().lower(), q.get("status") or ""
+        if q.get("mine") and who.owner:
+            claude = who.owner
+
+        def match(v):  # the Claude and the search: the tabs count what they leave
+            if claude and claude not in (v.get("owner"), v.get("on"), v.get("to")):
+                return False
+            return not text or text in (v.get("title") or "").lower() or text in v["id"]
+        active, finished = [v for v in active if match(v)], [v for v in finished if match(v)]
+        counts: dict[str, int] = {}
+        for v in active + finished:
+            counts[v["status"]] = counts.get(v["status"], 0) + 1
+        if status:
+            active, finished = [v for v in active if v["status"] == status], [v for v in finished if v["status"] == status]
+        page = max(0, int(q.get("page") or 0)) if str(q.get("page") or "0").isdigit() else 0
+        schedules = [{**{k: v for k, v in r.items() if k not in ("PK", "SK", "ver")
+                         and (who.manager or who.owns(r.get("owner")) or k not in ("prompt",))},
+                      "when": describe(r), "mine": who.owns(r.get("owner")) or who.owns(r.get("to"))}
                      for r in store.schedules()]
         claudes = sorted({a["id"] for a in self.manager.all()} | {w["SK"].split("/")[0].split("@")[0]
                                                                   for w in store.workers()})
         ctl = store.control()
-        return {"now": t0, "farm": self.cfg.farm, "me": self.cfg.name, "paused": bool(ctl.get("paused")),
-                "pause_reason": ctl.get("reason") or "", "active": active, "finished": finished,
+        return {"now": t0, "farm": self.cfg.farm, "me": who.owner or (self.cfg.name if who.manager else None),
+                "role": who.view()["role"], "paused": bool(ctl.get("paused")),
+                "pause_reason": ctl.get("reason") or "", "counts": counts,
+                "active": active[page * self.PAGE:(page + 1) * self.PAGE], "active_total": len(active),
+                "finished": finished[page * self.PAGE:(page + 1) * self.PAGE], "finished_total": len(finished),
+                "page": page, "page_size": self.PAGE,
                 "schedules": schedules, "claudes": claudes, "tz": os.environ.get("FARM_TZ") or "UTC"}
+
+    def browser_view(self, who: "Who") -> dict:
+        """The farm's browser as this person sees it: only their Claude's profiles (the manager: all)."""
+        st = self.browsers.status()
+        # the browser is a Claude's tool: its person sees its profiles; the manager sees who owns which (to assign),
+        # and can open only its own Claude's
+        for p in st["profiles"]:
+            p["mine"] = self.profile_mine(p, who)
+        if not who.manager:
+            st["profiles"] = [p for p in st["profiles"] if p["mine"]]
+            st["proxy"] = {k: v for k, v in (st.get("proxy") or {}).items() if k in ("set", "host", "countries")} \
+                if st.get("proxy") else st.get("proxy")
+        st["can_set_proxy"] = who.manager
+        st["per_claude"] = browser.PER_CLAUDE
+        st["me"] = who.owner
+        return st
+
+    def first_profile(self, who: "Who") -> str:
+        """The profile a request means when it names none: the viewer's own Claude's first (the manager: any)."""
+        profs = self.browsers.registry.all()
+        mine = [p["name"] for p in profs if self.profile_mine(p, who)]
+        return (mine or ([p["name"] for p in profs] if who.manager else []) or [""])[0]
+
+    def profile_mine(self, p: dict, who: "Who") -> bool:
+        """Is this browser profile the viewer's Claude's? One nobody owns is the farm's own Claude's."""
+        return bool(who.owner) and (p.get("owner") or self.cfg.name) == who.owner
+
+    def settings_view(self, cid: str) -> dict:
+        rec = self.store.claude(cid)
+        a = self.manager.get(cid) or {}
+        return {"id": cid, "name": rec.get("name") or a.get("name") or cid, "hat": rec.get("hat") or a.get("hat"),
+                "colors": rec.get("colors"), "accessory": rec.get("accessory"),
+                "approve_missions": bool(rec.get("approve_missions")), "tools": policy.clean(rec.get("tools")),
+                "groups": policy.groups_view(), "notify_topic": rec.get("notify_topic") or "",
+                "planner_host_ok": bool(rec.get("planner_host_ok")), "primary": bool(a.get("primary"))}
+
+    def save_settings(self, cid: str, data: dict, by: str):
+        """A person changes their Claude: its skin, name, approvals, tools. The tools apply at its next tool call."""
+        a = self.manager.get(cid)
+        ch: dict = {}
+        if "name" in data:
+            name = str(data["name"] or "").strip()[:24]
+            if not name:
+                raise ValueError("give it a name")
+            ch["name"] = name
+        if "skin" in data:
+            sk = _skin(data["skin"])
+            ch.update({k: v for k, v in sk.items()})
+        for k in ("approve_missions", "planner_host_ok"):
+            if k in data:
+                ch[k] = bool(data[k])
+        if "notify_topic" in data:
+            topic = str(data["notify_topic"] or "").strip()[:200]
+            if topic and not re.fullmatch(r"(https://[A-Za-z0-9.-]+/)?[A-Za-z0-9_-]{4,64}", topic):
+                raise ValueError("an ntfy topic (letters, digits, - and _) or https://your-ntfy-server/topic")
+            ch["notify_topic"] = topic
+        if "tools" in data:
+            ch["tools"] = policy.clean(data["tools"])
+            policy.save(a["config_dir"], ch["tools"], claude=cid)
+        self.store.put_claude(cid, **ch)
+        self.store.event("agent.settings", f"{cid}: " + ", ".join(sorted(ch)) + f" changed ({by})", by="ui")
+        self._views.clear()
+        self._state_cache = None
 
     TURN_QUIET = 600  # a turn whose transcript is silent this long was interrupted (no Stop comes then)
 
@@ -382,8 +685,38 @@ def make_handler(ui: FarmUI):
             self._json({"error": msg}, status)
 
         def _user(self) -> str | None:
+            """The farm manager's session."""
             c = SimpleCookie(self.headers.get("Cookie") or "")
             return ui.auth.verify(c[COOKIE].value if COOKIE in c else None)
+
+        def _who(self) -> Who:
+            if getattr(self, "_who_cache", None) is not None:
+                return self._who_cache
+            c = SimpleCookie(self.headers.get("Cookie") or "")
+            manager = bool(ui.auth.verify(c[COOKIE].value if COOKIE in c else None))
+            owner = None
+            got = ui.keys.read(c[OWNER_COOKIE].value if OWNER_COOKIE in c else None, "owner")
+            if got and len(got) == 2:
+                rec = ui.store.claude(got[0])
+                if str(rec.get("owner_ver", 1)) == got[1] and ui.manager.get(got[0]):
+                    owner = got[0]
+            st = ui.store.settings()
+            viewer = False
+            if st.get("private"):
+                v = ui.keys.read(c[VIEWER_COOKIE].value if VIEWER_COOKIE in c else None, "viewer")
+                viewer = bool(v) and v[0] == str(st.get("viewer_ver", 1))
+            self._who_cache = Who(manager, owner, viewer, public=not st.get("private"))
+            return self._who_cache
+
+        def _owner_cookie(self, cid: str) -> str:
+            ver = str(ui.store.claude(cid).get("owner_ver", 1))
+            return self._named_cookie(OWNER_COOKIE, ui.keys.make("owner", [cid, ver], OWNER_DAYS), OWNER_DAYS * 86400)
+
+        def _named_cookie(self, name: str, value: str, max_age: int) -> str:
+            # Lax, not Strict: the pairing link opens from the Claude app (another site) and must sign in there
+            same = "Lax" if name == OWNER_COOKIE else "Strict"
+            return (f"{name}={value}; Path={BASE or ''}/; HttpOnly; SameSite={same}; Max-Age={max_age}"
+                    + ("; Secure" if self._secure() else ""))
 
         def _secure(self) -> bool:
             return os.environ.get("FARM_UI_SECURE") == "1" or self.headers.get("X-Forwarded-Proto", "") == "https"
@@ -588,11 +921,14 @@ def make_handler(ui: FarmUI):
                 return self._err(400, "a WebSocket upgrade is expected here")
             if not self._same_origin():
                 return self._err(403, "origin not allowed")
-            if not self._user():
-                return self._err(401, "log in first")
+            who = self._who()
             q = {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()}
+            q["profile"] = q.get("profile") or ui.first_profile(who)
+            prof = ui.browsers.registry.get(q["profile"])
+            if not (prof and ui.profile_mine(prof, who)):  # a Claude's own browser: its person only
+                return self._err(401 if not who.can_view else 403, "only that profile's Claude's person sees it")
             try:
-                slot = ui.browsers.slot(q.get("profile") or browser.DEFAULT)
+                slot = ui.browsers.slot(q.get("profile") or "")
             except ValueError as e:
                 return self._err(404, str(e))
             try:
@@ -618,7 +954,9 @@ def make_handler(ui: FarmUI):
         # ----------------------------------------------------------- GET
         def do_GET(self):
             if self.path.split("?", 1)[0] == "/healthz":  # the container health check, with or without a prefix
-                return self._json({"ok": True, "version": __version__})
+                return self._json(ui.health())
+            if self.path.split("?", 1)[0] == f"{BASE}/pair" or self.path.startswith(f"{BASE}/pair/"):
+                return self._pair_link()
             if self._oauth_get(self.path.split("?", 1)[0]):
                 return
             path = self._path()
@@ -634,7 +972,7 @@ def make_handler(ui: FarmUI):
                 if path in ("/", "/index.html"):
                     return self._static("index.html")
                 if path == "/healthz":
-                    return self._json({"ok": True, "version": __version__})
+                    return self._json(ui.health())
                 if path in ("/dashboards", "/dashboards/") or re.fullmatch(r"/dashboards/[a-z0-9-]{1,48}", path):
                     return self._page("dash.html")  # the list and each dashboard: one page, routed by dash.js
                 if path in ("/browser", "/browser/"):
@@ -647,33 +985,73 @@ def make_handler(ui: FarmUI):
                     return self._browser_screen()
                 if not path.startswith("/api/"):
                     return self._static(path.lstrip("/"))
+                who = self._who()
                 if path == "/api/me":
-                    u = self._user()
-                    return self._json({"user": u, "farm": ui.cfg.farm, "version": __version__}, 200 if u else 401)
-                if not self._user():
-                    return self._err(401, "log in first")
+                    st = ui.store.settings()
+                    return self._json({**who.view(), "user": "farmer" if who.manager else None, "farm": ui.cfg.farm,
+                                       "version": __version__, "private": bool(st.get("private")),
+                                       "hatch": self._hatch_view(who)}, 200 if who.can_view else 401)
+                if not who.can_view:
+                    return self._err(401, "this farm is private: log in first")
                 if path == "/api/state":
-                    return self._json(ui.state())
-                if path == "/api/slack":
-                    return self._json(ui.slack.view())
-                if path == "/api/browser":
-                    return self._json(ui.browsers.status())
+                    body, tag = ui.state_for(who)
+                    if self.headers.get("If-None-Match") == tag:
+                        self._headers(304, "application/json", {"ETag": tag, "Cache-Control": "no-cache"})
+                        return
+                    self._headers(200, "application/json; charset=utf-8", {"ETag": tag, "Cache-Control": "no-cache"},
+                                  len(body))
+                    self.wfile.write(body)
+                    return
                 if path == "/api/tasks":
-                    return self._json(ui.tasks_view())
+                    body, tag = ui.tasks_for(who, {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()})
+                    if self.headers.get("If-None-Match") == tag:
+                        self._headers(304, "application/json", {"ETag": tag, "Cache-Control": "no-cache"})
+                        return
+                    self._headers(200, "application/json; charset=utf-8", {"ETag": tag, "Cache-Control": "no-cache"},
+                                  len(body))
+                    self.wfile.write(body)
+                    return
                 m = re.fullmatch(r"/api/tasks/([a-z0-9]{6,40})", path)
                 if m:  # one sub-agent: its instructions, its result so far and its runs
                     t = ui.store.get_task(m.group(1))
                     if not t:
                         return self._err(404, "no such sub-agent")
-                    runs = [{k: r.get(k) for k in ("worker", "started", "duration_s", "ok", "turns", "terminal_reason")}
+                    full = who.owns(t.get("owner")) or who.owns(t.get("to"))
+                    runs = [{k: r.get(k) for k in ("worker", "started", "duration_s", "ok", "turns", "terminal_reason",
+                                                   "tokens")}
                             for r in ui.store.runs(t["id"])]
-                    return self._json({**_public_task(t, full=True), "runs": runs[-10:],
+                    return self._json({**_public_task(t, full=full, summary=full), "runs": runs[-10:], "full": full,
                                        "on": t.get("worker", "").split("@")[0] if t.get("status") == "running"
                                        else t.get("to")})
+                if path == "/api/approvals":  # the missions and messages waiting for this person's OK
+                    if not (who.manager or who.owner):
+                        return self._err(403, "only a Claude's person approves its missions")
+                    return self._json(self._approvals(who))
+                if path == "/api/tools":  # the groups a person can turn off, for the hatch and SETTINGS forms
+                    return self._json(policy.groups_view())
+                if not (who.manager or who.owner):
+                    return self._err(403, "the farm manager or a Claude's person only")
+                if path == "/api/manager":
+                    if not who.manager:
+                        return self._err(403, "the farm manager only")
+                    return self._json(self._manager_view())
+                if path == "/api/slack":
+                    if not who.manager:
+                        return self._err(403, "the farm manager only")
+                    return self._json(ui.slack.view())
+                if path == "/api/browser":
+                    return self._json(ui.browser_view(who))
                 m = re.fullmatch(r"/api/agents/([a-z0-9@._-]+)/tools", path)
                 if m:  # what that Claude can use, as its last run saw it
+                    if not who.owns(m.group(1)):
+                        return self._err(403, "only its person sees what a Claude can use")
                     t = ui.store.tools().get(m.group(1))
                     return self._json({k: v for k, v in t.items() if k not in ("PK", "SK", "ver")} if t else {"tools": None})
+                m = re.fullmatch(r"/api/agents/([a-z0-9@._-]+)/settings", path)
+                if m:
+                    if not who.owns(m.group(1)):
+                        return self._err(403, "only its person changes a Claude's settings")
+                    return self._json(ui.settings_view(m.group(1)))
                 if path == "/api/dashboards":
                     return self._json([dashboards.summary(ui.store, d) for d in dashboards.all_(ui.store)])
                 m = re.fullmatch(r"/api/dashboards/([a-z0-9-]{1,48})", path)
@@ -686,12 +1064,13 @@ def make_handler(ui: FarmUI):
                     return self._json(dashboards.view(ui.store, d, days))
                 if path == "/api/sessions":  # every Claude session on the farm, newest first
                     q = {k: v[-1] for k, v in parse_qs(urlsplit(self.path).query).items()}
+                    claude = q.get("claude") if who.manager else who.owner
                     keep = ("id", "claude", "runs_on", "kind", "task", "title", "turns", "started", "last_at", "ended")
-                    return self._json([{k: s.get(k) for k in keep} for s in ui.store.sessions(q.get("claude"), 50)])
+                    return self._json([{k: s.get(k) for k in keep} for s in ui.store.sessions(claude, 50)])
                 m = re.fullmatch(r"/api/sessions/([A-Za-z0-9-]+)", path)
                 if m:  # one session's whole conversation
                     s = ui.store.session(m.group(1))
-                    if not s:
+                    if not s or not who.owns(s.get("claude")):
                         return self._err(404, "no such session")
                     return self._json({"id": s["id"], "claude": s.get("claude"), "kind": s.get("kind"),
                                        "title": s.get("title"), "task": s.get("task"), "started": s.get("started"),
@@ -699,6 +1078,8 @@ def make_handler(ui: FarmUI):
                                                         for t in ui.store.turns(s["id"])]})
                 m = re.fullmatch(r"/api/agents/([a-z0-9@._-]+)/login", path)
                 if m:
+                    if not who.owns(m.group(1)):
+                        return self._err(403, "only its person logs a Claude in")
                     s = ui.manager.login(m.group(1))
                     return self._json(s.view() if s else {"state": "none"})
                 return self._err(404, "not found")
@@ -706,6 +1087,61 @@ def make_handler(ui: FarmUI):
                 pass
             except Exception as e:  # noqa: BLE001 - one bad request must never take the UI down
                 return self._err(500, f"{type(e).__name__}: {str(e)[:200]}")
+
+        # ------------------------------------------------ owners and approvals
+        def _paired(self, cid: str):
+            ui.store.put_claude(cid, owned=True)
+            ui.store.event("owner.paired", f"{cid}'s person signed in on a new device", by="ui")
+            ui._views.clear()
+            return self._json({"ok": True, "claude": cid}, extra={"Set-Cookie": self._owner_cookie(cid)})
+
+        def _pair_link(self):
+            """GET /pair/<token>: the link a Claude gives its person in the Claude app. Signs this device in to that
+            Claude (once; the link then stops working) and opens the farm."""
+            token = self.path.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+            cid = ui.store.take_pairing(token_hash=hashlib.sha256(token.encode()).hexdigest()) \
+                if re.fullmatch(r"[A-Za-z0-9_-]{16,80}", token) else None
+            self.send_response(302)
+            self.send_header("Location", f"{BASE}/" + ("?paired=1" if cid else "?paired=0"))
+            self.send_header("Cache-Control", "no-store")
+            if cid:
+                ui.store.put_claude(cid, owned=True)
+                ui.store.event("owner.paired", f"{cid}'s person signed in with a pairing link", by="ui")
+                self.send_header("Set-Cookie", self._owner_cookie(cid))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def _hatch_view(self, who: Who) -> dict:
+            st = ui.store.settings()
+            n = len([a for a in ui.manager.all() if not a.get("primary")])
+            why = "" if who.manager else "you have a Claude on this farm already" if who.owner else \
+                "hatching is closed on this farm" if not st.get("hatch_open") else \
+                "this farm is full" if n >= int(st.get("max_claudes") or 100) else \
+                "" if who.can_view else "log in first"
+            return {"can": not why, "why": why, "claudes": n, "max": int(st.get("max_claudes") or 100)}
+
+        def _approvals(self, who: Who) -> list[dict]:
+            out = []
+            for p in ui.store.pending(None if who.manager else who.owner):
+                if p["type"] == "task":
+                    out.append({"type": "task", "id": p["id"], "to": p.get("to"), "title": p.get("title"),
+                                "prompt": (p.get("prompt") or "")[:20000], "from": (p.get("approval") or {}).get("from")
+                                or p.get("owner") or p.get("created_by"), "at": p.get("created"),
+                                "expires_at": (p.get("approval") or {}).get("expires_at")})
+                else:
+                    out.append({"type": "message", "id": p["SK"], "to": p.get("to"), "title": "a message",
+                                "prompt": p.get("text", ""), "from": p.get("from"), "at": p.get("at"),
+                                "expires_at": p.get("expires_at_held")})
+            return sorted(out, key=lambda x: float(x.get("at") or 0))
+
+        def _manager_view(self) -> dict:
+            st = ui.store.settings()
+            owners = [{"id": c["id"], "owned": bool(c.get("owned")), "approve_missions": bool(c.get("approve_missions"))}
+                      for c in ui.store.claudes()]
+            return {"settings": {k: st.get(k) for k in ("private", "hatch_open", "max_claudes", "hatch_per_ip_hour")}
+                    | {"viewer_password": bool(st.get("viewer_hash"))},
+                    "planner": ui.store.planner(), "claudes": owners, "release": boot.running(),
+                    "version": __version__, "hosts": [a["id"] for a in ui.manager.all()]}
 
         # ---------------------------------------------------------- POST
         def do_POST(self):
@@ -717,18 +1153,45 @@ def make_handler(ui: FarmUI):
                         not (self.headers.get("Content-Type") or "").startswith("application/json"):
                     return self._err(403, "missing X-Clodfarm header or JSON body")
                 data = self._body()
-                if path == "/api/login":
+                if path == "/api/login":  # the manager's password, or a private farm's viewer password
                     if ui.auth.locked_out(self._ip()):
                         return self._err(429, "too many tries: wait five minutes")
                     pw, user = str(data.get("password", ""))[:1000], ui.auth.data["user"]
-                    if not ui.auth.check(pw, self._ip()):
-                        return self._err(401, "wrong password")
-                    return self._json({"user": user}, extra={"Set-Cookie": self._cookie(ui.auth.issue(user),
-                                                                                         SESSION_DAYS * 86400)})
+                    st = ui.store.settings()
+                    if data.get("as") != "viewer" and ui.auth.check(pw, self._ip()):
+                        return self._json({"user": user, "role": "manager"}, extra={
+                            "Set-Cookie": self._cookie(ui.auth.issue(user), SESSION_DAYS * 86400)})
+                    if st.get("private") and st.get("viewer_hash") and \
+                            hmac.compare_digest(_pw_hash(pw, st.get("viewer_salt"))[1], st["viewer_hash"]):
+                        ui.auth.fails.pop(self._ip(), None)
+                        tok = ui.keys.make("viewer", [str(st.get("viewer_ver", 1))], SESSION_DAYS)
+                        return self._json({"role": "viewer"}, extra={
+                            "Set-Cookie": self._named_cookie(VIEWER_COOKIE, tok, SESSION_DAYS * 86400)})
+                    if data.get("as") == "viewer":
+                        ui.auth.check("\0", self._ip())  # counts toward the lockout like a wrong manager password
+                    return self._err(401, "wrong password")
                 if path == "/api/logout":
-                    return self._json({"ok": True}, extra={"Set-Cookie": self._cookie("", 0)})
-                if not self._user():
-                    return self._err(401, "log in first")
+                    self.send_response(200)
+                    for c in (self._cookie("", 0), self._named_cookie(VIEWER_COOKIE, "", 0)):
+                        self.send_header("Set-Cookie", c)
+                    body = b'{"ok": true}'
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if path == "/api/owner/forget":  # this device forgets which Claude is mine
+                    return self._json({"ok": True}, extra={"Set-Cookie": self._named_cookie(OWNER_COOKIE, "", 0)})
+                if path == "/api/pair":  # the code a Claude gave its person in the Claude app
+                    if ui.auth.locked_out(self._ip()):
+                        return self._err(429, "too many tries: wait five minutes")
+                    cid = ui.store.take_pairing(code=str(data.get("code", ""))[:20])
+                    if not cid:
+                        ui.auth.check("\0", self._ip())
+                        return self._err(401, "that code is wrong or used up: ask your Claude for a new one")
+                    return self._paired(cid)
+                if not self._who().can_view:
+                    return self._err(401, "this farm is private: log in first")
                 return self._post(path, data)
             except (BrokenPipeError, ConnectionResetError):
                 pass
@@ -738,8 +1201,61 @@ def make_handler(ui: FarmUI):
                 return self._err(500, f"{type(e).__name__}: {str(e)[:200]}")
 
         def _post(self, path: str, data: dict):
-            store, mgr = ui.store, ui.manager
+            store, mgr, who = ui.store, ui.manager, self._who()
             ui._state_cache = None
+            ui._views.clear()
+            ui._tasks_cache.clear()
+            if path in ("/api/agents",):  # hatching: anyone who may watch, once (see _hatch_view)
+                return self._hatch(data, who)
+            m = re.fullmatch(r"/api/approvals/([A-Za-z0-9]{6,40})/(approve|deny)", path)
+            if m:
+                pid, action = m.groups()
+                item = store.get_task(pid) if store.get_task(pid) else store.b.get("HELD", pid)
+                if not item:
+                    return self._err(404, "nothing waits under that id (decided already?)")
+                if not who.owns(item.get("to")):
+                    return self._err(403, "only its Claude's person decides")
+                by = f"owner:{who.owner}" if who.owner == item.get("to") else "manager"
+                ok = store.approve(pid, by) if action == "approve" else store.deny(pid, by, str(data.get("reason") or "")[:200])
+                if not ok:
+                    raise ValueError("it was decided already")
+                return self._json(self._approvals(who))
+            m = re.fullmatch(r"/api/agents/([a-z0-9._-]+)/settings", path)
+            if m:
+                if not who.owns(m.group(1)) or not mgr.get(m.group(1)):
+                    return self._err(403, "only its person changes a Claude's settings")
+                ui.save_settings(m.group(1), data, by=f"owner:{who.owner}" if who.owner == m.group(1) else "manager")
+                return self._json(ui.settings_view(m.group(1)))
+            m = re.fullmatch(r"/api/agents/([a-z0-9._-]+)/(login|code|remove|cancel-login)", path)
+            if m and not who.owns(m.group(1)):
+                return self._err(403, "only its person (or the farm manager) does that")
+            m = re.fullmatch(r"/api/tasks/([a-z0-9]{6,40})/(cancel|retry)", path)
+            if m:
+                t = store.get_task(m.group(1)) or {}
+                if not (who.owns(t.get("owner")) or who.owns(t.get("to"))):
+                    return self._err(403, "only the person of the Claude it belongs to (or the farm manager)")
+            if path.startswith("/api/browser/"):
+                return self._browser_post(path, data, who)
+            if path == "/api/schedules":
+                if not (who.manager or who.owner):
+                    return self._err(403, "the farm manager or a Claude's person only")
+                if not who.manager:
+                    data = {**data, "on": who.owner}  # a person schedules work for their own Claude
+            m = re.fullmatch(r"/api/schedules/([a-z0-9]{6,40})/(pause|resume|run|remove)", path)
+            if m:
+                sc = store.b.get("SCHEDULE", m.group(1)) or {}
+                if not (who.owns(sc.get("owner")) or who.owns(sc.get("to"))):
+                    return self._err(403, "only its Claude's person (or the farm manager)")
+            if path.startswith("/api/manager/"):
+                if not who.manager:
+                    return self._err(403, "the farm manager only")
+                return self._manager_post(path, data)
+            manager_only = path in ("/api/pause", "/api/resume", "/api/dashboards/rename-folder") or \
+                path.startswith("/api/slack") or re.fullmatch(r"/api/dashboards/[a-z0-9-]{1,48}/move", path)
+            if manager_only and not who.manager:
+                return self._err(403, "the farm manager only")
+            if not (who.manager or who.owner):
+                return self._err(403, "the farm manager or a Claude's person only")
             if path == "/api/pause":
                 store.set_paused(True, str(data.get("reason") or "paused from the farm UI")[:200], by="ui")
                 return self._json({"ok": True})
@@ -752,24 +1268,59 @@ def make_handler(ui: FarmUI):
                 ui_url = origin + BASE + "/" if re.fullmatch(r"https?://[A-Za-z0-9.:-]+", origin) else ""
                 return self._json(ui.slack.connect(str(data.get("bot_token", ""))[:300],
                                                    str(data.get("app_token", ""))[:300], allow, ui_url))
+            return self._rest(path, data, who)
+
+        def _browser_post(self, path: str, data: dict, who: Who):
+            """The farm's browser: a person manages their own Claude's profiles; the manager, every profile."""
+            store = ui.store
+            name = str(data.get("profile") or (ui.first_profile(who) if path != "/api/browser/add" else ""))
+            if path == "/api/browser/add":
+                if not (who.manager or who.owner):
+                    return self._err(403, "a Claude's person adds profiles for it")
+                # the manager says whose it is: a Claude, or blank for the farm's own (never "mine" by default)
+                owner = ((str(data["owner"] or "") or None) if "owner" in data else who.owner) if who.manager \
+                    else who.owner
+                ui.browsers.registry.add(name, by="ui", owner=owner)
+                store.event("browser.added", f"browser profile {name} added from the farm UI"
+                            + (f" for {owner}" if owner else ""), by="ui")
+                ui.manager.share_browser_tools()
+                threading.Thread(target=ui.browsers.sync, name="browser-sync", daemon=True).start()
+                return self._json(ui.browser_view(who))
+            if path == "/api/browser/proxy/address":
+                if not who.manager:
+                    return self._err(403, "the farm manager sets the farm's proxy")
+            else:
+                prof = ui.browsers.registry.get(name)
+                if not prof:
+                    return self._err(404, f"no browser profile named {name}")
+                # the manager runs the profiles (on/off, proxy, whose, remove); only its Claude's person looks inside
+                admin = who.manager and path != "/api/browser/open"
+                if not (admin or ui.profile_mine(prof, who)):
+                    return self._err(403, "that profile is another Claude's: only its person uses it")
+            if path == "/api/browser/assign":
+                if not who.manager:
+                    return self._err(403, "the farm manager assigns profiles")
+                ui.browsers.registry.set_owner(name, str(data.get("owner") or "") or None)
+                ui.manager.share_browser_tools()
+                return self._json(ui.browser_view(who))
             if path in ("/api/browser/start", "/api/browser/stop"):
-                on, name = path.endswith("start"), str(data.get("profile") or browser.DEFAULT)
+                on = path.endswith("start")
                 if on and not browser.available():
                     raise ValueError("this image has no browser: " + ", ".join(browser.missing() or ["FARM_BROWSER=0"]))
                 if ui.browsers.want(name, on, by="ui"):
                     store.event("browser.started" if on else "browser.stopped",
                                 f"browser profile {name} {'started' if on else 'stopped'} from the farm UI", by="ui")
                 threading.Thread(target=ui.browsers.sync, name="browser-sync", daemon=True).start()
-                return self._json(ui.browsers.status())
+                return self._json(ui.browser_view(who))
             if path == "/api/browser/proxy":  # a profile through the proxy (checked first, from a country) or direct
-                name, on = str(data.get("profile") or browser.DEFAULT), bool(data.get("on"))
+                on = bool(data.get("on"))
                 country = str(data["country"])[:8] if data.get("country") is not None else None
                 changed, seen = ui.browsers.proxy(name, on, by="ui", country=country)
                 if changed:
                     store.event("browser.proxy", f"browser profile {name} " + (f"through the proxy{_from(seen)}" if on
                                 else "direct") + " from the farm UI", by="ui")
                 threading.Thread(target=ui.browsers.sync, name="browser-sync", daemon=True).start()
-                return self._json({**ui.browsers.status(), "seen": seen})
+                return self._json({**ui.browser_view(who), "seen": seen})
             if path == "/api/browser/proxy/address":  # set the farm's proxy (checked first), or "" to forget it
                 if os.environ.get(browser.PROXY_ENV):
                     raise ValueError(f"{browser.PROXY_ENV} is set in the farm's environment: change it there")
@@ -778,31 +1329,130 @@ def make_handler(ui: FarmUI):
                     browser.save_proxy(ui.cfg.workspace, None)
                     store.event("browser.proxy", "the browser's proxy removed from the farm UI", by="ui")
                     threading.Thread(target=ui.browsers.sync, name="browser-sync", daemon=True).start()
-                    return self._json(ui.browsers.status())
+                    return self._json(ui.browser_view(who))
                 p, name = browser.parse_proxy(text), str(data.get("profile") or "")
                 seen = ui.browsers.set_proxy(p, name, by="ui")  # set from a profile: that profile goes through it
                 store.event("browser.proxy", f"the browser's proxy set to {p['host']}:{p['port']} from the farm UI"
                             + (f"; profile {name} through it{_from(seen)}" if name else ""), by="ui")
                 threading.Thread(target=ui.browsers.sync, name="browser-sync", daemon=True).start()
-                return self._json({**ui.browsers.status(), "seen": seen})
+                return self._json({**ui.browser_view(who), "seen": seen})
             if path == "/api/browser/open":
                 url = browser.normalize_url(str(data.get("url", ""))[:2000])
-                slot = ui.browsers.slot(str(data.get("profile") or browser.DEFAULT))
+                slot = ui.browsers.slot(name)
                 try:
                     return self._json(browser.open_url(url, slot))
                 except OSError:
                     return self._err(503, "that profile's browser is not running: start it first")
-            if path in ("/api/browser/add", "/api/browser/remove"):
-                name = str(data.get("profile") or "")
-                if path.endswith("add"):
-                    ui.browsers.registry.add(name, by="ui")
-                    store.event("browser.added", f"browser profile {name} added from the farm UI", by="ui")
-                elif ui.browsers.registry.remove(name):
+            if path == "/api/browser/remove":
+                if ui.browsers.registry.remove(name):
                     store.event("browser.removed", f"browser profile {name} and its logins removed from the farm UI",
                                 by="ui")
                 ui.manager.share_browser_tools()
                 threading.Thread(target=ui.browsers.sync, name="browser-sync", daemon=True).start()
-                return self._json(ui.browsers.status())
+                return self._json(ui.browser_view(who))
+            return self._err(404, "not found")
+
+        def _hatch(self, data: dict, who: Who):
+            """A new Claude (or bot). Anyone who may watch the farm hatches one, once: the browser that hatched it
+            gets its owner cookie. The person chooses its skin, whether they approve every mission sent to it, and
+            which tools it may use."""
+            store, mgr = ui.store, ui.manager
+            hv = self._hatch_view(who)
+            if not hv["can"]:
+                return self._err(409 if who.owner else 403, hv["why"])
+            ip = self._ip()
+            if not who.manager:
+                limit = int(store.settings().get("hatch_per_ip_hour") or 3)
+                recent = [t for t in ui.hatches.get(ip, []) if t > time.time() - 3600]
+                if len(recent) >= limit:
+                    return self._err(429, f"{limit} Claudes an hour from one address: try again later")
+                ui.hatches[ip] = recent + [time.time()]
+            tools = policy.clean(data.get("tools"))
+            approve = bool(data.get("approve_missions", not who.manager))
+            skin = _skin(data.get("skin"))
+            if isinstance(data.get("bot"), dict):  # a bot: kept once its provider answers
+                bot = bots.parse(data["bot"])
+                key = bots.check_key(bot["provider"], str(data["bot"].get("key") or ""))
+                said = bots.check(bot, key)
+                a = mgr.create(str(data.get("name", "")), bot=bot, key=key, start=False)
+                what = f"a bot on {bot['model']} via {bots.label(bot)}"
+            else:
+                a, said = mgr.create(str(data.get("name", "")), start=False), None
+                what = "waiting for its login"
+            owned = not who.owner  # the manager hatching for someone else still gets it on this device
+            store.put_claude(a["id"], name=a["name"], hat=skin.get("hat") or a.get("hat"), colors=skin.get("colors"),
+                             accessory=skin.get("accessory"), approve_missions=approve, tools=tools, owned=owned,
+                             hatched_by="manager" if who.manager else "public")
+            policy.save(a["config_dir"], tools, claude=a["id"])
+            store.event("agent.added", f"{a['id']} hatched from the farm UI ({what})"
+                        + ("; its person approves every mission" if approve else "")
+                        + (f"; tools off: {', '.join(tools['deny'])}" if tools["deny"] else ""), by="ui")
+            if not a.get("bot"):
+                mgr.start_login(a["id"])
+            out = {"id": a["id"], "name": a["name"], "said": said}
+            return self._json(out, extra={"Set-Cookie": self._owner_cookie(a["id"])} if owned else None)
+
+        def _manager_post(self, path: str, data: dict):
+            store = ui.store
+            if path == "/api/manager/settings":
+                ch = {}
+                if "private" in data:
+                    ch["private"] = bool(data["private"])
+                if data.get("viewer_password"):
+                    pw = str(data["viewer_password"])[:200]
+                    if len(pw) < 6:
+                        raise ValueError("a viewer password has at least 6 characters")
+                    salt, h = _pw_hash(pw)
+                    ch.update(viewer_salt=salt, viewer_hash=h)
+                if "private" in ch or "viewer_salt" in ch:  # everyone with the old viewer password signs in again
+                    ch["viewer_ver"] = int(store.settings().get("viewer_ver", 1)) + 1
+                if ch.get("private") and not (ch.get("viewer_hash") or store.settings().get("viewer_hash")):
+                    raise ValueError("set a viewer password to make the farm private")
+                for k in ("hatch_open",):
+                    if k in data:
+                        ch[k] = bool(data[k])
+                for k, lo, hi in (("max_claudes", 1, 1000), ("hatch_per_ip_hour", 1, 100)):
+                    if k in data:
+                        ch[k] = max(lo, min(hi, int(data[k])))
+                store.set_settings(**ch)
+                store.event("farm.settings", "farm settings changed by the manager: " +
+                            ", ".join(f"{k}={v}" for k, v in ch.items() if "viewer_" not in k), by="ui")
+                return self._json(self._manager_view())
+            if path == "/api/manager/planner":
+                ch = {}
+                if "on" in data:
+                    ch["on"] = bool(data["on"])
+                if "goal" in data:
+                    ch["goal"] = str(data["goal"] or "")[:4000]
+                if "host" in data:
+                    host = str(data["host"] or "")
+                    if host and host not in {a["id"] for a in ui.manager.all()}:
+                        raise ValueError(f"no Claude named {host} on this farm")
+                    ch["host"] = host
+                if data.get("every"):
+                    from .schedule import parse_every
+                    ch["every_s"] = max(60, parse_every(str(data["every"])[:20]))
+                if ch.get("on") and not (ch.get("goal") or store.planner().get("goal")):
+                    raise ValueError("give the planner a goal first")
+                store.set_planner(**ch)
+                store.event("planner.changed", "planner " + ", ".join(f"{k}={str(v)[:80]}" for k, v in ch.items()),
+                            by="ui")
+                return self._json(self._manager_view())
+            m = re.fullmatch(r"/api/manager/owners/([a-z0-9._-]+)/signout", path)
+            if m:  # every device signed in to that Claude signs out
+                rec = store.claude(m.group(1))
+                store.put_claude(m.group(1), owner_ver=int(rec.get("owner_ver", 1)) + 1, owned=False)
+                store.event("owner.signout", f"{m.group(1)}'s person signed out everywhere by the manager", by="ui")
+                return self._json(self._manager_view())
+            if path == "/api/manager/roll-ui":
+                from . import procs
+                os.makedirs(procs.pids_dir(ui.cfg.workspace), exist_ok=True)
+                open(os.path.join(procs.pids_dir(ui.cfg.workspace), "ui-roll"), "a").close()
+                return self._json({"ok": True})
+            return self._err(404, "not found")
+
+        def _rest(self, path: str, data: dict, who: Who):
+            store, mgr = ui.store, ui.manager
             m = re.fullmatch(r"/api/tasks/([a-z0-9]{6,40})/(cancel|retry)", path)
             if m:
                 tid, action = m.groups()
@@ -811,7 +1461,7 @@ def make_handler(ui: FarmUI):
                 ok = store.cancel(tid) if action == "cancel" else store.retry(tid)
                 if not ok:
                     raise ValueError("it already finished" if action == "cancel" else "it is still at work")
-                return self._json(ui.tasks_view())
+                return self._json(ui.tasks_view(who))
             m = re.fullmatch(r"/api/dashboards/([a-z0-9-]{1,48})/move", path)
             if m or path == "/api/dashboards/rename-folder":  # organizing the dashboards list
                 if m:
@@ -834,11 +1484,12 @@ def make_handler(ui: FarmUI):
                 try:
                     spec = {"cron": w[:100]} if whens == ["cron"] else {"every": parse_every(w[:20])} \
                         if whens == ["every"] else {"at": parse_at(w[:40], tz)}
-                    store.add_schedule(title, prompt[:100_000] or title, tz=tz, to=on, created_by="ui",
+                    store.add_schedule(title, prompt[:100_000] or title, tz=tz, to=on,
+                                       created_by="ui" if who.manager else f"owner:{who.owner}",
                                        owner=on or ui.cfg.name, **spec)
                 except (ValueError, KeyError) as e:  # an unknown time zone is a KeyError
                     raise ValueError(f"bad schedule: {str(e).strip(chr(39))}") from None
-                return self._json(ui.tasks_view())
+                return self._json(ui.tasks_view(who))
             m = re.fullmatch(r"/api/schedules/([a-z0-9]{6,40})/(pause|resume|run|remove)", path)
             if m:
                 sid, action = m.groups()
@@ -850,26 +1501,13 @@ def make_handler(ui: FarmUI):
                     store.run_schedule(sid, ui.cfg.max_depth, ui.cfg.max_attempts, by="ui")
                 else:
                     store.pause_schedule(sid, action == "pause", by="ui")
-                return self._json(ui.tasks_view())
+                return self._json(ui.tasks_view(who))
             if path == "/api/slack/allow":
                 ui.slack.set_allow([x.strip() for x in re.split(r"[,\s]+", str(data.get("allow") or "")) if x.strip()][:200])
                 return self._json(ui.slack.view())
             if path == "/api/slack/disconnect":
                 ui.slack.disconnect()
                 return self._json(ui.slack.view())
-            if path == "/api/agents" and isinstance(data.get("bot"), dict):  # a bot: kept once its provider answers
-                bot = bots.parse(data["bot"])
-                key = bots.check_key(bot["provider"], str(data["bot"].get("key") or ""))
-                said = bots.check(bot, key)
-                a = mgr.create(str(data.get("name", "")), bot=bot, key=key)
-                store.event("agent.added", f"{a['id']} added from the farm UI: a bot on {bot['model']} via "
-                            f"{bots.label(bot)}", by="ui")
-                return self._json({"id": a["id"], "name": a["name"], "said": said})
-            if path == "/api/agents":
-                a = mgr.create(str(data.get("name", "")))
-                store.event("agent.added", f"{a['id']} hatched from the farm UI; waiting for its login", by="ui")
-                mgr.start_login(a["id"])
-                return self._json({"id": a["id"], "name": a["name"]})
             m = re.fullmatch(r"/api/agents/([a-z0-9._-]+)/(login|code|remove|cancel-login)", path)
             if m:
                 aid, action = m.groups()
@@ -889,6 +1527,7 @@ def make_handler(ui: FarmUI):
                         s.kill()
                     return self._json({"ok": True})
                 mgr.remove(aid)
+                store.forget_claude(aid)  # its settings, and every owner cookie for it
                 back = store.forget_box(mgr.farm_id(aid))  # its workers leave with it; its tasks go back
                 store.event("agent.removed", f"{aid} released from the farm UI"
                             + (f"; {back} task(s) back in the queue" if back else ""), by="ui")
@@ -905,6 +1544,12 @@ class FarmHTTPServer(ThreadingHTTPServer):
     request_queue_size = 256
     daemon_threads = True
 
+    def server_bind(self):
+        # a new UI process binds next to the old one while it takes over (uikeeper.py)
+        if os.environ.get("FARM_UI_REUSEPORT") == "1" and hasattr(socket, "SO_REUSEPORT"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        super().server_bind()
+
 
 def serve(cfg, store: Store | None = None, manager: AgentManager | None = None, block: bool = True):
     """Start the UI (and keep the added agents running). Returns the server when ``block`` is False."""
@@ -912,14 +1557,23 @@ def serve(cfg, store: Store | None = None, manager: AgentManager | None = None, 
     host, port = os.environ.get("FARM_UI_HOST", "0.0.0.0"), int(os.environ.get("FARM_UI_PORT", "8080"))
     httpd = FarmHTTPServer((host, port), make_handler(ui))
     httpd.ui = ui
-    threading.Thread(target=ui.manager.keep_alive, name="agents", daemon=True).start()
+    managed = bool(os.environ.get("FARM_UI_PIDFILE"))  # its own process, kept by the farm daemon (uikeeper.py)
+    if not managed:  # served on its own (`clodfarm ui`): nobody else keeps the added Claudes running
+        threading.Thread(target=ui.manager.keep_alive, name="agents", daemon=True).start()
     threading.Thread(target=ui.browsers.keep, args=(ui.stopping,), name="browser", daemon=True).start()
     ui.slack.start()  # talk to the farm from Slack, once it's connected (the SLACK button)
+    if block and threading.current_thread() is threading.main_thread():
+        import signal
+        # a roll (uikeeper.py): finish the requests in flight, then go; the browsers and the Claudes keep running
+        signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=httpd.shutdown, daemon=True).start())
+    if managed:
+        from .uikeeper import mark_ready
+        mark_ready()
     print(f"farm UI on http://{'localhost' if host in ('0.0.0.0', '::') else host}:{port}", flush=True)
     if ui.auth.generated:
         print("+----------------------------------------------------------------+\n"
-              f"|  farm UI password: {ui.auth.generated:<44}|\n"
-              "|  shown once; change it with `clodfarm ui-passwd`               |\n"
+              f"|  farm manager password: {ui.auth.generated:<39}|\n"
+              "|  shown once; change it with `clodfarm manager-passwd`          |\n"
               "+----------------------------------------------------------------+", flush=True)
     if not block:
         threading.Thread(target=httpd.serve_forever, name="ui", daemon=True).start()
@@ -929,6 +1583,7 @@ def serve(cfg, store: Store | None = None, manager: AgentManager | None = None, 
     finally:
         ui.slack.stop()
         ui.stopping.set()
-        ui.browsers.shutdown()
-        ui.manager.shutdown()
+        if not managed:
+            ui.browsers.shutdown()
+            ui.manager.shutdown()
     return httpd

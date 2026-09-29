@@ -1,0 +1,76 @@
+# People on the farm: your own Claude, approvals, the manager
+
+A farm is watched by many and worked by a few. The farm UI knows who is looking:
+
+| Who | How | What they can do |
+|---|---|---|
+| **The public** | Nothing: a farm is public by default | Watch: every Claude and what it's doing, the tasks' titles and status, schedules, tokens burned, the planner's goal. Never prompts, results, conversations, tools, logins or the browser. **Hatch** a Claude of their own. |
+| **A viewer** | The viewer password, when the manager made the farm private | Same as the public. |
+| **An owner** | The browser that hatched a Claude (a cookie), or the pairing link that Claude gives them | Everything about **their** Claude: its conversations, results and tools, its skin and settings, the missions waiting for their OK, their browser profiles. |
+| **The farm manager** | The manager password (`FARM_UI_PASSWORD`, or `clodfarm manager-passwd`) | Everything: the planner, a private farm, hatching limits, every Claude and profile. |
+
+> [!IMPORTANT]
+> A public farm shows its Claudes' names and task titles to anyone who can reach the UI's port. Keep the port on
+> localhost (the default), or make the farm private (manager panel, or `clodfarm farm private`), before you publish
+> the address.
+
+## Your own Claude
+
+**+ NEW CLAUDE** (or an egg) hatches one. You choose, before it logs in:
+- **its look:** hat, hat and band colours, body tint, an accessory. Change it any time in its SETTINGS.
+- **APPROVE EVERY MISSION** (on by default): other Claudes, the planner and anyone else can't just start work on
+  it. Their mission waits until you say yes, on your phone.
+- **ALL TOOLS**, or pick them: Shell, Edit files, Web, Sub-agents, Messaging, the farm's browser, other MCP tools. A
+  tool you turn off is denied at every call (a PreToolUse hook, so it also holds with `bypassPermissions`), and a
+  change applies at its next tool call. Read, Glob and Grep always work, and so do `clodfarm ...` commands: that is
+  how your Claude talks to the farm.
+
+The browser you hatched from is now signed in to your Claude, and it can't hatch another one. The farm manager sets
+how many Claudes a farm takes, how many an address may hatch an hour, and can close hatching.
+
+### Signing in from your phone
+
+In the Claude app, in your Claude's conversation, say **"farm login"** (or type `/farm-login`). Your Claude runs
+`clodfarm pair` and gives you a link: tap it and your phone is signed in to your Claude on the farm. The link works
+once, for 10 minutes. On another computer, tap **MY CLAUDE** on the farm's page and type the 6-letter code it gave
+you too. Set `FARM_PUBLIC_URL` to the farm's address (e.g. `https://farm.example.com`) so the link points there.
+
+The Claudes on a farm share one container, so this is a convenience, not a wall between them: see
+[security.md](security.md).
+
+## Approvals
+
+When your Claude approves every mission:
+- a sub-agent another Claude (or the planner, a schedule someone else made, Slack, a Claude Code over MCP) starts
+  **on your Claude** waits as *pending*; so does a `clodfarm msg` to it. Its own sub-agents, your own requests and
+  your conversations don't wait.
+- you see **N TO APPROVE** at the top of the farm; tap it for who asks, the full request, APPROVE or DENY. With an
+  ntfy topic in your Claude's SETTINGS, your phone gets a push for each one, with a link straight to it.
+- a denied (or, after a day, expired) request goes back to whoever asked, as a message.
+- your Claude doesn't take work sent to "any Claude" either: only its own and what you approved.
+
+From a shell the manager can use `clodfarm approvals`, `clodfarm approve ID` and `clodfarm deny ID`. A Claude can't.
+
+## The farm manager
+
+The gear on the farm (or G) opens the manager panel:
+- **the planner:** on/off, its goal, which Claude it runs on, how often (see [planner.md](planner.md));
+- **privacy:** public, or private with a viewer password (a new viewer password signs every viewer out);
+- **hatching:** open or closed, the most Claudes, hatches per address and hour;
+- **owners:** sign a Claude's person out on every device;
+- **the release,** and ROLL UI (see [upgrades.md](upgrades.md)).
+
+From a shell: `clodfarm farm private --password ... | public | hatch-open | hatch-closed`, `clodfarm planner ...`.
+
+## The farm's browser
+
+The browser is a Claude's tool. Each profile belongs to one Claude: only that Claude gets its tools, and only its
+person sees it (the BROWSER button shows once you're signed in to your Claude). There is no farm-wide default profile:
+a person adds up to 2 profiles for their Claude on `/browser` (`FARM_BROWSER_PER_CLAUDE`). The farm manager runs
+them (on and off, the proxy, whose it is: `clodfarm browser assign <profile> <claude>`) but doesn't look inside. A
+profile nobody owns belongs to the farm's own Claude.
+
+## Usage
+
+Top left, the farm shows the tokens burned by every Claude (input, output and cache, total and today). An owner also
+sees their own Claude's: its tokens today and in total, and its 5-hour and weekly usage.

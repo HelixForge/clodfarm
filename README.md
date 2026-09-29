@@ -61,7 +61,10 @@ through your limits. clodfarm is the operations layer it's missing:
 | <img src="assets/icons/aws.svg" width="18" height="18" align="top" alt=""> **Builds apps on AWS (optional)** | The Claudes ship their own serverless apps inside a fenced role with a hard budget cap ([details](#let-the-farm-build-apps-on-aws-optional)). |
 | <img src="assets/icons/server.svg" width="18" height="18" align="top" alt=""> **Many boxes, many seats** | One farm and one repo across machines and accounts, each on its own budget. |
 | <img src="assets/icons/bell.svg" width="18" height="18" align="top" alt=""> **Tells you when it matters** | Failures and usage limits go to ntfy, Slack or Discord. |
-| <img src="assets/icons/monitor-play.svg" width="18" height="18" align="top" alt=""> **A farm you can watch** | Every Claude, its sub-agents, usage and tools at a glance, in your browser. |
+| <img src="assets/icons/monitor-play.svg" width="18" height="18" align="top" alt=""> **A farm you can watch** | Every Claude, its sub-agents, usage and tools at a glance, in your browser. A hundred Claudes and a crowd watching stay quick; tokens burned, farm-wide and yours, top left. |
+| <img src="assets/icons/users.svg" width="18" height="18" align="top" alt=""> **Your own Claude** | Hatch one from the farm, pick its look and its tools, sign in to it from your phone with "farm login". Missions others send it wait for your OK ([docs](docs/people.md)). |
+| <img src="assets/icons/gauge.svg" width="18" height="18" align="top" alt=""> **A planner with a goal** | Switch it on with a goal: it works in cycles all the time, delegates to the Claude with the right tools and budget, and builds the tools it needs ([docs](docs/planner.md)). |
+| <img src="assets/icons/server.svg" width="18" height="18" align="top" alt=""> **Upgrades that stop nothing** | `clodfarm upgrade` replaces the farm's code and UI while every agent, and every phone conversation, keeps running ([docs](docs/upgrades.md)). |
 
 You talk to your Claude in the Claude app; the farm UI shows who is working on what; the Claudes and you use the
 same CLI.
@@ -86,7 +89,9 @@ docker exec clodfarm clodfarm status
 ```
 
 The farm UI is at **http://localhost:8080**
-(see [docs/ui.md](docs/ui.md)): the password is printed once in `docker logs clodfarm`, or set `FARM_UI_PASSWORD`.
+(see [docs/ui.md](docs/ui.md)): anyone who reaches it watches; the farm manager's password is printed once in
+`docker logs clodfarm` (or set `FARM_UI_PASSWORD`), and the manager can make the farm private
+([docs/people.md](docs/people.md)).
 From the UI you can also log the farm in: tap the egg, open the Claude login link and paste the code back.
 
 <details>

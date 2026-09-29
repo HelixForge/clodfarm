@@ -8,6 +8,11 @@ NAME="${CLAUDE_FARM_NAME:-clodfarm}"
 PORT="${FARM_UI_PORT:-8080}"
 
 say() { printf '\033[1;38;5;209m==>\033[0m %s\n' "$*"; }
+# `curl ... | sh -s upgrade`: new clodfarm code in the running container; its agents keep running
+if [ "${1:-}" = "upgrade" ]; then
+  docker exec "$NAME" clodfarm upgrade --ref "${CLODFARM_REF:-main}" && docker exec "$NAME" clodfarm upgrade --status
+  exit $?
+fi
 command -v docker >/dev/null 2>&1 || { echo "Docker is required: https://docs.docker.com/get-docker/"; exit 1; }
 docker info >/dev/null 2>&1 || { echo "Docker is installed but not running. Start it and run this again."; exit 1; }
 
@@ -32,7 +37,7 @@ PW=""
 if [ -z "${FARM_UI_PASSWORD:-}" ]; then
   i=0
   while [ $i -lt 20 ] && [ -z "$PW" ]; do
-    PW=$(docker logs "$NAME" 2>&1 | sed -n 's/.*farm UI password: \([^ |]*\).*/\1/p' | tail -1)
+    PW=$(docker logs "$NAME" 2>&1 | sed -n 's/.*farm \(UI\|manager\) password: \([^ |]*\).*/\2/p' | tail -1)
     [ -n "$PW" ] || { sleep 1; i=$((i + 1)); }
   done
 fi
@@ -51,10 +56,13 @@ cat <<MSG
 
   clodfarm is running.
 
-  Farm UI:            http://localhost:$PORT   password: $PWTXT
+  Farm UI:            http://localhost:$PORT   manager password: $PWTXT
+                      (anyone with the address watches; make it private in the manager panel)
 
   Talk to it:         Claude app -> Code -> "[clodfarm] $NAME" (on your phone or at claude.ai/code)
-  Add teammates:      in the farm UI, + NEW CLAUDE: each logs in with their own account
+  Add teammates:      in the farm UI, + NEW CLAUDE: each hatches their own Claude with their own account
+  Upgrade later:      curl -fsSL https://raw.githubusercontent.com/matank001/clodfarm/main/scripts/install.sh | sh -s upgrade
   Watch it:           docker exec $NAME clodfarm status      (or the farm UI, or: docker logs -f $NAME)
+                      (agents keep running through an upgrade)
 
 MSG

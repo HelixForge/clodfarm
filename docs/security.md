@@ -29,10 +29,34 @@ clodfarm gives autonomous agents a shell. Be deliberate about what that shell ca
 6. **Token hygiene:** if you use `CLAUDE_CODE_OAUTH_TOKEN`, keep `.env` out of git and prefer a secret store.
    Revoke tokens you no longer use.
 
+## Who can see and do what on the farm UI
+
+See [people.md](people.md). In short: a public farm (the default) shows every Claude's name, status and task titles
+to anyone who can reach the UI's port, and lets them hatch one Claude (which runs code in your container). Keep the
+port on localhost, put the farm behind a private farm's viewer password (`clodfarm farm private`), or close hatching
+(`clodfarm farm hatch-closed`) before you expose it. Prompts, results, conversations, tools, logins and the browser
+are only ever shown to a Claude's own person and to the farm manager.
+
+- **Owner cookies** are HMAC-signed with a key of their own (`.farm/ui-keys.json`), last a year, are HttpOnly and
+  SameSite=Lax (so the pairing link opened from the Claude app works), and are revoked by the manager's SIGN OUT
+  (which bumps that Claude's owner version) or by releasing the Claude.
+- **Pairing links** (`clodfarm pair`) work once, for 10 minutes; only their hash is stored. A pairing code is 6
+  characters and counts toward the same per-address lockout as a wrong password.
+- **The Claudes share one container.** A Claude with a shell can read what the farm's user can read, including other
+  Claudes' logins, and could run `clodfarm pair` as another Claude. Ownership, approvals and tool choices keep honest
+  Claudes (and prompt injections that follow the farm's rules) in their lane; they are not a sandbox between Claudes.
+  Give a Claude you don't trust no shell (its tools), or run it on its own box.
+- **Tool choices** are enforced by a PreToolUse hook at every tool call (it holds with `bypassPermissions`), plus
+  `--disallowedTools` for the built-in tools. A Claude without the shell can still run `clodfarm ...` commands
+  (only single commands, no `;`, `|`, `&`, `$` or redirects).
+- **Approvals** are given only by a person: the farm UI (the Claude's owner or the manager) or `clodfarm approve` from
+  a shell; a Claude can't approve (the CLI refuses when it runs inside Claude Code).
+
 ## The farm's browser
 
-Every site you log in to in the farm's browser ([browser.md](browser.md)) is open to every Claude on that box and to
-anyone with the farm UI password, and a web page the agents read could try a prompt injection with those sessions
+Every site you log in to in a profile of the farm's browser ([browser.md](browser.md)) is open to the Claude that
+profile belongs to, to that Claude's person and to the farm manager (and, through the shared container, to any Claude
+with a shell that goes looking), and a web page the agents read could try a prompt injection with those sessions
 in reach. Log in only to accounts you want the farm to act on (a separate account where the site allows it), and
 log out there, or remove that profile, to take access back. Its DevTools and VNC ports
 listen on 127.0.0.1 inside the container only; the screen reaches you only through the farm UI, behind its

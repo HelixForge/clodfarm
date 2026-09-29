@@ -94,3 +94,18 @@
 .proxy-hint { flex-basis: 100%; margin: 2px 0 0; color: var(--muted); }
 .proxy-error { flex-basis: 100%; margin: 0; }
 @media (max-width: 760px) { .conn-label { display: none; } }
+
+/* whose a profile is (the manager sees every Claude's), ASSIGN, and the screen for someone only watching the farm */
+.ptab .powner { font: 16px/1 var(--font-body); color: var(--muted); margin-left: 2px; }
+.ptab[aria-selected="true"] .powner { color: var(--clay-2); }
+.add-form { flex-wrap: wrap; }
+.for-pick, .assign { display: inline-flex; align-items: center; gap: 8px; font: 8px/1 var(--font-px); color: #fff;
+  text-shadow: 1px 1px 0 #1b2410; }
+.for-pick select, .assign select { font: 20px/1 var(--font-body); padding: 4px 8px; color: var(--ink); background: var(--white);
+  border: 3px solid var(--ink); border-radius: 6px; max-width: 16em; text-shadow: none; }
+#denied .btn { text-decoration: none; display: inline-block; }
+@media (max-width: 640px) {
+  .add-form input { width: 100%; flex: 1 1 100%; }
+  .for-pick, .assign { flex-wrap: wrap; }
+  .for-pick select, .assign select { max-width: 100%; }
+}

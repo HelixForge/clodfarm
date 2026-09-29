@@ -135,6 +135,10 @@ HOOK_CMD = "clodfarm hook"
 # after every batch of tool calls; the shell test keeps it free (no Python starts) unless mail is waiting
 MAIL_HOOK_CMD = '[ -e "${FARM_MAIL_FLAG:-/nonexistent}" ] && exec clodfarm hook; exit 0'
 LISTEN_HOOK_CMD = "clodfarm hook --listen"
+# before every tool call; free (no Python starts) unless this Claude's person turned tools off (policy.py)
+POLICY_HOOK_CMD = ('[ -s "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/farm-policy.json" ] && exec clodfarm hook --policy; '
+                   'exit 0')
+SEND_HOOK_CMD = "clodfarm hook --policy"
 LISTEN_SECONDS = 600  # an idle conversation is woken for mail this long after its last turn
 _OLD_HOOKS = ("clodfarm inbox --hook",)
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "Stop", "SessionEnd")
@@ -147,18 +151,23 @@ def farm_hooks() -> dict:
       * after every batch of tool calls: deliver messages that arrived meanwhile (only when its flag file exists)
       * after SendMessage: log the message in the farm's event log, so the farm shows it
       * after a Remote Control conversation's turn: wait in the background and wake it when a message arrives
-        (asyncRewake)"""
+        (asyncRewake)
+      * before a tool call: the tools its person turned off are denied (policy.py); a SendMessage to a Claude whose
+        person approves every mission is sent through `clodfarm msg` instead, which asks them"""
     base = {"type": "command", "command": HOOK_CMD, "timeout": 15}
     out = {event: [{"hooks": [dict(base)]}] for event in HOOK_EVENTS}
     out["PostToolBatch"] = [{"hooks": [{"type": "command", "command": MAIL_HOOK_CMD, "timeout": 15}]}]
     out["PostToolUse"] = [{"matcher": "SendMessage", "hooks": [dict(base)]}]
+    out["PreToolUse"] = [{"matcher": "SendMessage", "hooks": [{"type": "command", "command": SEND_HOOK_CMD,
+                                                               "timeout": 15}]},
+                         {"hooks": [{"type": "command", "command": POLICY_HOOK_CMD, "timeout": 15}]}]
     out["Stop"].append({"hooks": [{"type": "command", "command": LISTEN_HOOK_CMD, "async": True, "asyncRewake": True,
                                    "timeout": LISTEN_SECONDS}]})
     return out
 
 
 def _ours(group: dict) -> bool:
-    cmds = {HOOK_CMD, MAIL_HOOK_CMD, LISTEN_HOOK_CMD, *_OLD_HOOKS}
+    cmds = {HOOK_CMD, MAIL_HOOK_CMD, LISTEN_HOOK_CMD, POLICY_HOOK_CMD, SEND_HOOK_CMD, *_OLD_HOOKS}
     return any(h.get("command") in cmds for h in group.get("hooks", []))
 
 
@@ -239,7 +248,7 @@ def install_model(model: str):
     _atomic_write(path, json.dumps(cfg, indent=2))
 
 
-def install_browser_mcp(path: str | None = None) -> bool:
+def install_browser_mcp(path: str | None = None, claude: str | None = "", unowned: bool = False) -> bool:
     """Give this Claude the farm's browser profiles as MCP tools: one server per profile (``browser`` for the default
     one, ``browser-<name>`` for the others), each Playwright attached to that profile's Chromium, so it works in the
     logins made from the farm UI. Servers of removed profiles go; a server of the same name set up by hand is kept.
@@ -252,7 +261,8 @@ def install_browser_mcp(path: str | None = None) -> bool:
     except (OSError, ValueError):
         cfg = {}
     servers = dict(cfg.get("mcpServers") or {})
-    want = browser.mcp_servers()
+    # its own profiles only (``claude``); the farm's own Claude ("") also gets the profiles nobody owns
+    want = browser.mcp_servers(claude=claude, unowned=unowned)
     for name, server in list(servers.items()):
         if (name == browser.MCP_NAME or name.startswith(browser.MCP_NAME + "-")) and browser.is_ours(server) \
                 and name not in want:
@@ -308,3 +318,24 @@ def _atomic_write(path: str, text: str):
     except OSError:
         os.chmod(tmp, 0o600)
     os.replace(tmp, path)
+
+
+FARM_LOGIN_COMMAND = """---
+description: Sign your person in to you on the farm UI (a one-time link for their phone)
+---
+Run `clodfarm pair` with Bash and give me the link it prints (I tap it on my phone and I'm signed in to you on the
+farm) and the code (for another device: MY CLAUDE on the farm's page). Say it works once, for 10 minutes.
+"""
+
+
+def install_commands():
+    """This Claude's `/farm-login`: in the Claude app, its person types it to sign in to it on the farm UI."""
+    d = os.path.join(claude_home(), "commands")
+    path = os.path.join(d, "farm-login.md")
+    try:
+        if open(path).read() == FARM_LOGIN_COMMAND:
+            return
+    except OSError:
+        pass
+    os.makedirs(d, exist_ok=True)
+    _atomic_write(path, FARM_LOGIN_COMMAND)

@@ -20,6 +20,36 @@
   - pause and resume;
   - the farm guide reaching agents.
 
+- `test_hot_upgrade.py` runs a real `clodfarm run` in its own process, with its UI: `clodfarm upgrade` to another
+  release while two sub-agents run (same processes after, Remote Control untouched, the UI never refused a
+  connection, every run lands exactly once), SIGKILL of the daemon mid-run (the run is adopted when it comes back,
+  not re-run), a release that keeps crashing (rolled back on the third start), and `--status` / `--rollback`.
+- `test_owners.py`: hatching (once per browser, the skin and tool choices, the per-address limit, closed hatching),
+  what the public, owners and the manager see, ETags, pairing links and codes (once each), private farms, signing an
+  owner out.
+- `test_approvals.py`: pending missions and held messages for a Claude whose person approves them (approve, deny,
+  expiry, a denied child frees its parent, a Claude can't approve), tool policy decisions and the PreToolUse hook,
+  tokens (runs and conversations, each message once), browser profiles per Claude, and the planner's cycles.
+
+## Load and scale
+
+`scripts/seed_farm.py` fills a farm with a hundred made-up Claudes, a thousand tasks, approvals and a planner
+(`FARM_AGENTS_KEEP=0` so none of them is started); `scripts/loadtest_ui.py` has N viewers poll it like the page does.
+**2026-09-29, a MacBook, SQLite, 101 Claudes / 1000 tasks, 300 viewers for 30 s:** `/api/state` p50 16 ms, p95
+122 ms; `/api/tasks` p50 12 ms, p95 40 ms; 5,400 requests, no errors (before the per-viewer caches: p95 3.4 s).
+
+## Upgrades in Docker
+
+**2026-09-29, Docker Desktop (linux/arm64), the image built from this tree (`BROWSER=0`), the fake claude:** two
+`clodfarm upgrade --from` in a row while slow sub-agents ran. The daemon stayed PID 7 and exec'd each release; the
+running agent and Remote Control (the phone sessions) kept their PIDs through both; the container stayed `healthy`;
+the UI rolled to the new version; all three sub-agents landed on main, each run exactly once. Then
+`clodfarm drain --exit` with a queued sub-agent: the box stopped without starting it, stayed drained across Docker's
+restarts, and the recreated container cleared the drain and ran it.
+
+**2026-09-29, macOS, Claude Code 2.1.284 (Haiku):** the farm's PreToolUse hook with the shell turned off, under
+`--permission-mode bypassPermissions`: the Bash call was denied with the farm's reason and never ran.
+
 ## Manual runs against real Claude Code
 
 **2026-09-25, macOS, Claude Code 2.1.282, Opus 5.5, Team subscription, native (not in Docker)**, 2 workers, moto as

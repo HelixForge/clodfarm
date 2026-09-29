@@ -1,6 +1,53 @@
 # Changelog
 
-## Unreleased
+## 1.0.0 (2026-09-29)
+
+Your own Claude on a shared farm, missions that wait for your OK, a planner that works toward a goal all the time, a
+farm manager, a farm that stays easy to watch with a hundred Claudes and a crowd, and new code without stopping a
+single agent.
+
+- **Upgrade without stopping the agents** ([docs/upgrades.md](docs/upgrades.md)). `clodfarm upgrade` (or
+  `deploy/aws/deploy.sh upgrade`, or `install.sh | sh -s upgrade`) installs a new clodfarm into the workspace volume
+  and hands over to it: every sub-agent keeps running mid-run, the phone conversations (Remote Control) too, and so
+  do the Claudes added in the UI and the farm's browser. It ends by showing the agents are the same processes.
+  - Every `claude` process runs under a small detached shim that keeps its stdin, output and exit code in files; the
+    farm daemon reads them, and a new release (or the daemon after a crash) adopts the run and lands it as usual.
+  - The farm UI is its own process, kept by the daemon, and is rolled with no downtime (the new one binds next to the
+    old one). A crowd watching the farm talks only to the UI process.
+  - A release that keeps crashing at start is taken back by itself; `clodfarm upgrade --rollback` does it by hand.
+  - A new image drains the box instead: `clodfarm drain --exit` (or `deploy.sh roll`) stops taking work, lets what
+    runs finish, then the container is recreated.
+- **Your own Claude** ([docs/people.md](docs/people.md)). Anyone who can watch the farm hatches one Claude, once:
+  the browser that hatched it is signed in to it (the others see titles, never prompts, results or conversations).
+  When hatching you pick its **skin** (hat, colours, accessory), **APPROVE EVERY MISSION**, and **ALL TOOLS** or the
+  tools one by one. Change any of it later in its SETTINGS.
+  - **Sign in from your phone:** say "farm login" (or `/farm-login`) to your Claude in the Claude app; it runs
+    `clodfarm pair` and gives you a one-time link (and a code for MY CLAUDE on another device).
+  - **Tools you turn off are denied at every call** (a PreToolUse hook, so it holds with `bypassPermissions`), and a
+    change applies at the next tool call. `clodfarm ...` commands always work.
+- **Missions wait for your OK.** Work other Claudes, the planner, Slack or MCP send to a Claude whose person approves
+  every mission waits as *pending*, and so do their messages. Its person sees **N TO APPROVE** on the farm (and a push
+  on their phone with an ntfy topic in SETTINGS), with APPROVE / DENY. A no, or a day without an answer, goes back to
+  whoever asked. `clodfarm approvals | approve | deny` for the manager.
+- **The planner** ([docs/planner.md](docs/planner.md)). A goal and a switch (`clodfarm planner goal "..."`,
+  `clodfarm planner on`, or the manager panel): it runs in cycles all the time, keeps a notebook, looks at every
+  Claude's budget and tools, delegates, builds the tools the goal needs, and rests between cycles. The scarecrow on
+  the farm.
+- **The farm manager.** The farm password is now the manager's (`clodfarm manager-passwd`). The manager panel (the
+  gear, G) switches the planner, makes the farm **private** with a viewer password (a public farm, the default,
+  shows the farm and task titles to anyone who reaches it), limits hatching, and signs a person out everywhere.
+  `clodfarm farm private|public|hatch-open|hatch-closed` from a shell.
+- **The browser is a Claude's tool:** each profile belongs to one Claude, only that Claude gets its tools and only its
+  person sees it; without a Claude of your own there is no browser to see. No more default profile: a person adds
+  their Claude's (up to 2 per Claude, 16 per box: `FARM_BROWSER_PER_CLAUDE`, `FARM_BROWSER_MAX`), the manager
+  assigns (`clodfarm browser assign <profile> <claude>`). A profile nobody owns is the farm's own Claude's.
+- **A hundred Claudes, a crowd watching.** The farm grows with its Claudes (pan and zoom, a ROSTER of every Claude),
+  the TASKS page filters, searches and pages on the server, and the state is built once a second for everyone
+  (with ETags): 300 viewers polling a 100-Claude farm get answers in ~15 ms (p95 ~120 ms) on a laptop.
+- **Tokens burned, top left:** every Claude's input, output and cache tokens, in total and today, counted from every
+  sub-agent run and every conversation. An owner also sees their own Claude's, with its 5-hour and weekly usage.
+
+## Unreleased (folded into 1.0.0)
 
 - **Schedules say when they run in plain words.** `30 7 * * 1-5` in Jerusalem now reads "weekdays at 7:30am,
   Jerusalem time", and the next run reads "next tomorrow at 12:30 AM your time, in 6h 10m" (on TASKS, in

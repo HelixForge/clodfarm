@@ -239,6 +239,7 @@ td a { color: var(--clay-2); }
 /* no dashboards yet */
 .empty { padding: 24px 24px 20px; max-width: 760px; }
 .empty h2 { font-size: 12px; line-height: 1.6; margin-bottom: 10px; }
+.empty .btn { display: inline-block; text-decoration: none; margin-top: 6px; }
 .empty pre { background: #fff; border: 3px solid var(--paper-2); border-radius: 4px; padding: 10px 12px; overflow-x: auto; font: 19px/1.2 var(--font-body); }
 
 @media (max-width: 760px) {

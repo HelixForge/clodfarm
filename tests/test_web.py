@@ -47,6 +47,15 @@ def client():
     return call
 
 
+def wait(fn, timeout=15):
+    end = time.time() + timeout
+    while time.time() < end:
+        if fn():
+            return True
+        time.sleep(0.1)
+    return False
+
+
 def login(call, base):
     code, body, _ = call(base + "/api/login", {"password": "correct horse"})
     assert code == 200, body
@@ -55,12 +64,30 @@ def login(call, base):
 def test_login_required_and_wrong_password(ui):
     base, _ = ui
     call = client()
-    assert call(base + "/api/state")[0] == 401
+    code, st, headers = call(base + "/api/state")  # a public farm: anyone watches
+    assert code == 200 and st["farm"] == "test" and st["me"]["role"] == "viewer"
+    assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
+    assert call(base + "/api/manager")[0] == 403
     assert call(base + "/api/login", {"password": "nope"})[0] == 401
     login(call, base)
-    code, st, headers = call(base + "/api/state")
-    assert code == 200 and st["farm"] == "test"
-    assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
+    assert call(base + "/api/manager")[0] == 200
+
+
+def test_a_private_farm_needs_its_viewer_password(ui):
+    base, _ = ui
+    manager, viewer, stranger = client(), client(), client()
+    login(manager, base)
+    assert manager(base + "/api/manager/settings", {"private": True})[0] == 400  # a viewer password first
+    assert manager(base + "/api/manager/settings", {"private": True, "viewer_password": "letmein"})[0] == 200
+    assert stranger(base + "/api/state")[0] == 401
+    assert stranger(base + "/api/me")[1]["private"] is True
+    assert viewer(base + "/api/login", {"password": "letmein", "as": "viewer"})[0] == 200
+    code, st, _ = viewer(base + "/api/state")
+    assert code == 200 and st["me"]["role"] == "viewer"
+    assert viewer(base + "/api/manager")[0] == 403 and viewer(base + "/api/pause", {})[0] == 403
+    assert manager(base + "/api/manager/settings", {"viewer_password": "another"})[0] == 200
+    assert viewer(base + "/api/state")[0] == 401, "a new viewer password signs viewers out"
+    assert manager(base + "/api/state")[0] == 200
 
 
 def test_session_cookie_flags_and_logout(ui):
@@ -70,7 +97,7 @@ def test_session_cookie_flags_and_logout(ui):
     cookie = headers["Set-Cookie"]
     assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
     call(base + "/api/logout", {})
-    assert call(base + "/api/state")[0] == 401
+    assert call(base + "/api/manager")[0] == 403
 
 
 def test_writes_need_the_csrf_header(ui):
@@ -139,7 +166,8 @@ def test_hatch_an_agent_starts_its_own_farm_process(ui):
     assert code == 200 and a["id"] == "gil-s-claude"
     agent = farm_ui.manager.get(a["id"])
     assert agent["config_dir"].startswith(farm_ui.manager.base)
-    assert farm_ui.manager.alive(a["id"])
+    farm_ui.manager.spawn(agent)  # the farm daemon's keeper does this (AgentManager.keep_alive)
+    assert wait(lambda: farm_ui.manager.alive(a["id"]))
     env = farm_ui.manager.env_for(agent)
     assert env["FARM_NAME"] == a["id"] and env["FARM_UI"] == "0" and env["CLAUDE_CONFIG_DIR"] == agent["config_dir"]
     assert call(base + "/api/agents", {"name": "Gil's Claude"})[1]["id"] != a["id"]  # names stay unique
@@ -250,7 +278,7 @@ def test_a_claude_mid_turn_in_a_conversation_is_at_work(ui):
 def test_slack_setup_endpoints(ui):
     base, _ = ui
     call = client()
-    assert call(base + "/api/slack")[0] == 401
+    assert call(base + "/api/slack")[0] == 403  # the farm manager's
     login(call, base)
     code, body, _ = call(base + "/api/slack")
     assert code == 200 and body["configured"] is False and body["manifest_url"].startswith("https://api.slack.com/apps?new_app=1")
@@ -280,7 +308,7 @@ def test_a_new_password_works_at_once_and_signs_old_sessions_out(env, backend, m
         assert old(base + "/api/state")[0] == 200
         subprocess.run([sys.executable, "-m", "clodfarm", "ui-passwd"], input="brand new pass\n", text=True,
                        capture_output=True, check=True)  # from another process, like `docker exec`
-        assert old(base + "/api/state")[0] == 401, "every open session is signed out"
+        assert old(base + "/api/manager")[0] == 403, "every open session is signed out"
         new = client()
         assert new(base + "/api/login", {"password": farm_ui.auth.generated or ""})[0] == 401
         assert new(base + "/api/login", {"password": "brand new pass"})[0] == 200, "no restart needed"

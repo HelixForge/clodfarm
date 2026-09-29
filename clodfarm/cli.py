@@ -34,6 +34,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 from . import __version__
@@ -165,7 +166,8 @@ def cmd_budget(cfg, a):
         seat = cfg.seat or seat_id(auth_status(cfg.claude_bin))
         res = run_agent(build_cmd(cfg, "Answer in one word."), "Reply with: ok", cfg.workspace
                         if os.path.isdir(cfg.workspace) else os.getcwd(), {**os.environ, "FARM_TASK_ID": "usage"}, 180,
-                        on_snapshot=lambda sn: store.put_snapshot(sn, seat))
+                        on_snapshot=lambda sn: store.put_snapshot(sn, seat),
+                        workspace=cfg.workspace if os.path.isdir(cfg.workspace) else tempfile.gettempdir())
         if not res.snapshots:
             print(f"no rate-limit report received ({res.text[:200]})", file=sys.stderr)
     rows = _seats(cfg, store)
@@ -287,6 +289,11 @@ def cmd_spawn(cfg, a):
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
+    if t.get("status") == "pending":
+        _out(t, a.json, f"asked {t['to']} for sub-agent {t['id']}: {t['title']}. {t['to']}'s person approves every "
+             f"mission: it starts when they say yes on the farm (a no comes back to you as a message). Don't wait for "
+             f"it: go on with other work.")
+        return 0
     _out(t, a.json, f"started sub-agent {t['id']}: {t['title']}" + (f" on {t['to']}" if t.get("to") else "")
          + (f" (child of {parent})" if parent else "") + f". Its result: clodfarm result {t['id']}"
          + ("" if me else f". To hear when it's done without keeping your person waiting, run `clodfarm result "
@@ -375,7 +382,9 @@ def cmd_msg(cfg, a):
                            person=person)
     wake = f"; if nobody has read it in {cfg.mail_wake_after}s, the farm starts someone to handle it" if a.wake else ""
     status = (task or {}).get("status")
-    if not task:
+    if m.get("held"):
+        how = f"{a.to}'s person approves every message sent to it: it is delivered when they say yes on the farm"
+    elif not task:
         how = (f"{a.to}'s conversations get it at their next tool call or prompt (one that was active in the last "
                f"10 minutes is woken for it){wake}")
     elif status == "running":
@@ -423,6 +432,8 @@ def cmd_hook(cfg, a):
     except ValueError:
         ev = {}
     name, sid = ev.get("hook_event_name", ""), ev.get("session_id")
+    if getattr(a, "policy", False) or name == "PreToolUse":
+        return _pre_tool(cfg, ev)
     kind = session_kind()
     if kind == "usage" or (a.listen and not _remote_conversation(kind)):
         return 0
@@ -458,6 +469,10 @@ def cmd_hook(cfg, a):
             msgs = _take_mail(store, cfg, "prompt")
             if msgs:
                 print(mail_text(msgs))
+            waiting = len(store.pending(cfg.name)) if store.approving(cfg.name) else 0
+            if waiting:  # only the count: what they ask stays on the farm, where only the person decides
+                print(f"[farm] {waiting} request(s) from others wait for your person's approval on the farm (the "
+                      f"TO APPROVE button). Mention it once if it fits; you can't approve them yourself.")
         if name == "Stop" and sid:
             blocks = int((store.session(sid) or {}).get("mail_blocks", 0)) if ev.get("stop_hook_active") else 0
             msgs = _take_mail(store, cfg, "stop") if blocks < MAIL_STOP_BLOCKS else []
@@ -466,6 +481,31 @@ def cmd_hook(cfg, a):
                 store.record_session(sid, mail_blocks=blocks + 1)
             else:  # the turn ends
                 store.record_session(sid, busy=False)
+    except Exception as e:  # noqa: BLE001
+        print(f"clodfarm hook: {e!r}"[:300], file=sys.stderr)
+    return 0
+
+
+def _pre_tool(cfg, ev: dict) -> int:
+    """Before a tool call: what this Claude's person turned off is denied (policy.py), and a message sent with
+    Claude Code's SendMessage to a Claude whose person approves every mission is turned away (`clodfarm msg` asks
+    them). Fails open on the farm's own errors: the store being down must not stop every tool call."""
+    from . import policy
+    from .auth import claude_home
+    tool, inp = ev.get("tool_name") or "", ev.get("tool_input") or {}
+    try:
+        ok, why = policy.decide(policy.load(claude_home()), tool, inp)
+        if ok and tool == "SendMessage":
+            to = _peer(inp.get("to") or inp.get("recipient") or "")
+            me = os.environ.get("FARM_OWNER") or cfg.name
+            store = _store(cfg)
+            target = (store.get_task(to) or {}).get("owner") if TASK_ID.fullmatch(to or "") else to
+            if target and target != me and store.approving(target):
+                ok, why = False, (f"{target}'s person approves everything sent to it. Send it with `clodfarm msg "
+                                  f"{to} \"...\"` instead: they get asked on their phone.")
+        out = policy.hook_output(ok, why)
+        if out:
+            print(json.dumps(out))
     except Exception as e:  # noqa: BLE001
         print(f"clodfarm hook: {e!r}"[:300], file=sys.stderr)
     return 0
@@ -814,12 +854,26 @@ def cmd_doctor(cfg, a):
 def cmd_browser(cfg, a):
     from . import browser
     bs = browser.Browsers(cfg.workspace)
-    name = getattr(a, "profile", None) or browser.DEFAULT
+    mine = [p["name"] for p in bs.registry.all() if p.get("owner") == cfg.name
+            or (not p.get("owner") and not os.environ.get("FARM_HATCHED"))]
+    name = getattr(a, "profile", None) or (mine[0] if mine else "")
     try:
+        if a.sub == "assign":  # a person at the box's shell (the manager): whose Claude's profile this is
+            if _in_claude():
+                raise ValueError("the farm manager assigns profiles (from the farm UI or a shell)")
+            if not bs.registry.get(a.profile):
+                raise ValueError(f"no browser profile named {a.profile}")
+            bs.registry.set_owner(a.profile, None if a.claude in ("", "farm", "none") else a.claude)
+            _store(cfg).event("browser.assigned", f"browser profile {a.profile} now belongs to {a.claude}", by="cli")
+            from .agents import AgentManager
+            AgentManager(cfg).share_browser_tools()
+            print(f"browser profile {a.profile} belongs to {a.claude}: only it gets the profile's tools")
+            return 0
         if a.sub in ("add", "remove"):
             if a.sub == "add":
-                bs.registry.add(name, by=cfg.name)
-            elif not bs.registry.remove(name):
+                owner = getattr(a, "owner", None) or (cfg.name if os.environ.get("FARM_HATCHED") else None)
+                bs.registry.add(name, by=cfg.name, owner=owner)
+            elif not bs.registry.remove(name, keep_files=getattr(a, "keep", "") or ""):
                 raise ValueError(f"no browser profile named {name}")
             done = {"add": "added", "remove": "removed"}[a.sub]
             _store(cfg).event(f"browser.{done}", f"browser profile {name} {done} by {cfg.name}", by=cfg.name)
@@ -941,6 +995,151 @@ def cmd_bot(cfg, a):
     return 0
 
 
+def _in_claude() -> bool:
+    """Run by a Claude (any Claude Code session sets CLAUDECODE for its commands), not by a person at a shell."""
+    return bool(os.environ.get("CLAUDECODE") or os.environ.get("FARM_TASK_ID"))
+
+
+def cmd_pair(cfg, a):
+    """A one-time link (and code) that signs your person in to you on the farm UI, from their phone."""
+    import hashlib
+    import secrets
+    if os.environ.get("FARM_TASK_ID"):
+        print("clodfarm pair: only in your person's own conversation, not in a sub-agent", file=sys.stderr)
+        return 2
+    if os.environ.get("CLAUDECODE") and os.environ.get("CLAUDE_CODE_ENVIRONMENT_KIND") not in ("bridge", None, ""):
+        print("clodfarm pair: only in a conversation with your person (the Claude app)", file=sys.stderr)
+        return 2
+    token = secrets.token_urlsafe(24)
+    code = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(6))
+    _store(cfg).add_pairing(cfg.name, hashlib.sha256(token.encode()).hexdigest(), code, ttl=600)
+    base = (os.environ.get("FARM_PUBLIC_URL") or os.environ.get("FARM_UI_PUBLIC_URL") or f"http://localhost:{os.environ.get('FARM_UI_PORT', '8080')}"
+            + os.environ.get("FARM_UI_BASE", "")).rstrip("/")
+    link = f"{base}/pair/{token}"
+    _out({"claude": cfg.name, "link": link, "code": code, "expires_in": 600}, a.json,
+         f"Sign in to {cfg.name} on the farm (works once, for 10 minutes):\n  {link}\n"
+         f"or on the farm's page tap MY CLAUDE and enter: {code}")
+    return 0
+
+
+def cmd_approvals(cfg, a):
+    store = _store(cfg)
+    items = store.pending(a.claude)
+    rows = [{"id": p.get("id") if p["type"] == "task" else p.get("SK"), "type": p["type"], "to": p.get("to"),
+             "from": (p.get("approval") or {}).get("from") or p.get("from") or p.get("owner"),
+             "title": p.get("title") or (p.get("text") or "")[:80]} for p in items]
+    _out(rows, a.json, "\n".join(f"{r['id']}  {r['type']:<7} {r['from']} -> {r['to']}: {r['title']}" for r in rows)
+         or "nothing waits for approval")
+    return 0
+
+
+def cmd_approve(cfg, a):
+    if _in_claude():
+        print("clodfarm: a Claude can't approve missions; its person does, on the farm UI", file=sys.stderr)
+        return 2
+    ok = _store(cfg).approve(a.id, "manager")
+    print("approved" if ok else "nothing waits under that id")
+    return 0 if ok else 1
+
+
+def cmd_deny(cfg, a):
+    if _in_claude():
+        print("clodfarm: a Claude can't decide on missions; its person does, on the farm UI", file=sys.stderr)
+        return 2
+    ok = _store(cfg).deny(a.id, "manager", a.reason or "")
+    print("denied" if ok else "nothing waits under that id")
+    return 0 if ok else 1
+
+
+def cmd_planner(cfg, a):
+    """The planner: `clodfarm planner on|off|status|goal TEXT|every 15m|host NAME|idle 1h|notes`."""
+    from . import planner
+    from .schedule import parse_every
+    store = _store(cfg)
+    arg = " ".join(a.rest).strip()
+    if a.action in ("on", "off", "goal", "every", "host") and os.environ.get("FARM_TASK_ID") and \
+            (store.get_task(os.environ["FARM_TASK_ID"]) or {}).get("kind") != "plan":
+        print("clodfarm planner: the farm manager sets the planner", file=sys.stderr)
+        return 2
+    if a.action == "on":
+        if not (arg or store.planner().get("goal")):
+            print("clodfarm planner on: give it a goal (`clodfarm planner goal \"...\"`) first", file=sys.stderr)
+            return 2
+        store.set_planner(on=True, **({"goal": arg} if arg else {}))
+    elif a.action == "off":
+        store.set_planner(on=False)
+    elif a.action == "goal":
+        if not arg:
+            print(store.planner().get("goal") or "(no goal)")
+            return 0
+        store.set_planner(goal=arg[:4000])
+    elif a.action == "every":
+        store.set_planner(every_s=max(60, parse_every(arg)))
+    elif a.action == "host":
+        store.set_planner(host=arg)
+    elif a.action == "idle":
+        store.set_planner(idle_until=time.time() + parse_every(arg or "1h"), state="idle")
+    elif a.action == "notes":
+        try:
+            print(open(planner.notes_path(cfg.workspace)).read())
+        except OSError:
+            print("(the planner's notebook is empty)")
+        return 0
+    if a.action in ("on", "off", "goal", "every", "host", "idle"):
+        store.event("planner.changed", f"planner {a.action} {arg[:80]}".strip(),
+                    by=os.environ.get("FARM_WORKER_ID") or "cli")
+    pl = store.planner()
+    _out({k: v for k, v in pl.items() if k not in ("holder", "lease_until")}, a.json,
+         f"planner {'ON' if pl.get('on') else 'off'}"
+         + (f", {pl.get('state')}" if pl.get("on") and pl.get("state") else "")
+         + f"\n  goal:  {pl.get('goal') or '(none)'}\n  on:    {pl.get('host') or cfg.name + ' (the farm Claude)'}"
+         + f"\n  every: {int(pl.get('every_s') or 900) // 60} min, {pl.get('cycles') or 0} cycle(s) so far"
+         + (f"\n  now:   {pl.get('task')}" if pl.get("task") else ""))
+    return 0
+
+
+def cmd_farm(cfg, a):
+    """The farm manager's switches from a shell: private (a viewer password) or public, hatching."""
+    from .web import _pw_hash
+    store = _store(cfg)
+    if a.action == "private":
+        pw = a.password or sys.stdin.readline().strip()
+        if len(pw) < 6:
+            print("clodfarm farm private: a viewer password of at least 6 characters (--password or stdin)",
+                  file=sys.stderr)
+            return 2
+        salt, h = _pw_hash(pw)
+        store.set_settings(private=True, viewer_salt=salt, viewer_hash=h,
+                           viewer_ver=int(store.settings().get("viewer_ver", 1)) + 1)
+    elif a.action == "public":
+        store.set_settings(private=False, viewer_ver=int(store.settings().get("viewer_ver", 1)) + 1)
+    elif a.action in ("hatch-open", "hatch-closed"):
+        store.set_settings(hatch_open=a.action == "hatch-open")
+    st = store.settings()
+    _out({k: v for k, v in st.items() if not k.startswith("viewer_")}, a.json,
+         f"farm {'PRIVATE (viewer password)' if st.get('private') else 'public: anyone with the address watches'}; "
+         f"hatching {'open' if st.get('hatch_open') else 'closed'}, at most {st.get('max_claudes')} Claudes")
+    return 0
+
+
+def cmd_upgrade(cfg, a):
+    from . import upgrade
+    return upgrade.main(cfg, a)
+
+
+def cmd_drain(cfg, a):
+    import socket
+    host = socket.gethostname()
+    store = _store(cfg)
+    store.set_draining(host, not a.undo, a.exit, by=os.environ.get("FARM_WORKER_ID") or "human")
+    if a.undo:
+        print(f"{host}: taking sub-agents again")
+    else:
+        print(f"{host}: draining: no new sub-agents here; running ones finish"
+              + ("; then the farm stops" if a.exit else "") + ". Undo with `clodfarm drain --undo`.")
+    return 0
+
+
 def cmd_run(cfg, a):
     from .supervisor import Farm
     Farm(cfg, _store(cfg)).run()
@@ -959,7 +1158,7 @@ def main(argv=None):
         q.set_defaults(fn=fn)
         return q
 
-    add("run", cmd_run, "start the farm daemon")
+    add("run", cmd_run, "start the farm daemon").add_argument("--tag", help=argparse.SUPPRESS)
     add("login", cmd_login, "log in to your Claude subscription").add_argument("--force", action="store_true")
     add("logout", cmd_logout, "log out")
     add("whoami", cmd_whoami, "show the login in use")
@@ -993,7 +1192,9 @@ def main(argv=None):
     ib = add("inbox", cmd_inbox, "messages other Claudes sent you")
     ib.add_argument("--all", action="store_true", help="also the ones already read")
     ib.add_argument("--peek", action="store_true", help="don't mark them read")
-    add("hook", cmd_hook, argparse.SUPPRESS).add_argument("--listen", action="store_true", help=argparse.SUPPRESS)
+    hk = add("hook", cmd_hook, argparse.SUPPRESS)
+    hk.add_argument("--listen", action="store_true", help=argparse.SUPPRESS)
+    hk.add_argument("--policy", action="store_true", help=argparse.SUPPRESS)
     ss = add("sessions", cmd_sessions, "every Claude session on the farm (conversations and sub-agents)")
     ss.add_argument("--claude", help="only this Claude's")
     ss.add_argument("-n", type=int, default=30)
@@ -1072,15 +1273,23 @@ def main(argv=None):
     for verb, help_ in (("start", "start a profile (it stays on until stopped)"), ("stop", "stop a profile (its logins "
                         "are kept)"), ("add", "add a profile: its own Chromium with its own logins"),
                         ("remove", "remove a profile and delete its logins")):
-        brs.add_parser(verb, help=help_).add_argument("profile", nargs="?" if verb in ("start", "stop") else None,
-                                                      help="the profile (default: default)")
+        q = brs.add_parser(verb, help=help_)
+        q.add_argument("profile", nargs="?" if verb in ("start", "stop") else None,
+                       help="the profile (default: your Claude's first)")
+        if verb == "add":
+            q.add_argument("--owner", help="the Claude it belongs to (default: yours)")
+        if verb == "remove":
+            q.add_argument("--keep", help="move its logins to this folder instead of deleting them")
+    ba = brs.add_parser("assign", help="give a profile to a Claude: only it gets its tools (farm manager)")
+    ba.add_argument("profile")
+    ba.add_argument("claude", help="a Claude's name, or 'farm' for the farm's own Claude")
     bp = brs.add_parser("proxy", help="send a profile through the farm's proxy (on) or direct (off); it restarts")
     bp.add_argument("state", choices=["on", "off"])
-    bp.add_argument("profile", nargs="?", help="the profile (default: default)")
+    bp.add_argument("profile", nargs="?", help="the profile (default: your Claude's first)")
     bp.add_argument("--country", help="where it comes out, a two-letter code like us (DataImpulse); '' for any")
     bo = brs.add_parser("open", help="open an address in a new tab")
     bo.add_argument("url")
-    bo.add_argument("--profile", help="the profile (default: default)")
+    bo.add_argument("--profile", help="the profile (default: your Claude's first)")
     for q in brs.choices.values():
         q.add_argument("--json", action="store_true")
     e = add("events", cmd_events, "the event log")
@@ -1092,7 +1301,35 @@ def main(argv=None):
     add("disconnect", cmd_disconnect, "end an MCP connection").add_argument("id")
     add("pause", cmd_pause, "pause new work everywhere").add_argument("reason", nargs="*")
     add("resume", cmd_resume, "resume work")
-    add("ui", cmd_ui, "serve the farm UI (the daemon also serves it unless FARM_UI=0)")
+    add("ui", cmd_ui, "serve the farm UI (the daemon also serves it unless FARM_UI=0)").add_argument(
+        "--tag", help=argparse.SUPPRESS)
+    pr = add("pair", cmd_pair, "a one-time link that signs your person in to you on the farm UI (for their phone)")
+    ap = add("approvals", cmd_approvals, "missions and messages waiting for a person's approval")
+    ap.add_argument("--claude", help="only the ones for this Claude")
+    add("approve", cmd_approve, "approve a waiting mission or message (people only)").add_argument("id")
+    dn = add("deny", cmd_deny, "turn down a waiting mission or message (people only)")
+    dn.add_argument("id")
+    dn.add_argument("--reason", default="")
+    pl = add("planner", cmd_planner, "the planner: on|off|status|goal TEXT|every 15m|host NAME|idle 1h|notes")
+    pl.add_argument("action", nargs="?", default="status",
+                    choices=["on", "off", "status", "goal", "every", "host", "idle", "notes"])
+    pl.add_argument("rest", nargs="*")
+    fm = add("farm", cmd_farm, "private (viewer password) or public, hatching open or closed")
+    fm.add_argument("action", nargs="?", default="status",
+                    choices=["status", "private", "public", "hatch-open", "hatch-closed"])
+    fm.add_argument("--password", help="the viewer password for a private farm (or on stdin)")
+    add("manager-passwd", cmd_ui_passwd, "set the farm manager's password (same as ui-passwd)")
+    up = add("upgrade", cmd_upgrade, "install a new clodfarm and hand over to it: running agents keep running")
+    up.add_argument("--from", dest="src", help="a source dir, wheel, or pip/git URL (default: the GitHub repo)")
+    up.add_argument("--ref", default="main", help="git ref of the GitHub repo (default: main)")
+    up.add_argument("--rollback", action="store_true", help="go back to the release before")
+    up.add_argument("--status", action="store_true", help="the current release and what runs on it")
+    up.add_argument("--restart-ui", action="store_true", help="only roll the UI process (no install)")
+    up.add_argument("--no-handover", action="store_true", help="install and switch, but don't signal the farm")
+    up.add_argument("--wait", type=int, default=120, help="seconds to wait for the hand-over (default 120)")
+    dr = add("drain", cmd_drain, "this box stops taking sub-agents and finishes what it runs (for a new image)")
+    dr.add_argument("--exit", action="store_true", help="then stop the farm (and the container)")
+    dr.add_argument("--undo", action="store_true", help="take sub-agents again")
     add("ui-passwd", cmd_ui_passwd, "set the farm UI password (reads stdin when piped)")
     add("init", cmd_init, "create the DynamoDB table")
     add("doctor", cmd_doctor, "check the setup")

@@ -33,3 +33,27 @@ def send(url: str, title: str, text: str, farm: str = "") -> None:
             pass
 
     threading.Thread(target=go, daemon=True).start()
+
+
+def topic_url(topic: str) -> str:
+    """A person's ntfy topic (their Claude's SETTINGS): a bare topic is on ntfy.sh."""
+    topic = (topic or "").strip()
+    return topic if topic.startswith("https://") else f"https://ntfy.sh/{topic}" if topic else ""
+
+
+def ask_approval(topic: str, claude: str, what: str, frm: str, link: str) -> None:
+    """Push to the person's phone: a mission (or message) for their Claude waits for their yes."""
+    url = topic_url(topic)
+    if not url:
+        return
+
+    def go():
+        try:
+            req = urllib.request.Request(url, data=f"{frm} asks {claude}: {what}"[:1500].encode(), method="POST",
+                                         headers={"User-Agent": "clodfarm", "Title": f"{claude}: approve?",
+                                                  "Tags": "question", **({"Click": link} if link else {})})
+            urllib.request.urlopen(req, timeout=8).close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    threading.Thread(target=go, daemon=True).start()

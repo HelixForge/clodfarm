@@ -51,8 +51,11 @@ deploy/aws/deploy.sh down     # delete everything except the DynamoDB table
 
 ## Updating
 
-On the box: `cd /opt/clodfarm && sudo git pull && sudo docker compose up -d --build`. The login and the workspace
-are in volumes and survive the update.
+`deploy/aws/deploy.sh upgrade` (or `--ref v1.0.1`) puts new clodfarm code on the running box without stopping any
+agent: sub-agents mid-run, phone conversations and the farm's browser keep going ([upgrades.md](upgrades.md)). A new
+image (a new Claude Code base, system packages) is `deploy/aws/deploy.sh roll`: the box stops taking work, finishes
+what runs, and the container is recreated. On a multi-box farm, roll one box at a time and the others take the queue.
+The login and the workspace are in volumes and survive both.
 
 ## Let the farm build apps on AWS (optional)
 

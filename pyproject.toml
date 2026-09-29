@@ -34,7 +34,7 @@ classifiers = [
 test = ["pytest>=7", "moto[dynamodb,server]>=5"]
 
 [project.scripts]
-clodfarm = "clodfarm.cli:main"
+clodfarm = "clodfarm.boot:main"
 
 [project.urls]
 Homepage = "https://github.com/matank001/clodfarm"

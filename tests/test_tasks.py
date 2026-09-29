@@ -55,7 +55,9 @@ def test_the_tasks_page_lists_and_manages_everything(ui):  # noqa: F811
     with urllib.request.urlopen(base + "/tasks") as r:
         assert r.status == 200 and b"tasks.js" in r.read()
     call = client()
-    assert call(base + "/api/tasks")[0] == 401, "behind the farm password"
+    code, public, _ = call(base + "/api/tasks")
+    assert code == 200 and public["role"] == "viewer", "a public farm: anyone watches the tasks"
+    assert call(base + "/api/pause", {})[0] == 403, "but only the manager runs the farm"
     login(call, base)
     busy = store.add_task("build the importer", "do it", owner="gil")
     store.claim_next("gil@box/w0", 300)

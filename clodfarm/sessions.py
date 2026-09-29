@@ -46,6 +46,7 @@ def read_transcript(path: str, offset: int = 0) -> tuple[list[dict], int, dict]:
     Returns (turns, new offset, meta). Only whole lines are read, so a line Claude Code is still writing is picked up
     next time. ``meta`` carries what the transcript says about the session: its title and Remote Control session."""
     turns, meta = [], {}
+    usage: dict[str, dict] = {}  # per assistant message (each of its blocks is a line carrying the same usage)
     try:
         f = open(path, "rb")
     except OSError:
@@ -66,11 +67,29 @@ def read_transcript(path: str, offset: int = 0) -> tuple[list[dict], int, dict]:
             meta["remote_session"] = d["bridgeSessionId"]
         elif t in ("user", "assistant") and not d.get("isMeta") and not d.get("isSidechain"):
             role = (d.get("message") or {}).get("role") or t
+            msg = d.get("message") or {}
+            if role == "assistant" and isinstance(msg.get("usage"), dict):
+                usage[str(msg.get("id") or d.get("uuid") or len(usage))] = msg["usage"]
             for kind, text in _blocks((d.get("message") or {}).get("content")):
                 if kind == "text" and role == "user" and text.lstrip().startswith(("<command-", "<local-command", "<system-reminder")):
                     continue  # Claude Code's own bookkeeping, not what anyone said
                 turns.append({"role": role, "kind": kind, "text": _clip(text, MAX_TEXT), "at": d.get("timestamp")})
+    if usage:
+        meta["usage"] = usage
     return turns, offset + end, meta
+
+
+def usage_total(per_message: dict, skip: str = "") -> dict:
+    """Tokens of the assistant messages read (``skip``: one already counted in the read before)."""
+    out = {"input": 0, "output": 0, "cache_write": 0, "cache_read": 0}
+    for mid, u in per_message.items():
+        if mid == skip:
+            continue
+        out["input"] += int(u.get("input_tokens") or 0)
+        out["output"] += int(u.get("output_tokens") or 0)
+        out["cache_write"] += int(u.get("cache_creation_input_tokens") or 0)
+        out["cache_read"] += int(u.get("cache_read_input_tokens") or 0)
+    return out
 
 
 def session_kind(env=os.environ) -> str:

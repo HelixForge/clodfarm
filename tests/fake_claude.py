@@ -53,6 +53,18 @@ def main(argv):
             st["email"] = os.environ["FAKE_EMAIL"]
         out(st)
         return 0
+    if argv[:2] == ["auth", "login"]:  # prints a login link and takes the code typed back (for the hatch flow)
+        print("Open this link to log in: https://claude.ai/oauth/authorize?code=true&client_id=fake&state=abc",
+              flush=True)
+        print("Paste code here if prompted > ", end="", flush=True)
+        code = sys.stdin.readline().strip()
+        if not code or code == "bad":
+            print("Invalid code", flush=True)
+            return 1
+        print("Login successful.", flush=True)
+        return 0
+    if argv[:2] == ["auth", "logout"]:
+        return 0
     if argv[:1] == ["--version"]:
         vf = os.environ.get("FAKE_CLAUDE_VERSION")
         print(f"{open(vf).read().strip() if vf else '9.9.9'} (Fake Claude)")

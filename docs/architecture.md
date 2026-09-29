@@ -10,14 +10,27 @@ Every update is an optimistic, versioned read-modify-write, so claims and counte
 
 ```
 container (user "farm", tini as PID 1)
-└── clodfarm run                       supervisor.py
-    ├── remote-control keeper          `claude remote-control --name $FARM_NAME --spawn worktree`, restarted with back-off
-    ├── worker w0..wN-1                one thread each, never more than FARM_MAX_WORKERS
-    │     └── claude -p --input-format stream-json --output-format stream-json --verbose --append-system-prompt ...
+└── clodfarm run                       supervisor.py (boot.py first execs the current release, see upgrades.md)
+    ├── remote-control keeper          reads `claude remote-control ...` (detached, under the run shim), restarts it
+    ├── worker w0..wN-1                one thread each, never more than FARM_MAX_WORKERS; each reads one run's files
     ├── mail                           watches this Claude's doorbell: flags new mail, interrupts for --urgent
-    └── housekeeping                   re-queues tasks whose lease expired, wakes someone for unread --wake mail,
-                                       prints a status line every 10 min
+    ├── agents                         keeps each Claude added in the UI running (its own `clodfarm run`, detached)
+    ├── ui keeper                      keeps `clodfarm ui` running as its own process; rolls it with no downtime
+    └── housekeeping                   re-queues tasks whose lease expired, expires approvals, wakes someone for
+                                       unread --wake mail, drives the planner, prints a status line every 10 min
+
+detached (their parent is tini; the daemon finds them by their files and pid files):
+    run shim → claude -p --input-format stream-json --output-format stream-json --verbose ...   one per run
+    run shim → claude remote-control ...                                                       one per Claude
+    clodfarm run --tag agent-<id>                                                              one per added Claude
+    clodfarm ui --tag ui-<id>                                                                  the farm UI
+    Xvfb / x11vnc / Chromium                                                                   one set per profile
 ```
+
+A run's files are in `/workspace/.farm/runs/<claude>@<host>/<run>/` (see `runshim.py`): what to start, its stdin
+spool, its output, its exit code, and the farm's bookkeeping (`meta.json`: task, worker, slot, worktree, prompt). So
+a daemon that execs a new release (SIGHUP, from `clodfarm upgrade`) or crashes and comes back adopts every run
+instead of losing it; see [upgrades.md](upgrades.md).
 
 ## Modules
 
@@ -32,6 +45,14 @@ container (user "farm", tini as PID 1)
 | `prompts.py` | The farm guide every Claude gets, and the resume prompts. |
 | `auth.py` | Login detection, the waiting banner, onboarding and trust flags, the guide in `CLAUDE.md`. |
 | `cli.py` | The `clodfarm` command, shared by humans and agents. |
+| `runshim.py` | The run shim: starts a process detached, owns its stdin, keeps its output and exit code in files. No clodfarm imports. |
+| `procs.py` | Detached processes, pid files and liveness (a pid counts only if its command line still matches). |
+| `boot.py` | Every `clodfarm` process runs the current release from the workspace volume; the crash guard. |
+| `upgrade.py` | `clodfarm upgrade`: install, check, switch, hand over, show the agents kept running. |
+| `uikeeper.py` | The UI as its own process, rolled with no downtime. |
+| `policy.py` | The tools a Claude's person turned off, and the PreToolUse decision. |
+| `planner.py` | The planner's cycles. |
+| `web.py` | The farm UI: roles (public, viewer, owner, manager), hatching, approvals, the manager panel. |
 
 ## Data model (one table, same shape in SQLite and DynamoDB)
 
@@ -52,6 +73,13 @@ container (user "farm", tini as PID 1)
 | `SCHEDULE` | `<id>` | A scheduled task (cron + time zone, every N seconds, or once at a time) and its next run. |
 | `WORKER` | `<farm>/<worker>` | Heartbeats (TTL 1 day). |
 | `EVENT#<day>` | `<ts>#<rand>` | Event log (TTL 30 days). |
+| `CLAUDE` | `<id>` | A Claude's settings: skin, tools turned off, approve every mission, owner cookie version, ntfy topic. |
+| `HELD` | `<message id>` | A message waiting for its recipient's person to approve it. |
+| `CONTROL` | `SETTINGS` / `PLANNER` / `BOX#<host>` | The manager's switches (private farm, hatching); the planner; `clodfarm drain`. |
+| `STATS` | `TOKENS`, `TOKENS#<day>`, `TOKENS@<claude>`, `TOKENS#<day>@<claude>` | Tokens burned (input, output, cache write, cache read). |
+| `PAIR` | `<token hash>` | A one-time pairing link or code (10 minutes). |
+
+A task can also be `pending` (waiting for its Claude's person to approve it; never claimed) and `denied`.
 
 Sub-agent IDs start with a timestamp, so they sort by creation time.
 
@@ -124,7 +152,6 @@ See [multi-seat.md](multi-seat.md).
 
 ## What clodfarm deliberately doesn't do
 
-- No web UI. The Claude app (Remote Control), the CLI and `docker logs` cover it.
 - No multi-account pooling, no API-key fallback and no limit evasion.
 - No outbound messages, payments or posting. Claudes are told not to unless the person they work for asks, and nothing in
   clodfarm itself does any of it.

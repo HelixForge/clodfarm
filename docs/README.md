@@ -9,6 +9,9 @@
 | [agents.md](agents.md) | What every Claude is told: budget, sub-agents, messages, schedules; the limits that keep a swarm sane |
 | [auth.md](auth.md) | The four ways to log in, and their caveats |
 | [ui.md](ui.md) | The farm UI: what you see, hatching agents, the password |
+| [people.md](people.md) | Your own Claude, signing in from your phone, approvals, tools, the farm manager, private farms |
+| [planner.md](planner.md) | The planner: a goal, cycles, delegating, building tools |
+| [upgrades.md](upgrades.md) | New code without stopping any agent; a new image by draining |
 | [dashboards.md](dashboards.md) | Dashboards the Claudes keep: the spec, stat history and trends, live dashboards |
 | [browser.md](browser.md) | The farm's browser: log in to sites from the UI, the Claudes use them with their browser tools |
 | [slack.md](slack.md) | Give the farm work from Slack: connecting it, how it works, who can use it |

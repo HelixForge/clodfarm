@@ -15,6 +15,20 @@ from clodfarm.web import FarmUI, make_handler
 from test_web import client, login
 
 
+@pytest.fixture(autouse=True)
+def a_profile(request):
+    """Farms before 1.0 always had a `default` profile; now every profile is made by someone. These tests start with one
+    (nobody owns it: it is the farm's own Claude's)."""
+    if "env" in request.fixturenames:
+        request.getfixturevalue("env")
+        reg = browser.Registry(os.environ["FARM_WORKSPACE"])
+        if not reg.get("default"):
+            reg.add("default")
+
+
+OWNER = {}
+
+
 @pytest.fixture
 def farm(env, backend, monkeypatch, tmp_path):
     if backend != "sqlite":
@@ -30,6 +44,7 @@ def farm(env, backend, monkeypatch, tmp_path):
     store = Store.from_config(cfg)
     store.ensure_table()
     ui = FarmUI(cfg, store)
+    OWNER["cookie"] = "clodfarm_owner=" + ui.keys.make("owner", [cfg.name, "1"], 365)  # the farm Claude's person
     srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(ui))
     srv.daemon_threads = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -67,7 +82,7 @@ def vnc(monkeypatch):
 def cookie(host) -> str:
     call = client()
     _, _, headers = call(f"http://{host}/api/login", {"password": "correct horse"})
-    return headers["Set-Cookie"].split(";", 1)[0]
+    return headers["Set-Cookie"].split(";", 1)[0] + "; " + OWNER["cookie"]  # the manager, who owns the farm Claude
 
 
 def upgrade(host, headers: dict, profile: str = ""):
@@ -91,7 +106,7 @@ def test_the_screen_needs_the_login_and_a_farm_page(farm, vnc):
     ok_origin = {"Origin": f"http://{host}"}
     s, _, status, _ = upgrade(host, ok_origin)
     s.close()
-    assert status == 401  # no session cookie
+    assert status == 403  # no session cookie: the public never sees the browser
     c = cookie(host)
     s, _, status, _ = upgrade(host, {"Origin": "https://evil.example", "Cookie": c})
     s.close()
@@ -146,7 +161,7 @@ def test_the_screen_says_when_the_browser_is_off(farm, monkeypatch):
 def test_status_start_and_stop(farm, monkeypatch):
     host, ui = farm
     base, call = f"http://{host}", client()
-    assert call(base + "/api/browser")[0] == 401
+    assert call(base + "/api/browser")[0] == 403  # the manager's, or a profile's own Claude's person
     login(call, base)
     code, st, _ = call(base + "/api/browser")
     assert code == 200 and not st["available"] and "chromium" in st["missing"]
@@ -160,8 +175,8 @@ def test_status_start_and_stop(farm, monkeypatch):
     assert any(e["type"] == "browser.started" for e in ui.store.events(0, 50))
     code, st, _ = call(base + "/api/browser/stop", {"profile": "default"})
     assert code == 200 and not st["profiles"][0]["on"]
-    assert call(base + "/api/browser/open", {"url": "javascript:alert(1)"})[0] == 400
-    assert call(base + "/api/browser/start", {"profile": "nope"})[0] == 400
+    assert call(base + "/api/browser/open", {"url": "javascript:alert(1)"})[0] == 403  # only its Claude's person
+    assert call(base + "/api/browser/start", {"profile": "nope"})[0] == 404
 
 
 def test_profiles_from_the_ui(farm, monkeypatch):
@@ -177,10 +192,10 @@ def test_profiles_from_the_ui(farm, monkeypatch):
     assert ui.browsers.slot("linkedin-work") == 1  # its own ports and screen
     assert call(base + "/api/browser/add", {"profile": "linkedin-work"})[0] == 400  # taken
     assert call(base + "/api/browser/add", {"profile": "Bad Name"})[0] == 400
-    assert call(base + "/api/browser/remove", {"profile": "default"})[0] == 400  # the default one stays
+    assert call(base + "/api/browser/remove", {"profile": "default"})[0] == 200  # no profile is special any more
     os.makedirs(ui.browsers.registry.dir("linkedin-work"))
     code, st, _ = call(base + "/api/browser/remove", {"profile": "linkedin-work"})
-    assert code == 200 and [p["name"] for p in st["profiles"]] == ["default"]
+    assert code == 200 and [p["name"] for p in st["profiles"]] == []  # default was removed above
     assert not os.path.exists(ui.browsers.registry.dir("linkedin-work"))  # its logins are gone with it
     assert any(e["type"] == "browser.removed" for e in ui.store.events(0, 50))
 
@@ -195,7 +210,7 @@ def test_the_screen_of_another_profile(farm, vnc, monkeypatch):
     s.close()
     s, _, status, _ = upgrade(host, {"Origin": f"http://{host}", "Cookie": cookie(host)}, "nope")
     s.close()
-    assert status == 404
+    assert status == 403  # no such profile: nothing of yours to see
 
 
 def test_the_page_and_novnc_are_served(farm):
@@ -215,7 +230,9 @@ def test_the_page_and_novnc_are_served(farm):
 def test_profiles_survive_and_nothing_starts_without_a_browser(tmp_path, monkeypatch):
     monkeypatch.setenv("FARM_BROWSER_BIN", "no-such-chromium")
     bs = browser.Browsers(str(tmp_path))
-    assert [p["name"] for p in bs.registry.all()] == ["default"] and not bs.registry.get("default")["on"]
+    assert bs.registry.all() == [], "no profile until someone makes one for their Claude"
+    bs.registry.add("default")
+    assert not bs.registry.get("default")["on"]
     assert bs.want("default", True, by="test") and not bs.want("default", True)
     bs.registry.add("b")
     bs.registry.add("c")
@@ -231,11 +248,16 @@ def test_profiles_survive_and_nothing_starts_without_a_browser(tmp_path, monkeyp
         again.registry.add("one-too-many")
 
 
-def test_the_first_build_s_browser_is_the_default_profile(tmp_path):
+def test_no_profile_is_made_for_nobody(tmp_path):
     os.makedirs(tmp_path / ".farm")
-    json.dump({"on": True}, open(tmp_path / ".farm" / "browser.json", "w"))
+    json.dump({"on": True}, open(tmp_path / ".farm" / "browser.json", "w"))  # 0.7's one browser: not brought back
     reg = browser.Registry(str(tmp_path))
-    assert reg.get("default")["on"] and reg.dir("default") == str(tmp_path / ".farm" / "browser")
+    assert reg.all() == []
+    reg.add("default")  # a profile of that name still keeps its old folder and tool name
+    assert reg.dir("default") == str(tmp_path / ".farm" / "browser") and browser.mcp_name("default") == "browser"
+    reg.add("gone")
+    reg.remove("gone", keep_files=str(tmp_path / "kept" / "gone"))
+    assert not reg.get("gone")
 
 
 def test_each_profile_has_its_own_ports_screen_and_files(env, monkeypatch):
@@ -270,7 +292,7 @@ def server(port):
 def test_every_claude_gets_a_server_per_profile(env, monkeypatch):
     path = auth.claude_json_path()
     want = {"browser": server(9222), "browser-work": server(9223)}
-    monkeypatch.setattr(browser, "mcp_servers", lambda workspace=None: dict(want))
+    monkeypatch.setattr(browser, "mcp_servers", lambda workspace=None, claude="*", unowned=False: dict(want))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     json.dump({"mcpServers": {"github": {"command": "gh-mcp"}}, "keep": 1}, open(path, "w"))
     assert auth.install_browser_mcp()
@@ -289,7 +311,7 @@ def test_every_claude_gets_a_server_per_profile(env, monkeypatch):
 
 def test_every_claude_on_the_box_gets_them(farm, monkeypatch, tmp_path):
     _, ui = farm
-    monkeypatch.setattr(browser, "mcp_servers", lambda workspace=None: {"browser": server(9222)})
+    monkeypatch.setattr(browser, "mcp_servers", lambda workspace=None, claude="*", unowned=False: {"browser": server(9222)})
     other = tmp_path / "gil"
     other.mkdir()
     monkeypatch.setattr(ui.manager, "_load", lambda: [{"id": "gil", "name": "gil", "config_dir": str(other)}])
@@ -303,7 +325,7 @@ def test_a_browser_server_set_up_by_hand_is_kept(env, monkeypatch):
     mine = {"command": "npx", "args": ["@playwright/mcp@latest"]}
     os.makedirs(os.path.dirname(path), exist_ok=True)
     json.dump({"mcpServers": {"browser": mine}}, open(path, "w"))
-    monkeypatch.setattr(browser, "mcp_servers", lambda workspace=None: {"browser": server(9222)})
+    monkeypatch.setattr(browser, "mcp_servers", lambda workspace=None, claude="*", unowned=False: {"browser": server(9222)})
     assert not auth.install_browser_mcp()
     assert json.load(open(path))["mcpServers"]["browser"] == mine
 
@@ -483,6 +505,7 @@ def test_a_profile_through_the_proxy_never_goes_out_direct(tmp_path, monkeypatch
     checked = []
     monkeypatch.setattr(browser, "check_proxy", lambda p: checked.append(p) or seen())
     bs = browser.Browsers(str(tmp_path))
+    bs.registry.add("default")
     with pytest.raises(ValueError, match="no proxy"):
         bs.proxy("default", True)
     browser.save_proxy(str(tmp_path), browser.parse_proxy("u:p@gw.dataimpulse.com:823"))
