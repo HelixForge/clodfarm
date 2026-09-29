@@ -673,3 +673,18 @@ def test_a_wrapper_that_execs_the_real_browser_never_starts_a_second_one(tmp_pat
     finally:
         b.shutdown()
     assert not procs.find(f"--user-data-dir={b.profile}")
+
+
+def test_a_claude_lists_only_its_own_profiles(env):
+    import subprocess as sp
+    import sys
+    reg = browser.Registry(os.environ["FARM_WORKSPACE"])
+    reg.add("gil-work", owner="gil")
+    reg.add("noa-li", owner="noa")
+    base = {k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "FARM_TASK_ID")}  # a person at a shell
+    run = lambda extra: sp.run([sys.executable, "-m", "clodfarm", "browser", "--json"], capture_output=True,  # noqa
+                               text=True, env={**base, **extra})
+    names = lambda r: [p["name"] for p in json.loads(r.stdout)["profiles"]]  # noqa: E731
+    assert names(run({"CLAUDECODE": "1", "FARM_NAME": "gil", "FARM_HATCHED": "1"})) == ["gil-work"]
+    assert names(run({"CLAUDECODE": "1"})) == ["default"], "the farm's own Claude: the ones nobody owns"
+    assert set(names(run({}))) == {"default", "gil-work", "noa-li"}, "a person at the shell sees them all"

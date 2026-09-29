@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.3 (2026-09-29)
+
+- **`clodfarm browser` shows a Claude its own profiles** (the farm's own Claude also the ones nobody owns), the ones
+  whose tools it has; a person at the box's shell still sees every profile. Found by a Claude on the jestr farm
+  checking itself after the upgrade.
+
 ## 1.0.2 (2026-09-29)
 
 - **Dashboards and your Claude's browser on your phone.** Their buttons were desktop-only; they now show on a phone

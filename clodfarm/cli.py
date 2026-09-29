@@ -918,8 +918,12 @@ def cmd_browser(cfg, a):
         print(f"clodfarm: {e}", file=sys.stderr)
         return 1
     st = bs.status()
+    if _in_claude():  # a Claude sees its own profiles (the farm's own Claude also the ones nobody owns)
+        st["profiles"] = [p for p in st["profiles"] if p["name"] in mine]
     if not st["available"]:
         text = "no browser in this image (" + ", ".join(st["missing"]) + ")"
+    elif not st["profiles"]:
+        text = "you have no browser profile: ask your person to add one for you on the farm's BROWSER page"
     else:
         lines = []
         for p in st["profiles"]:
@@ -928,7 +932,8 @@ def cmd_browser(cfg, a):
                          + (f"  via the proxy{' from ' + p['country'].upper() if p['country'] else ''}" if p["proxy"] else "")
                          + (f"  error: {p['error'] or p['proxy_error']}" if p["error"] or p["proxy_error"] else ""))
             lines += [f"    {t['title'][:56] or '(untitled)':56}  {t['url'][:90]}" for t in p["tabs"]]
-        text = "the farm's browser profiles (the person logs in to sites in the farm UI's BROWSER):\n  " + "\n  ".join(lines)
+        text = ("your browser profiles" if _in_claude() else "the farm's browser profiles") + \
+            " (your person logs in to sites in the farm UI's BROWSER):\n  " + "\n  ".join(lines)
         if st["proxy"]["set"]:
             text += f"\nproxy: {st['proxy']['server']}" + (" (FARM_BROWSER_PROXY)" if st["proxy"]["from_env"] else "")
     return _out(st, a.json, text) or 0
