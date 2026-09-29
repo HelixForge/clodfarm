@@ -1772,6 +1772,8 @@ const UI = {
     const R = role(), mine = st.agents.find(a => a.mine);
     if (this.paired === "1" || this.pairedTo) { this.say(`You're signed in to ${(mine?.name || this.pairedTo || "your Claude").toUpperCase()}. It's the one with the gold arrow.`); this.paired = null; this.pairedTo = null; }
     const live = st.agents.filter(a => a.loggedIn);
+    const primary = st.agents.find(a => a.primary);
+    if (!live.length && R.manager && primary && !primary.remote) { this.say(`Welcome to ${st.farm.toUpperCase()}! Your farm's own Claude is still an egg. Tap ▶ LOG IN YOUR CLAUDE (bottom right) to wake it up: nothing grows until it's in.`); return; }
     if (!live.length) { this.say(`Welcome to ${st.farm.toUpperCase()}! No Claude lives here yet. Tap + NEW CLAUDE to hatch the first one.`); return; }
     const n = live.length, busy = st.subagents.filter(t => t.status === "running").length;
     this.say(`Welcome to ${st.farm.toUpperCase()}! ${n} Claude${n === 1 ? "" : "s"} on the farm, ${busy} sub-agent${busy === 1 ? "" : "s"} at work.`);
@@ -1831,12 +1833,24 @@ const UI = {
     $("#dash-tool").hidden = !person;
     $("#browser-tool").hidden = !R.owner; // the browser is a Claude's tool: signed in to yours, or no browser
     $("#manager-tool").hidden = !R.manager;
-    const ht = $("#hatch-tool"), can = R.manager || (hatch ? hatch.can : !R.owner);
+    // a new farm: its own Claude is still an egg, and the manager's first job is to log it in (openHatch does that)
+    const primary = st.agents.find(a => a.primary), live = st.agents.some(a => a.loggedIn || a.remote);
+    const first = R.manager && !!primary && !primary.loggedIn && !primary.remote;
+    const capped = !!hatch && !hatch.can && /plan/.test(hatch.why || ""); // the host's plan: no more, the manager's either
+    const ht = $("#hatch-tool"), can = first || (R.manager ? !capped : hatch ? hatch.can : !R.owner);
     ht.hidden = !!R.owner && !R.manager;
     ht.classList.toggle("off", !can);
+    ht.classList.toggle("call", can && !live); // nothing works until a Claude is in: point at the one thing to do
     ht.setAttribute("aria-disabled", String(!can));
-    ht.dataset.tip = can ? "Add a Claude or a bot" : `Can't hatch: ${hatch?.why || "not now"}`;
-    ht.dataset.desc = can ? "Hatch a new Claude: pick its look, log it in" : "The farm's manager decides who can hatch";
+    const lbl = ht.querySelector(".lbl"), want = first ? "login" : "new";
+    if (lbl.dataset.mode !== want) {
+      lbl.dataset.mode = want;
+      if (first) fill(lbl, "▶ LOG IN", h("span", { class: "long", text: " YOUR CLAUDE" }));
+      else fill(lbl, h("span", { class: "plus", text: "+ " }), "NEW", h("span", { class: "long", text: " CLAUDE" }));
+    }
+    ht.dataset.tip = first ? "Start here: log in your Claude" : can ? "Add a Claude or a bot" : `Can't hatch: ${hatch?.why || "not now"}`;
+    ht.dataset.desc = first ? "Your farm's own Claude waits for its login: open Anthropic's link, paste the code back"
+      : can ? "Hatch a new Claude: pick its look, log it in" : capped ? "This farm's plan has its Claudes" : "The farm's manager decides who can hatch";
     ht.setAttribute("aria-label", `${ht.dataset.tip} (C)`);
     if ($("#dlg-claude").open) this.renderClaude(st);
     for (const gp of $$(".dock-group")) { // a tray shows when it has buttons; on a phone it's as wide as its buttons
@@ -2690,6 +2704,8 @@ const UI = {
     if (!agentId && R.manager && primary && !primary.loggedIn) agentId = primary.id; // the farm's own login comes first
     this.hatchFor = agentId || null;
     $("#hatch-body").dataset.key = "";
+    const own = agentId && st?.agents.find(a => a.id === agentId);
+    $("#hatch-h").textContent = own?.primary ? "LOG IN YOUR CLAUDE" : own ? `LOG IN ${String(own.name || own.id).toUpperCase()}` : "NEW CLAUDE";
     $("#dlg-hatch").showModal();
     if (agentId) { this.renderHatch({ state: "starting" }); this.beginLogin(agentId); }
     else {

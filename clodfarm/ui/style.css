@@ -174,6 +174,29 @@ output { color: var(--clay-2); }
 .dock .hatch-tool img { width: 40px; height: 40px; }
 .dock .hatch-tool .lbl { font-size: 11px; text-shadow: 2px 2px 0 #6b2f1f; }
 .dock .hatch-tool.off { opacity: .6; filter: grayscale(.6); }
+/* a new farm: the one thing to do, like a game's PRESS START (a bouncing arrow, a pulse, a shine across) */
+.dock .hatch-tool.call { animation: call-pulse 1.2s ease-in-out infinite; overflow: visible; }
+.dock:has(.hatch-tool.call) { z-index: 6; } /* its arrow over the textbox and the farm */
+.dock .hatch-tool.call::after {
+  content: ""; position: absolute; inset: 0; border-radius: 6px; pointer-events: none;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, .55) 50%, transparent 65%) no-repeat;
+  background-size: 250% 100%; animation: call-shine 2.4s ease-in-out infinite;
+}
+.call-arrow { display: none; position: absolute; left: 50%; bottom: calc(100% + 20px); z-index: 31; pointer-events: none;
+  flex-direction: column; align-items: center; transform: translateX(-50%); animation: call-bob .5s ease-in-out infinite alternate; }
+.hatch-tool.call .call-arrow { display: flex; }
+.call-arrow b { font: 10px/1 var(--font-px); color: #fff; white-space: nowrap; padding: 7px 9px 6px;
+  background: var(--ink); border: 3px solid #fff8ea; border-radius: 5px; box-shadow: 0 3px 0 rgba(0, 0, 0, .35); }
+.call-arrow i { width: 0; height: 0; margin-top: 5px; border-left: 15px solid transparent; border-right: 15px solid transparent;
+  border-top: 18px solid #ffd23f; filter: drop-shadow(0 3px 0 #3b2b1d) drop-shadow(0 -2px 0 #3b2b1d); }
+.hatch-tool.call[data-tip]::before { display: none; } /* the arrow says it */
+.dock .hatch-tool.call img { animation: egg-wobble 1.2s ease-in-out infinite; transform-origin: 50% 85%; } /* about to hatch */
+@keyframes egg-wobble { 0%, 40%, 100% { transform: rotate(0); } 50% { transform: rotate(-12deg); } 60% { transform: rotate(10deg); } 70% { transform: rotate(-6deg); } 80% { transform: rotate(3deg); } }
+@keyframes call-pulse { 0%, 100% { transform: translateY(0) scale(1); filter: brightness(1); } 50% { transform: translateY(-4px) scale(1.05); filter: brightness(1.14); } }
+@keyframes call-shine { 0%, 55% { background-position: 150% 0; } 100% { background-position: -60% 0; } }
+@keyframes call-bob { from { transform: translate(-50%, 0); } to { transform: translate(-50%, -9px); } }
+@keyframes call-bob-phone { from { transform: translate(0, 50%); } to { transform: translate(-8px, 50%); } }
+@media (prefers-reduced-motion: reduce) { .dock .hatch-tool.call, .dock .hatch-tool.call::after, .dock .hatch-tool.call img, .call-arrow { animation: none; } }
 /* the sign: what it is and its key, then one line on what it does */
 .tool[data-tip]::before {
   content: attr(data-tip) "  [" attr(data-key) "]\A" attr(data-desc); position: absolute; bottom: calc(100% + 16px); left: 50%; z-index: 30;
@@ -592,6 +615,12 @@ select {
   .dock .hatch-tool img { width: 20px; height: 20px; }
   .dock .hatch-tool .lbl { font-size: 15px; text-shadow: 1px 1px 0 #6b2f1f; }
   .hatch-tool .long { display: none; }
+  /* the textbox sits right above the dock on a phone: point from the side instead, over the tray */
+  .call-arrow { left: auto; right: calc(100% + 6px); bottom: 50%; flex-direction: row; align-items: center; transform: translateY(50%);
+    animation-name: call-bob-phone; }
+  .call-arrow b { font-size: 9px; padding: 7px 7px 6px; }
+  .call-arrow i { margin: 0 0 0 4px; border-top: 13px solid transparent; border-bottom: 13px solid transparent; border-right: 0;
+    border-left: 16px solid #ffd23f; }
   .dock .help-tool { position: fixed; top: calc(max(12px, env(safe-area-inset-top)) + 192px); right: 12px; min-width: 0 !important; width: 40px; height: 40px;
     padding: 0; background: var(--tan-2); border: 4px solid var(--tan-4); border-radius: 8px; box-shadow: 0 0 0 3px var(--tan), 0 4px 0 3px var(--shadow); }
   .help-tool .lbl { display: none; }
