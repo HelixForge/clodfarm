@@ -3524,6 +3524,19 @@ const UI = {
       h("label", {}, "GOAL", h("textarea", { name: "goal", maxlength: 4000, rows: 3, placeholder: "What should the farm work towards?", text: P.goal || "" })),
       h("div", { class: "two" }, h("label", {}, "RUNS ON", hostSel), h("label", {}, "CADENCE", everySel))],
       async (f) => { const d = new FormData(f), body = { on: onBox.checked, goal: d.get("goal"), host: d.get("host") }; if (d.get("every")) body.every = d.get("every"); await api("api/manager/planner", body); });
+    // bots first: the Claudes hand the code-writing to the bots, to save their persons' usage
+    const botsBox = h("input", { type: "checkbox", name: "bots_first", checked: !!S.bots_first }), B = m.bots || [];
+    const botsFirst = section("BOTS FIRST", [
+      h("label", { class: "check toggle" }, botsBox, "SAVE CLAUDE USAGE: HAND THE CODE-WRITING TO THE BOTS"),
+      h("p", { class: "muted small", text: S.bots_first
+        ? "On: your Claudes plan, review and merge; the bots write the code. Slower, but it spends far less of your usage."
+        : "Off: your Claudes send the bots a well-defined piece when that saves time as well as usage." }),
+      B.length ? h("ul", { class: "owners" }, B.map(b => h("li", {},
+        h("span", { class: "o-name", text: b.id.toUpperCase() }),
+        h("span", { class: "muted small", text: `${b.model}${b.context ? ` · ${Math.round(b.context / 1024)}k context` : ""}` }),
+        b.reachable ? null : h("span", { class: "badge", text: "CAN'T REACH ITS MODEL" }))))
+        : h("p", { class: "form-error", text: "No bots on this farm yet: add one first (+ NEW CLAUDE → BOT: OTHER MODEL)." })],
+      async () => { await api("api/manager/settings", { bots_first: botsBox.checked }); });
     // privacy
     const privBox = h("input", { type: "checkbox", name: "private", checked: !!S.private });
     const privacy = section("PRIVACY", [
@@ -3593,7 +3606,7 @@ const UI = {
       rollErr, h("div", { class: "dlg-actions" }, roll));
     // invites: a link for one person, who adds their Claude subscription or an agent on their own API key
     const invite = h("div", { class: "mgr-sec" }, this.inviteBox("INVITE SOMEONE"));
-    fill($("#mgr-body"), managers, invite, planner, privacy, hatching, computers, owners, release);
+    fill($("#mgr-body"), managers, invite, planner, botsFirst, privacy, hatching, computers, owners, release);
   },
 
   // ---------------------------------------------------------------- settings

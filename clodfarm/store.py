@@ -881,11 +881,12 @@ class Store:
 
     # --------------------------------------------------------------- settings
     SETTINGS = {"private": False, "hatch_open": True, "max_claudes": 100, "hatch_per_ip_hour": 3, "mcp": True,
-                "broadcast": False}
+                "broadcast": False, "bots_first": False}
 
     def settings(self) -> dict:
         """The farm manager's switches: a private farm (its Claudes' people only), hatching open or not, its limits,
-        and whether computers may connect over MCP."""
+        whether computers may connect over MCP, and bots first (the Claudes hand the code-writing to the bots, to save
+        their persons' usage)."""
         it = self.b.get("CONTROL", "SETTINGS") or {}
         return {**self.SETTINGS, **{k: v for k, v in it.items() if k not in ("PK", "SK", "ver")}}
 
