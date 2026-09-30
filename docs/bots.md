@@ -2,8 +2,8 @@
 
 A **bot** is a farm member that runs another model: a free one on OpenRouter, your own through Ollama, or anything
 behind an Anthropic-compatible gateway. It is still Claude Code, pointed at that provider with
-`ANTHROPIC_BASE_URL`, so everything the farm does works the same: sub-agents in their own worktrees, resume,
-messages, hooks, the browser tools. Only the model differs.
+`ANTHROPIC_BASE_URL`, so the farm works the same for it: sub-agents in their own worktrees, resume, messages, hooks.
+Only the model differs, and its runs are [lean](#lean-runs) so a small model has room to work.
 
 It uses **no Claude account's usage**, so it adds capacity when your subscriptions are the limit. It is also
 **weaker than Claude**, so the farm keeps it on a short leash:
@@ -12,8 +12,11 @@ It uses **no Claude account's usage**, so it adds capacity when your subscriptio
   goes to a Claude with budget. You can let a bot take any sub-agent when you add it.
 - **Its own sub-agents stay on it**, so a bot never spends a Claude account's usage.
 - **Nobody talks to it.** It has no Remote Control (that needs a Claude login): your Claudes hand it work.
-- The guide tells your Claudes what a bot is good for: well-specified, low-risk jobs such as a first draft,
-  boilerplate, a search or a summary. They check its result before relying on it.
+- The guide tells your Claudes what a bot is good for: well-specified, low-risk jobs such as a function, a test,
+  boilerplate, a first draft, a search or a summary, written as a [job card](#job-cards). They check its result before
+  relying on it.
+- **You say what each bot is good for** (`--about`), and your Claudes see it, with the bot's context window, in
+  `clodfarm agents`.
 
 ## Add one
 
@@ -25,11 +28,17 @@ From a shell (the key is read from stdin, or from an environment variable with `
 
 ```bash
 docker exec -i clodfarm clodfarm bot add qwen --provider openrouter --model qwen/qwen3-coder:free <<< "$OPENROUTER_KEY"
-docker exec -it clodfarm clodfarm bot add local --provider ollama --model qwen3-coder     # Enter: no key
+docker exec -it clodfarm clodfarm bot add local --provider ollama --model qwen3-coder \
+  --about "tiny jobs: one function or one test"                                            # Enter: no key
 ```
 
 `--workers N` lets it run up to 4 sub-agents at a time (default 1, right for free tiers). `--any` makes it take any
-sub-agent. Release a bot in the farm UI like any Claude; its key goes with it.
+sub-agent. `--about` says in a line what it is good for. `--context` sets its model's context window (Ollama's is read
+by itself). `--full` gives its runs every tool and the whole farm guide instead of the lean set (for a strong model
+with a big context). Release a bot in the farm UI like any Claude; its key goes with it.
+
+Change a bot later with `clodfarm bot set <name> [--about TEXT] [--context TOKENS|auto] [--lean|--full]`; it restarts
+with the new settings (a sub-agent it was running goes back to the queue).
 
 | Provider | Address (default) | Key | Notes |
 |---|---|---|---|
@@ -41,6 +50,61 @@ sub-agent. Release a bot in the farm UI like any Claude; its key goes with it.
 editing). A model that can't call tools reliably answers in prose and gets nothing done. Coding models such as Qwen3
 Coder, and larger general models, do best.
 
+## Lean runs
+
+Claude Code's own prompt (its instructions and the definitions of every tool, MCP server and skill) is about 15k
+tokens, and the farm's guide adds about 5k more. On a Claude that's nothing; on a local model with a 32k context it
+is two thirds of the room before the job starts, and a slow model reads all of it on every job.
+
+So a bot's runs are lean by default:
+
+- **Only the tools a bot needs:** Bash, Read, Edit, Write, Glob and Grep (`--tools`), no MCP servers
+  (`--strict-mcp-config`) and no skills (`--disable-slash-commands`). The farm's hooks still run.
+- **A short guide** of its own (about 400 tokens) instead of the farm's, and a stub in its `CLAUDE.md` so the farm's
+  guide isn't read twice.
+
+That is about 5k tokens instead of about 20k. The guide is the same on every run and comes first, so a provider
+that reuses a cached prompt prefix (Ollama does) starts each job almost at once.
+
+A sub-agent can narrow a bot's tools further: `clodfarm spawn ... --on qwen --tools Read,Grep,Glob` keeps a
+read-only job read-only (the choices: Bash, Read, Edit, Write, Glob, Grep, WebFetch, WebSearch, NotebookEdit,
+TodoWrite). A Claude's runs ignore `--tools`.
+
+## Job cards
+
+A small model spends its time looking around: each look is a turn, and each turn is slow. The farm guide tells your
+Claudes to hand a bot a job card instead of a task:
+
+- the goal in one sentence;
+- the exact files to change, with the lines that matter pasted in;
+- the signature or format to produce;
+- the command that proves it works (`python3 -m pytest tests/test_textutils.py -q`);
+- what not to touch.
+
+A bot that has everything in its prompt finishes in a few turns.
+
+## Its context window
+
+For a model Claude Code doesn't know, it can't tell how big the context is, and the provider cuts the prompt when a
+long job outgrows it. The farm reads the window from Ollama (the model's `num_ctx`, or the loaded model's context)
+when the bot is added, or takes `--context`, and gives it to Claude Code as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, so
+Claude Code compacts in time. The bot's guide tells it the size too, and `clodfarm agents` shows it to your Claudes
+so they size its jobs. Below about 16k, Claude Code's own prompt leaves too little room: the farm says so.
+
+## When it can't reach its model
+
+A local model runs on a computer that may be off. Before it takes a job, a bot's workers check that something
+answers at its provider's address (a TCP connection, every 30 seconds). While nothing does:
+
+- it takes no sub-agents; the ones sent to it wait in the queue, and nothing counts as a failed run;
+- `clodfarm agents` shows `CAN'T REACH ITS MODEL (<host:port>)`, and `clodfarm spawn --on <bot>` says the job will
+  wait, so the Claude sending it can do it itself or send it elsewhere;
+- the farm's events say `bot.unreachable`, and `bot.reachable` when it answers again.
+
+When its model stops answering in the middle of a job, the failed run is handled like a rate limit: the attempt is
+given back and the job waits for the bot again. Neither case counts toward the circuit breaker
+(`FARM_STALL_THRESHOLD`), so a computer that's off never pauses the whole farm.
+
 ## How it works
 
 A bot is an agent like the ones you add with a Claude login: its own Claude config dir and its own `clodfarm run`,
@@ -51,14 +115,17 @@ provider:
 - `ANTHROPIC_MODEL` and every model Claude Code picks for itself (`ANTHROPIC_DEFAULT_*_MODEL`, the sub-agent model)
   are the bot's model, so nothing is sent to a Claude model by mistake.
 - The container's own login (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) is never passed to it.
+- `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is its model's context window, when the farm knows it.
+- `FARM_BOT_ABOUT`, `FARM_BOT_LEAN` and `FARM_BOT_CONTEXT` carry its settings to its `clodfarm run`, whose heartbeats
+  show them to the rest of the farm.
 
 It is paced like [API key mode](budget.md): there are no subscription windows to follow. When its provider
 rate-limits it (a 429), its workers pause for 15 minutes; the other Claudes keep going. Claude Code prices every run
 as if it were a Claude model, which is no bot's real cost, so a bot's spend isn't counted toward
 `FARM_DAILY_BUDGET_USD` and `FARM_TASK_BUDGET_USD` doesn't cap its runs. Use the provider's own limits for that.
 
-`clodfarm agents` and the farm UI mark it `BOT on <model> via <provider>`; its seat is `bot-<name>` in
-`clodfarm budget`.
+`clodfarm agents` and the farm UI mark it `BOT on <model> via <provider> · <n>k context · good for: <about>`; its
+seat is `bot-<name>` in `clodfarm budget`.
 
 ## Keep in mind
 

@@ -181,7 +181,7 @@ class AgentManager:
         self.share_browser_tools()
         for a in self.all():
             try:
-                install_guide(a["config_dir"])
+                install_guide(a["config_dir"], lean_bot=bool(a.get("bot")) and a["bot"].get("lean") is not False)
             except (OSError, KeyError) as e:
                 print(f"connectors: guide not updated for {a.get('id')}: {e}", flush=True)
 
@@ -231,6 +231,20 @@ class AgentManager:
         if start:
             self.spawn(agent)
         return agent
+
+    def update_bot(self, aid: str, bot: dict):
+        """A bot's new settings (checked, see bots.parse): kept in the registry, and its `clodfarm run` is stopped so
+        keep_alive starts it again with them (its running sub-agents go back to the queue on the way out)."""
+        with self._lock:
+            agents = self._load()
+            for a in agents:
+                if a["id"] == aid and a.get("bot"):
+                    a["bot"] = bot
+                    break
+            else:
+                raise ValueError(f"no bot named '{aid}'")
+            self._save(agents)
+        self.stop_proc(aid)
 
     def farm_id(self, aid: str) -> str:
         return f"{aid}@{socket.gethostname()}"  # what its `clodfarm run` calls itself (Config.farm_id)

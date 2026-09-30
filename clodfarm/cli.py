@@ -193,7 +193,10 @@ def _claudes(cfg, store) -> list[dict]:
         c = out.setdefault(name, {"name": name, "me": name == cfg.name, "seat": w.get("seat"), "boxes": set(),
                                   "running": 0, "bot": None})
         if w.get("bot"):
-            c["bot"] = {"model": w["bot"], "via": w.get("bot_via") or "", "takes": w.get("bot_takes") or "sent"}
+            c["bot"] = {"model": w["bot"], "via": w.get("bot_via") or "", "takes": w.get("bot_takes") or "sent",
+                        "about": w.get("bot_about") or "", "context": int(w.get("bot_context") or 0)}
+        if str(w.get("state") or "").startswith("unreachable"):
+            c["unreachable"] = str(w["state"]).split(":", 1)[-1].strip()
         c["boxes"].add(box)
         c["seat"] = c["seat"] or w.get("seat")
         c["running"] += w.get("state") == "running"
@@ -214,11 +217,16 @@ def _claude_line(c) -> str:
     if c.get("bot"):
         b = c["bot"]
         used = f"BOT on {b['model']}" + (f" via {b['via']}" if b["via"] else "") + \
+            (f" · {b['context'] // 1024}k context" if b.get("context", 0) >= 1024 else "") + \
             (" · takes any sub-agent" if b["takes"] == "any" else f" · takes only what is sent to it (--on {c['name']})")
+        if b.get("about"):
+            used += f" · good for: {b['about']}"
     busy = f"{c['running']} sub-agent{'s' if c['running'] != 1 else ''} running"
     room = f"can start {c['can_start']} more" if c["can_start"] else \
         f"{'no room for more' if c['running'] else 'resting'}: {c['reason']}" \
         + (f" (until {_until(c['resets'])})" if c.get("resets") else "")
+    if c.get("unreachable"):
+        room = f"CAN'T REACH ITS MODEL ({c['unreachable']}): what is sent to it waits"
     return f"  {c['name']:<16}{'(you)' if c['me'] else '     '}  {used} · {busy} · {room}"
 
 
@@ -280,13 +288,19 @@ def cmd_spawn(cfg, a):
         stay = bool(me and cfg.bot and not on)
         if stay:
             on = cfg.name  # a bot's own sub-agents stay on it: a bot never spends a Claude account's usage
-        if on and not stay and on not in _names(cfg, store) and not a.force:
-            print(f"no Claude named '{on}' is on the farm right now ({', '.join(sorted(_names(cfg, store))) or 'none'});"
+        from . import bots
+        claudes = {c["name"]: c for c in _claudes(cfg, store)}
+        if on and not stay and on not in claudes and not a.force:
+            print(f"no Claude named '{on}' is on the farm right now ({', '.join(sorted(claudes)) or 'none'});"
                   " see `clodfarm agents`, or add --force to wait for it", file=sys.stderr)
             return 2
+        tools = bots.parse_tools(a.tools) if a.tools else None
+        if on and (claudes.get(on) or {}).get("unreachable"):
+            print(f"note: {on} can't reach its model ({claudes[on]['unreachable']}) right now: this waits until it can. "
+                  f"To have it done now, cancel it and do it yourself or send it elsewhere.", file=sys.stderr)
         t = store.add_task(a.title, _read_prompt(a), parent=parent, created_by=me or cfg.name, to=on,
                            owner=os.environ.get("FARM_OWNER") or cfg.name, max_depth=cfg.max_depth,
-                           max_attempts=cfg.max_attempts)
+                           max_attempts=cfg.max_attempts, tools=tools)
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
@@ -962,13 +976,18 @@ def cmd_bot(cfg, a):
     import getpass
     from . import bots
     from .agents import AgentManager
+    if a.sub == "set":
+        return _bot_set(cfg, a)
     if a.sub != "add":
         print("usage: clodfarm bot add NAME --provider openrouter|ollama|custom --model MODEL [--url URL] [--any]\n"
+              "                        [--about TEXT] [--context TOKENS] [--full]\n"
+              "       clodfarm bot set NAME [--about TEXT] [--context TOKENS|auto] [--lean|--full]\n"
               "(release a bot in the farm UI, like any Claude)", file=sys.stderr)
         return 2
     try:
         bot = bots.parse({"provider": a.provider, "url": a.url, "model": a.model, "workers": a.workers,
-                          "takes": "any" if a.any else "sent"})
+                          "takes": "any" if a.any else "sent", "about": a.about, "context": a.context,
+                          "lean": not a.full})
         need = bots.PROVIDERS[bot["provider"]]["key"]
         if a.key_env:
             key = os.environ.get(a.key_env, "")
@@ -978,6 +997,7 @@ def cmd_bot(cfg, a):
             key = getpass.getpass(f"{bots.label(bot)} API key{'' if need else ' (Enter for none)'}: ")
         key = bots.check_key(bot["provider"], key)
         said = bots.check(bot, key)
+        bot["context"] = bot["context"] or bots.detect_context(bot)
     except ValueError as e:
         print(f"clodfarm: {e}", file=sys.stderr)
         return 1
@@ -986,7 +1006,49 @@ def cmd_bot(cfg, a):
     _store(cfg).event("agent.added", f"{agent['id']} added: a bot on {bot['model']} via {bots.label(bot)}", by=cfg.name)
     print(f"bot {agent['id']} added: {bot['model']} via {bots.label(bot)} answered \"{said}\". The farm UI's process "
           f"starts it in a few seconds; send it work with `clodfarm spawn ... --on {agent['id']}`"
-          + (" (it also takes any sub-agent)" if bot["takes"] == "any" else ""))
+          + (" (it also takes any sub-agent)" if bot["takes"] == "any" else "") + "."
+          + (f" Context: {bot['context']} tokens." if bot["context"] else "")
+          + ("" if bot["lean"] else " Its runs get every tool (--full)."))
+    note = bots.context_note(bot["context"]).replace("<name>", agent["id"])
+    if note:
+        print(f"note: {note}")
+    return 0
+
+
+def _bot_set(cfg, a):
+    """Change a bot: what it is good for, its context window (a number, or `auto` to ask its provider again), lean or
+    full runs. Its `clodfarm run` restarts with them (a sub-agent it was running goes back to the queue)."""
+    from . import bots
+    from .agents import AgentManager
+    mgr = AgentManager(cfg)
+    agent = mgr.get(a.name)
+    if not agent or not agent.get("bot"):
+        print(f"clodfarm: no bot named '{a.name}' on this box (see `clodfarm agents`)", file=sys.stderr)
+        return 1
+    bot, changed = dict(agent["bot"]), []
+    try:
+        if a.about is not None:
+            bot["about"] = bots.parse_about(a.about)
+            changed.append(f"good for: {bot['about'] or '(nothing said)'}")
+        if a.context is not None:
+            bot["context"] = bots.detect_context(bot) if a.context.strip().lower() == "auto" \
+                else bots.parse_context(a.context)
+            changed.append(f"context: {bot['context'] or 'unknown'}")
+        if a.lean or a.full:
+            bot["lean"] = bool(a.lean)
+            changed.append("lean runs" if a.lean else "full runs (every tool)")
+    except ValueError as e:
+        print(f"clodfarm: {e}", file=sys.stderr)
+        return 1
+    if not changed:
+        print(f"{agent['id']}: {json.dumps({k: v for k, v in bot.items() if k != 'url'})}")
+        return 0
+    mgr.update_bot(agent["id"], bot)
+    _store(cfg).event("agent.changed", f"bot {agent['id']}: " + "; ".join(changed), by=cfg.name)
+    print(f"bot {agent['id']}: " + "; ".join(changed) + ". It restarts with them in a few seconds.")
+    note = bots.context_note(int(bot.get("context") or 0)).replace("<name>", agent["id"])
+    if note:
+        print(f"note: {note}")
     return 0
 
 
@@ -1326,6 +1388,8 @@ def main(argv=None):
     sw.add_argument("--force", action="store_true", help="with --on: wait for that Claude even if it isn't up now")
     sw.add_argument("--parent", help="make it the sub-agent of this one (default inside a sub-agent: $FARM_TASK_ID)")
     sw.add_argument("--detach", action="store_true", help="inside a sub-agent: start it on its own, not as your child")
+    sw.add_argument("--tools", help="when a bot runs it: only these built-in tools, e.g. Read,Grep,Glob for a read-only "
+                                    "job (default: Bash,Read,Edit,Write,Glob,Grep)")
     sl = add("subagents", cmd_subagents, "the sub-agents running and waiting")
     sl.add_argument("--all", action="store_true", help="also the recently finished ones")
     sl.add_argument("--mine", action="store_true", help="only the ones this Claude started")
@@ -1420,6 +1484,17 @@ def main(argv=None):
     ba.add_argument("--workers", type=int, default=1, help="sub-agents it runs at a time (1-4; free tiers: 1)")
     ba.add_argument("--any", action="store_true", help="take any sub-agent, not only the ones sent to it")
     ba.add_argument("--key-env", help="read the API key from this environment variable instead of stdin")
+    ba.add_argument("--about", help="what it is good for, in a line (the Claudes see it in `clodfarm agents`)")
+    ba.add_argument("--context", help="its model's context window in tokens, like 32768 or 32k (default: ask Ollama)")
+    ba.add_argument("--full", action="store_true", help="its runs get every tool and the whole farm guide, not the "
+                                                        "lean set (for a strong model with a big context)")
+    bs = bts.add_parser("set", help="change a bot: what it is good for, its context window, lean or full runs")
+    bs.add_argument("name")
+    bs.add_argument("--about", help="what it is good for, in a line ('' to clear)")
+    bs.add_argument("--context", help="its context window in tokens (32768, 32k), or auto to ask its provider")
+    lf = bs.add_mutually_exclusive_group()
+    lf.add_argument("--lean", action="store_true", help="only the tools a bot needs and a short guide (the default)")
+    lf.add_argument("--full", action="store_true", help="every tool and the whole farm guide")
     br = add("browser", cmd_browser, "the farm's browser: you log in to sites in the UI, the Claudes use it")
     brs = br.add_subparsers(dest="sub")
     brs.add_parser("status", help="every profile: on or off, and its tabs")

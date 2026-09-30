@@ -560,9 +560,13 @@ class FarmUI:
         states = [w.get("state", "") for w in ws]
         running = sum(s == "running" for s in states)
         beat = next((w for w in ws if w.get("bot")), None)  # a bot on another box: its heartbeats say so
-        bot = {"model": a["bot"]["model"], "via": bots.label(a["bot"]), "takes": a["bot"].get("takes") or "sent"} \
+        bot = {"model": a["bot"]["model"], "via": bots.label(a["bot"]), "takes": a["bot"].get("takes") or "sent",
+               "about": a["bot"].get("about") or "", "context": int(a["bot"].get("context") or 0)} \
             if a.get("bot") else {"model": beat["bot"], "via": beat.get("bot_via") or "",
-                                  "takes": beat.get("bot_takes") or "sent"} if beat else None
+                                  "takes": beat.get("bot_takes") or "sent", "about": beat.get("bot_about") or "",
+                                  "context": int(beat.get("bot_context") or 0)} if beat else None
+        if bot:
+            bot["reachable"] = not any(s.startswith("unreachable") for s in states)
         resting = bool(states) and all(s.startswith("throttled") for s in states)
         return {
             "id": a["id"], "name": a.get("name") or a["id"], "primary": bool(a.get("primary")),
@@ -1407,6 +1411,7 @@ def make_handler(ui: FarmUI):
                 bot = bots.parse(data["bot"])
                 key = bots.check_key(bot["provider"], str(data["bot"].get("key") or ""))
                 said = bots.check(bot, key)
+                bot["context"] = bot["context"] or bots.detect_context(bot)
                 a = mgr.create(str(data.get("name", "")), bot=bot, key=key, start=False)
                 what = f"a bot on {bot['model']} via {bots.label(bot)}"
             else:

@@ -23,9 +23,15 @@ Run the commands below with Bash; add `--json` to any of them for machine-readab
   own account is low, start sub-agents without `--on` (or `--on <a Claude with less usage used>`) instead of doing big
   jobs in this conversation. Keep quick things in this conversation; don't spawn busywork.
 - A **bot** (marked `BOT on <model>` in `clodfarm agents`) is Claude Code on another model, a free or a local one: it
-  uses no Claude account's usage, but it is weaker than you. It takes only the sub-agents sent to it. Send it
-  well-specified, low-risk jobs (`clodfarm spawn ... --on <bot>`): a first draft, boilerplate, a search, a summary.
-  Check its result before you rely on it or tell your person it's done.
+  uses no Claude account's usage, but it is weaker and slower than you, and its context window is often small
+  (`clodfarm agents` shows it, and what its person says it is good for). It takes only the sub-agents sent to it. Send
+  it well-specified, low-risk jobs (`clodfarm spawn ... --on <bot>`): a function, a test, boilerplate, a first draft,
+  a search, a summary. Check its result before you rely on it or tell your person it's done.
+- Write a bot a job card, not a task: the goal in one sentence; the exact files to change, with the lines that matter
+  pasted in; the signature or format to produce; the command that proves it works; what not to touch. A bot that
+  doesn't have to look around finishes in a few turns. Its runs get Bash, Read, Edit, Write, Glob and Grep;
+  `--tools Read,Grep,Glob` keeps a read-only job read-only. When a bot can't reach its model (a local one whose
+  computer is off), `clodfarm agents` says so and what you send it waits: do it yourself or send it elsewhere.
 
 ## Sub-agents (the person sees them on the farm)
 - `clodfarm spawn "<title>" --prompt "<full, self-contained instructions>" [--on <name>]` starts one. It works in its
@@ -143,6 +149,34 @@ If you have none, you have no browser: ask your person to add one for you on the
 """
 
 
+BOT_GUIDE = """\
+# You are a bot on a clodfarm farm
+You are Claude Code running on {model}, a smaller model than Claude. A Claude on the farm sent you one job: it is your
+prompt. Do exactly that job, in as few steps as you can, then stop.
+
+- Work in your worktree and commit on your branch with a clear message. Don't switch branches and don't push: the farm
+  lands your branch when you finish.
+- Your context window is {context}. Read only what the job names: find things with Grep or Glob first, read files with
+  an offset and a limit, and keep command output short (`| tail -40`). Don't explore the repo.
+- If the job says how to check it (a test command), run that before you finish and fix what fails.
+- If you can't do the job as written (unclear, too big, or it needs something you don't have), stop and say so in your
+  summary instead of guessing: whoever sent it decides what's next. Don't start sub-agents.
+- A "[farm message ...]" that reaches you while you work is from the farm; one from your person or the Claude that
+  sent the job changes your job as it says.
+- Finish with a short plain-text summary: what you changed (files, commit) and anything left undone. That is your
+  result.
+- Never print, copy or commit credentials. Don't send messages outside the farm, spend money or post anything.
+"""
+
+# a lean bot's user-level CLAUDE.md: its guide comes with each run (BOT_GUIDE), so this stays out of its context
+BOT_CLAUDE_MD = "# clodfarm bot\nYour instructions come with each job.\n"
+
+
+def bot_guide(cfg) -> str:
+    size = f"{cfg.bot_context // 1024}k tokens" if cfg.bot_context >= 1024 else "unknown, so treat it as small"
+    return BOT_GUIDE.format(model=cfg.bot, context=size)
+
+
 def farm_guide() -> str:
     """The guide every Claude on this farm reads: FARM_GUIDE plus the sections for the features this farm has on."""
     import os
@@ -155,6 +189,9 @@ def task_system_prompt(cfg, task: dict, cwd: str, branch: str | None, name: str 
     where = f"Your worktree is {cwd} on branch {branch}." if branch else f"Your working directory is {cwd}."
     reach = (f" Other Claudes reach you with `clodfarm msg {task['id']}`" +
              (f" or with SendMessage to the session '{name}'." if name else "."))
+    if cfg.bot and cfg.bot_lean:  # the short guide first and the same every run, so the provider can reuse it
+        return (bot_guide(cfg) + f"\n## This run\nYou are the bot {cfg.name}, on a job for "
+                f"{task.get('owner') or 'the farm'}: sub-agent {task['id']}. FARM_TASK_ID={task['id']}. {where}\n")
     bot = (f" You run on {cfg.bot}, not on Claude: you are the farm's bot {cfg.name}. Your own sub-agents stay on you."
            if cfg.bot else "")
     return (farm_guide() + f"\n## This run\nYou are a sub-agent of {task.get('owner') or cfg.name}: sub-agent "

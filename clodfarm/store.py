@@ -119,10 +119,11 @@ class Store:
 
     def add_task(self, title: str, prompt: str, priority: int = 5, parent: str | None = None,
                  kind: str = "task", created_by: str = "human", max_depth: int = 3, max_attempts: int = 3,
-                 to: str | None = None, owner: str | None = None) -> dict:
+                 to: str | None = None, owner: str | None = None, tools: list[str] | None = None) -> dict:
         """A sub-agent run. ``owner`` is the Claude that started it (a sub-agent's own sub-agents inherit it), so the
         farm shows it next to that Claude. ``to`` pins it to one Claude's account (e.g. ``gil``): only its boxes take
-        it. Without ``to`` any Claude with budget left runs it."""
+        it. Without ``to`` any Claude with budget left runs it. ``tools``: the built-in tools it runs with when a lean
+        bot takes it (see bots.run_tools)."""
         depth = 0
         if parent:
             p = self.get_task(parent)
@@ -142,7 +143,7 @@ class Store:
                 "ver": 1, "id": tid, "title": title[:300], "prompt": prompt, "status": status, "priority": priority,
                 "kind": kind, "parent": parent, "depth": depth, "created": t, "updated": t, "created_by": created_by,
                 "attempts": 0, "max_attempts": max_attempts, "resumes": 0, "children_open": 0, "to": to or None,
-                "owner": owner or None}
+                "owner": owner or None, "tools": list(tools) if tools else None}
         if gate:
             item["approval"] = {"asked_at": t, "from": owner or created_by, "expires_at": t + APPROVAL_TTL}
         item = {k: v for k, v in item.items() if v is not None}

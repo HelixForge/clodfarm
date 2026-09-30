@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 
-from . import awsapps, boot, dashboards, gitops, notify, planner, procs, prompts
+from . import awsapps, boot, bots, dashboards, gitops, notify, planner, procs, prompts
 from .auth import (accept_remote_control, auth_status, banner, claude_name, install_browser_mcp, install_commands,
                    install_guide,
                    install_hooks, install_messaging, install_model, seat_id, trust_directory)
@@ -43,6 +43,7 @@ RC_SPEC = 2  # how Remote Control is started (its stdin /dev/null): one started 
 RC_IDLE = 900  # Remote Control is restarted on a new Claude Code only when no conversation was active for this long
 DRAINED_MARK = "/tmp/clodfarm-drained" if os.path.exists("/.dockerenv") else "/nonexistent/clodfarm-drained"
 CANCEL_POLL = 3  # seconds between two looks at a running sub-agent's status: a cancel stops it within about this long
+PROVIDER_CHECK = 30  # seconds between two looks at whether a bot's provider answers (e.g. its computer is on)
 
 
 class Farm:
@@ -50,8 +51,9 @@ class Farm:
         self.cfg, self.store = cfg, store
         self.seat = cfg.seat or "default"  # the Claude account this box runs on; set from the login in wait_for_auth
         store.echo = True
-        if cfg.bot:  # every Claude on the farm sees it's a bot, and on which model
-            store.bot = {"bot": cfg.bot, "bot_via": cfg.bot_via or None, "bot_takes": cfg.bot_takes}
+        if cfg.bot:  # every Claude on the farm sees it's a bot, on which model, and what it is good for
+            store.bot = {"bot": cfg.bot, "bot_via": cfg.bot_via or None, "bot_takes": cfg.bot_takes,
+                         "bot_about": cfg.bot_about or None, "bot_context": cfg.bot_context or None}
         self.stop = threading.Event()
         self.procs: dict[str, subprocess.Popen] = {}
         self.running: dict[str, Live | None] = {}  # the sub-agents running on this box (their stdin, when live)
@@ -64,6 +66,8 @@ class Farm:
         self.agents = None  # the farm's own daemon keeps the Claudes added in the UI running
         self.ui_keeper = None
         self._drain: tuple[float, dict] = (0.0, {})
+        self._provider = (0.0, True)  # a bot's provider: when it was last looked at, and whether it answered
+        self._provider_lock = threading.Lock()
         self.started = now()
 
     @property
@@ -109,7 +113,7 @@ class Farm:
         if self.cfg.manage_claude_config:
             if self.cfg.remote_control:
                 accept_remote_control()
-            install_guide()
+            install_guide(lean_bot=self.cfg.bot_lean)
             try:  # the optional apps role (deploy/aws/apps-role.yaml): `aws --profile apps` for the Claudes
                 if awsapps.install_profile():
                     apps = awsapps.settings()
@@ -608,6 +612,28 @@ class Farm:
             if name.startswith(f"{tid}-"):
                 shutil.rmtree(os.path.join(self.runs, name), ignore_errors=True)
 
+    def provider_up(self, fresh: bool = False) -> bool:
+        """Whether a bot's provider answers (a local model's computer is on). Every worker shares one look per
+        PROVIDER_CHECK seconds; a change is written to the farm's events once."""
+        if not self.cfg.bot or not self.cfg.bot_url:
+            return True
+        with self._provider_lock:
+            at, ok = self._provider
+            if not fresh and now() - at < PROVIDER_CHECK:
+                return ok
+            up = bots.reachable(self.cfg.bot_url)
+            self._provider = (now(), up)
+        if up != ok:
+            host = self.provider_host()
+            self.store.event("bot.reachable" if up else "bot.unreachable",
+                             f"bot {self.cfg.name} reaches its model at {host} again" if up else
+                             f"bot {self.cfg.name} can't reach its model at {host}: the sub-agents sent to it wait")
+        return up
+
+    def provider_host(self) -> str:
+        u = self.cfg.bot_url.split("://", 1)[-1]
+        return u.split("/", 1)[0]
+
     def worker_step(self, wid: str, holder: str):
         cfg, store = self.cfg, self.store
         ctl = store.control()
@@ -618,6 +644,10 @@ class Farm:
         if self.drain_state().get("draining"):
             store.heartbeat(cfg.farm_id, wid, "draining", seat=self.seat)
             self.stop.wait(cfg.idle_sleep)
+            return
+        if not self.provider_up():  # a bot whose model can't be reached takes nothing: its sub-agents wait for it
+            store.heartbeat(cfg.farm_id, wid, f"unreachable: {self.provider_host()}", seat=self.seat)
+            self.stop.wait(max(cfg.idle_sleep, PROVIDER_CHECK))
             return
         # this seat's own budget decides; other seats in the farm are paced separately
         d = decide(store.get_snapshot(self.seat), cfg.policy, now(), store.spent_today(self.seat))
@@ -657,7 +687,7 @@ class Farm:
         if adopt:
             m = procs.read_json(os.path.join(adopt, "meta.json"))
             ctx = {k: m.get(k) for k in ("cwd", "branch", "parent_branch", "name", "sysprompt", "fresh_text",
-                                         "session", "started", "before", "live", "run_started")}
+                                         "session", "started", "before", "live", "run_started", "tools")}
             ctx["env"] = procs.read_json(os.path.join(adopt, "cmd.json")).get("env") or dict(os.environ)
             ctx["text"] = ""
         else:
@@ -731,6 +761,8 @@ class Farm:
         sysprompt = prompts.task_system_prompt(cfg, task, cwd, branch, name)
         before = store.get_snapshot(self.seat)
         return {"cwd": cwd, "branch": branch, "parent_branch": parent_branch, "name": name, "sysprompt": sysprompt,
+                # a lean bot runs with only the tools a bot needs (or the ones its sub-agent asked for)
+                "tools": bots.run_tools(task.get("tools")) if cfg.bot_lean else None,
                 "session": session, "text": compose(fresh=not session),
                 "fresh_text": compose(fresh=True) if session else None, "started": now(),
                 "before": before.to_dict() if before else None, "live": bool(cfg.live_stdin), "env": env,
@@ -778,10 +810,10 @@ class Farm:
             ctx["run_started"] = run_started
             meta = {"kind": "task", "tid": tid, "wid": wid, "holder": holder, "slot": slot, "seat": self.seat,
                     **{k: ctx.get(k) for k in ("cwd", "branch", "parent_branch", "name", "sysprompt", "fresh_text",
-                                               "started", "before", "live")},
+                                               "started", "before", "live", "tools")},
                     "session": resume_session, "run_started": run_started}
             return run_agent(build_cmd(cfg, sysprompt, resume_session, name, live=bool(live),
-                                       disallowed=self.denied_tools()), text, cwd, env,
+                                       disallowed=self.denied_tools(), tools=ctx.get("tools")), text, cwd, env,
                              cfg.task_timeout, on_snapshot=on_snap, on_start=lambda p: self.procs.__setitem__(tid, p),
                              live=live, workspace=cfg.workspace, meta=meta, stop=self.stop, adopt=bool(rundir),
                              started=run_started,
@@ -849,6 +881,14 @@ class Farm:
             snap = store.get_snapshot(self.seat)
             self.notify(f"seat {self.seat} paused: usage limit", f"{who}; this seat's agents wait until "
                         f"{iso(snap.resets_at) if snap and snap.resets_at else 'the reset'}.")
+            return
+
+        if not res.ok and cfg.bot and not self.provider_up(fresh=True):
+            # its model stopped answering mid-run (a local model's computer went off): not the task's fault either,
+            # and not a broken farm, so it doesn't count toward the circuit breaker; it waits for the bot's model
+            store.update_task(tid, attempts=max(0, int(task.get("attempts", 1)) - 1))
+            store.finish(tid, holder, False, f"its model at {self.provider_host()} stopped answering; re-queued",
+                         cfg.max_resumes)
             return
 
         if res.timed_out and res.session_id and int(task.get("timeout_resumes_used", 0)) < cfg.timeout_resumes:
