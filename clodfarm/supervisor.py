@@ -612,15 +612,15 @@ class Farm:
             if name.startswith(f"{tid}-"):
                 shutil.rmtree(os.path.join(self.runs, name), ignore_errors=True)
 
-    def bots_first(self) -> bool:
-        """The farm manager's BOTS FIRST switch (the Claudes hand the code-writing to the bots); read for every new run,
+    def bots_first(self) -> str:
+        """The farm manager's BOTS FIRST switch and its style ("plan" or "draft"; "" when off), read for every new run
         so a change applies to the next one. Never for a bot: it is the one the work goes to."""
         if self.cfg.bot:
-            return False
+            return ""
         try:
-            return bool(self.store.settings().get("bots_first"))
+            return self.store.bots_first()
         except Exception:  # noqa: BLE001 - the store is briefly unreachable: run as the farm usually does
-            return False
+            return ""
 
     def provider_up(self, fresh: bool = False) -> bool:
         """Whether a bot's provider answers (a local model's computer is on). Every worker shares one look per

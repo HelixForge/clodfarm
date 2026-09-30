@@ -157,10 +157,13 @@ def test_bots_first_reaches_the_claudes_and_never_a_bot(tmp_path):
     from clodfarm.auth import install_guide
     from clodfarm.prompts import farm_guide, task_system_prompt
     assert "BOTS FIRST is on" in farm_guide(True) and "BOTS FIRST is on" not in farm_guide()
+    assert "the bots draft, you review" in farm_guide("draft") and "the bots draft" not in farm_guide("plan")
+    assert "Don't study the specs or the code first" in farm_guide("draft"), "its thinking is what costs usage"
     new = lambda **kw: type("C", (), {"bot": "", "bot_lean": False, "bot_context": 0, "name": "gil",  # noqa: E731
                                       "max_depth": 3, **kw})()
     t = {"id": "t1", "owner": "gil"}
     assert "BOTS FIRST is on" in task_system_prompt(new(), t, "/w/t1", "farm/t1", bots_first=True)
+    assert "the bots draft, you review" in task_system_prompt(new(), t, "/w/t1", "farm/t1", bots_first="draft")
     assert "BOTS FIRST is on" not in task_system_prompt(new(), t, "/w/t1", "farm/t1")
     for bot in (new(bot="qwen3-coder", bot_lean=True, bot_context=32768), new(bot="big-model", bot_lean=False)):
         assert "BOTS FIRST" not in task_system_prompt(bot, t, "/w/t1", "farm/t1", bots_first=True), "it gets the work"
@@ -185,6 +188,11 @@ def test_the_bots_first_switch_reaches_the_next_claude_run(env):
             argv = next(c["argv"] for c in calls(env) if c["cmd"] == "print" and c["task"] == tid)
             return argv[argv.index("--append-system-prompt") + 1]
         assert "BOTS FIRST is on" in guide(on) and "BOTS FIRST is on" not in guide(off), "read at each new run"
+        assert "ON (draft)" in cli("farm", "bots-first", "draft").stdout and farm.store.bots_first() == "draft"
+        drafted = json.loads(cli("spawn", "draft style", "--prompt", "COMMIT draft", "--json").stdout)["id"]
+        wait_for(lambda: farm.store.get_task(drafted)["status"] == "done", timeout=60)
+        assert "the bots draft, you review" in guide(drafted)
+        assert cli("farm", "bots-first", "loud", check=False).returncode == 2
         assert [e for e in farm.store.events(time.time() - 60) if e["type"] == "farm.settings"]
     finally:
         stop_farm(farm, t)

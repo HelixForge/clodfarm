@@ -93,8 +93,20 @@ session connected [over MCP](mcp.md) learns of the bots from `farm_spawn`, which
 
 By default a Claude weighs time and usage: it hands a bot a piece when that saves both, and on a job it can finish in
 two minutes it usually does all of it itself. When you would rather wait than spend your usage, the farm manager turns
-on **BOTS FIRST** (MANAGE → BOTS FIRST, or `clodfarm farm bots-first` / `bots-first-off`). Every Claude on the farm
-then works as the lead, not the typist:
+on **BOTS FIRST** (MANAGE → BOTS FIRST, or `clodfarm farm bots-first [draft|plan]` / `bots-first-off`), in one of
+two styles.
+
+**The bots draft, your Claudes review** (`draft`). A Claude's usage goes on its thinking (reading the specs and the
+code, working out the bugs) far more than on its typing, so a bot does the first full pass, reading and reasoning
+included, and the Claude only checks it:
+
+1. it sends the whole job, as it got it, to the bot with the biggest context, asking for a report (each requirement
+   done, not done or unsure; the tests it added; what it isn't sure of), and ends its run without studying the code;
+2. resumed with the result, it merges the bot's branch, runs the tests and the task's checks, reads the report and the
+   diff's summary, and reads the spec only where the report or a failing check points;
+3. it sends short fix-up job cards for the gaps (or fixes a few lines itself), and repeats until the task is done.
+
+**Your Claudes plan, the bots type** (`plan`). Every Claude works as the lead, not the typist:
 
 1. it reads the job and plans it, keeping the thinking (where a bug comes from, the design) for itself;
 2. it splits the code-writing into job cards sized to each bot's context window, and sends them with `--on <bot>`,
@@ -103,6 +115,11 @@ then works as the lead, not the typist:
 4. it reviews every branch (the diff, the tests), merges what is right and sends a fix-up card for what isn't;
 5. it writes code itself only for glue of a few lines, merges, or a piece a bot has failed twice, and says which parts
    the bots wrote.
+
+On a benchmark of three small projects whose work is mostly understanding bugs and specs, `plan` spent more of the
+Claude's usage than doing the work itself: the planning alone, the thinking included, cost as much as a whole solve,
+because the code left to type once it is understood is short. `plan` pays off on jobs with a lot of typing per idea
+(boilerplate, many similar tests, mechanical changes); `draft` is the one that moves the thinking to the bots.
 
 A sub-agent reads the switch when its run starts, so a change applies to the next run; conversations get it through
 their farm guide (`CLAUDE.md`), which the farm rewrites when the switch changes. `clodfarm agents` says it's on, and
