@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.1 (2026-09-29)
+
+- The sign-in screen says where your Claude is: open the Claude app (or claude.ai/code), go to Code, open the session
+  `[clodfarm] <farm>`, and send it "farm login".
+
 ## 1.6.0 (2026-09-29)
 
 - **No passwords at all.** A private farm is seen by the people of its Claudes (and its manager), who sign in with

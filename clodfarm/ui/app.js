@@ -1736,7 +1736,11 @@ const UI = {
         code.addEventListener("input", () => { code.value = code.value.toUpperCase().replace(/[^A-Z0-9]/g, ""); });
         form = h("form", { class: "acct-form" },
           h("h2", { class: "invite-h", text: "SIGN IN WITH YOUR CLAUDE" }),
-          h("p", { class: "hint-line" }, "In the Claude app, tell your Claude ", h("b", { text: "farm login" }), ". It sends you a link that signs this device in, or a code to type here."),
+          h("ol", { class: "signin-steps" },
+            h("li", {}, "Open the ", h("b", { text: "Claude app" }), " (or claude.ai/code) and go to ", h("b", { text: "Code" }), "."),
+            h("li", {}, "Open your Claude's session: ", h("b", { text: `[clodfarm] ${App.me?.farm || "your farm"}` }), "."),
+            h("li", {}, "Send it: ", h("b", { class: "say", text: "farm login" }))),
+          h("p", { class: "muted small hint-line", text: "It answers with a link that signs this device in, or a code to type here." }),
           h("label", {}, "CODE FROM YOUR CLAUDE", code),
           err, h("button", { class: "btn primary", type: "submit" }, "▶ SIGN IN"),
           h("p", { class: "muted small", text: "Invited? Just open your invite link." }));

@@ -133,6 +133,11 @@ output { color: var(--clay-2); }
 /* a public farm's visitor: the tokens burning and the Claudes at work, nothing to press but the key (sign in) */
 #hud.spectator .dock, #hud.spectator .chips, #hud.spectator #mine-block, #hud.spectator #approve-chip,
 #hud.spectator #textbox { display: none !important; }
+/* signing in: where your Claude is in the Claude app, step by step */
+.signin-steps { margin: 0 0 10px; padding-left: 22px; font-size: 21px; line-height: 1.35; }
+.signin-steps li { margin: 3px 0; }
+.signin-steps + .hint-line { margin: 0 0 14px; }
+.signin-steps .say { font-family: var(--font-px); font-size: 10px; background: #fff; border: 2px solid var(--ink); border-radius: 3px; padding: 2px 5px; }
 /* an invite: one button */
 .invite-h { font: 13px/1.5 var(--font-px); margin: 0 0 10px; }
 .acct-form.invite p { margin: 0 0 12px; }
