@@ -88,7 +88,6 @@ When you run farms for other people, three settings let your own site sign them 
   with `clodfarm.sso.make(key, farm_name)`: base64url JSON claims `{farm, sub, exp, n}`, a dot, and their
   HMAC-SHA256. Use one key per farm. The farm's own Claudes can read it, so it opens that farm and no other.
   The link signs you in to the farm, never to Claude: the Claude login stays in Claude Code's own sign-in.
-- `FARM_UI_SSO_URL=<url>`: the sign-in screen shows SIGN IN, which goes there (your site's account page).
 - `FARM_UI_PRIVATE=1`: the farm is private whatever its settings say. Nobody watches without signing in.
 - `FARM_MAX_CLAUDES=<n>`: the most Claudes (and bots) the farm keeps beyond its own, for everyone, the manager
   included. `0` means the farm's own Claude is its only one.

@@ -1,7 +1,9 @@
 """Signing in to the farm UI from somewhere else: a short-lived link signed by whoever hosts the farm.
 
     FARM_UI_SSO_KEY=<secret>    the farm accepts GET /sso?t=<token> signed with it: once, for a few minutes
-    FARM_UI_SSO_URL=<url>       where the sign-in screen sends people to get such a link (your host's account page)
+
+(How the host's customer gets in the first time, right after paying, say. After that they sign in with their Claude,
+like anyone: "farm login" in the Claude app.)
 
 The link signs a device in as the person of the farm's manager Claude (the farm's own, until a manager hands it on),
 the way a pairing link does. It never carries a Claude login: that stays in the claude binary's own sign-in.

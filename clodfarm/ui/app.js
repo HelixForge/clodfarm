@@ -1691,8 +1691,8 @@ const UI = {
     for (const d of $$("dialog[open]")) d.close();
     $("#hud").hidden = true; $("#title").hidden = false;
     const priv = App.me ? App.me.private && !App.me.can_view : true;
-    const host = App.me?.sso_url ? ["host"] : []; // a hosted farm: its host's account page signs you in
-    this.accountForms($("#title-forms"), { tabs: priv ? [...host, host.length ? null : "viewer", "mine"].filter(Boolean) : [...host, "mine"], note: this.titleNote,
+    // you sign in with your Claude (it gives you a link or a code); a farm with a viewer password takes that too
+    this.accountForms($("#title-forms"), { tabs: priv && App.me?.password ? ["mine", "viewer"] : ["mine"], note: this.titleNote,
       onDone: async () => { const me = await this.loadMe(); if (me?.can_view) { if (!this.goNext()) this.showFarm(); } else this.showTitle(); } });
     Scene.farm = false; Scene.layout = { clearOf: ".title-card" }; Scene.cam.auto = true; Scene.resize(); // the demo Claudes keep off the title and the form
     Scene.demo = true; fill(Scene.labels, null); Scene.crowEl = null; Scene.critters.clear(); Scene.plotTasks = []; Scene.plotMore = []; Scene.boardCount = 3;
@@ -1723,25 +1723,23 @@ const UI = {
   /** Sign-in forms, as tabs: a private farm's viewer password (FARM), and the code your Claude gives you in the Claude
    * app (MY CLAUDE). The farm's manager is the person of a manager Claude: they sign in to it like anyone. */
   accountForms(box, { tabs, tab, note, onDone }) {
-    const NAMES = { host: "SIGN IN", viewer: "FARM", mine: "MY CLAUDE" };
+    const NAMES = { viewer: "FARM PASSWORD", mine: "WITH YOUR CLAUDE" };
     const draw = (cur) => {
       const err = h("p", { class: "form-error", role: "alert", id: box.id === "title-forms" ? "title-note" : null, text: note || "" });
       note = "";
       const bar = tabs.length > 1 ? h("div", { class: "tabs", role: "tablist" }, tabs.map(k => h("button", { type: "button", role: "tab",
         class: "tab" + (k === cur ? " on" : ""), "aria-selected": String(k === cur), onclick: () => draw(k) }, NAMES[k]))) : null;
       let form;
-      if (cur === "host") {
-        form = h("div", { class: "acct-form" },
-          h("p", { class: "muted small", text: "This farm is hosted for you. Sign in where you manage it, then open the farm from there." }),
-          err, h("a", { class: "btn primary", href: App.me.sso_url, rel: "noopener" }, "▶ SIGN IN"));
-      } else if (cur === "mine") {
+      if (cur === "mine") {
         const code = h("input", { name: "code", class: "code-input", maxlength: 6, minlength: 6, autocomplete: "one-time-code", autocapitalize: "characters",
           spellcheck: "false", required: true, placeholder: "ABC123", "aria-label": "6-character code" });
         code.addEventListener("input", () => { code.value = code.value.toUpperCase().replace(/[^A-Z0-9]/g, ""); });
         form = h("form", { class: "acct-form" },
+          h("h2", { class: "invite-h", text: "SIGN IN WITH YOUR CLAUDE" }),
+          h("p", { class: "hint-line" }, "In the Claude app, tell your Claude ", h("b", { text: "farm login" }), ". It sends you a link that signs this device in, or a code to type here."),
           h("label", {}, "CODE FROM YOUR CLAUDE", code),
-          h("p", { class: "muted small hint-line" }, "Ask your Claude in the Claude app: ", h("b", { text: "farm login" }), " (or ", h("b", { text: "/farm-login" }), "). It gives you a code, or a link that signs you in."),
-          err, h("button", { class: "btn primary", type: "submit" }, "▶ SIGN IN TO MY CLAUDE"));
+          err, h("button", { class: "btn primary", type: "submit" }, "▶ SIGN IN"),
+          h("p", { class: "muted small", text: "Invited? Just open your invite link." }));
         form.addEventListener("submit", async (e) => {
           e.preventDefault(); const btn = form.querySelector("button[type=submit]"); btn.disabled = true; err.textContent = "";
           try { const r = await api("api/pair", { code: code.value.trim() }); this.pairedTo = r.claude; await onDone("owner", r); }
@@ -1752,7 +1750,7 @@ const UI = {
         form = h("form", { class: "acct-form", autocomplete: "on" },
           h("input", { name: "user", autocomplete: "username", value: "clodfarm", hidden: true }),
           h("label", {}, "FARM PASSWORD", pw),
-          h("p", { class: "muted small", text: "This farm is private. Its manager gives you the password; or sign in to your own Claude (MY CLAUDE)." }),
+          h("p", { class: "muted small", text: "This farm is private: its manager gives you the password to watch it. To use your own Claude here, sign in WITH YOUR CLAUDE." }),
           err, h("button", { class: "btn primary", type: "submit" }, "▶ ENTER THE FARM"));
         form.addEventListener("submit", async (e) => {
           e.preventDefault(); const btn = form.querySelector("button[type=submit]"); btn.disabled = true; err.textContent = "";

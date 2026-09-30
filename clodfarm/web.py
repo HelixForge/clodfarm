@@ -953,7 +953,7 @@ def make_handler(ui: FarmUI):
                     st = ui.store.settings()
                     return self._json({**who.view(), "user": "farmer" if who.manager else None, "farm": ui.cfg.farm,
                                        "version": __version__, "private": ui.private(st),
-                                       "sso_url": os.environ.get("FARM_UI_SSO_URL") or None,
+                                       "password": bool(ui.private(st) and st.get("viewer_hash")),
                                        "invite": bool(self._invited()),
                                        "hatch": self._hatch_view(who)}, 200 if who.can_view else 401)
                 if not who.can_view:

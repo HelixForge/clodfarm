@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.2 (2026-09-29)
+
+- **You sign in with your Claude.** The sign-in screen is one thing: SIGN IN WITH YOUR CLAUDE (tell your Claude
+  "farm login" in the Claude app; it sends you a link, or a code to type there), or open an invite link. A private
+  farm with a viewer password still takes the password to watch. `FARM_UI_SSO_URL` and the host's SIGN IN tab are
+  gone: a host's one-time `/sso` link (FARM_UI_SSO_KEY) is only the way in right after paying.
+
 ## 1.5.1 (2026-09-29)
 
 - **Your farm's own Claude gets the onboarding too:** LOG IN YOUR CLAUDE on a new farm first asks its name, look and
