@@ -9,7 +9,14 @@ tools. Only the model differs.
 - It runs no Remote Control (that needs a Claude login): nobody talks to it, it takes sub-agents.
 - It takes only the sub-agents sent to it (``clodfarm spawn --on <bot>``), unless it was added to take any. Its own
   sub-agents stay on it, so a bot never spends a Claude account's usage.
-- It is paced like API key mode (no subscription windows), and pauses when its provider rate-limits it.
+- It is paced like API key mode (no subscription windows), and pauses when its provider rate-limits it or can't be
+  reached (a local model on a computer that is off): its sub-agents wait, and nothing counts as a failed run.
+- Its runs are lean by default: only the tools a bot needs (``LEAN_TOOLS``), no MCP servers or skills, and a short
+  guide instead of the farm's. That is about 5k tokens of Claude Code's prompt instead of about 20k, so a small local
+  model has room to work. A sub-agent can narrow its tools further (``clodfarm spawn --tools``).
+- It knows its model's context window (asked from Ollama, or set by hand), and Claude Code is told it
+  (``CLAUDE_CODE_MAX_CONTEXT_TOKENS``), so it compacts in time instead of the provider cutting the prompt.
+- Its person says what it is good for (``about``); the Claudes that send it work see that in ``clodfarm agents``.
 - Its API key is kept in its own config dir (``bot.json``, readable by the farm's user only) and never shown again.
 """
 
@@ -18,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -32,11 +40,20 @@ PROVIDERS = {
 MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}")
 KEY_FILE = "bot.json"
 MAX_WORKERS = 4
+ABOUT_MAX = 160
+# what a lean bot's runs get: enough to read, change, run and commit code
+LEAN_TOOLS = ("Bash", "Read", "Edit", "Write", "Glob", "Grep")
+# what a sub-agent sent to a bot may ask for instead (`clodfarm spawn --tools`)
+TOOL_CHOICES = LEAN_TOOLS + ("WebFetch", "WebSearch", "NotebookEdit", "TodoWrite")
+# below this, Claude Code's own prompt (about 5k tokens lean) leaves too little room for a job
+MIN_CONTEXT = 16384
 
 
 def parse(data: dict) -> dict:
     """A bot's settings from what the UI or the CLI sent: ``provider``, ``url``, ``model``, ``takes`` ("sent": only
-    the sub-agents sent to it; "any": any sub-agent) and ``workers``. Raises ValueError with what is wrong."""
+    the sub-agents sent to it; "any": any sub-agent), ``workers``, ``about`` (what it is good for), ``lean`` (its runs
+    get only the tools a bot needs; default on) and ``context`` (its model's context window in tokens, 0: unknown).
+    Raises ValueError with what is wrong."""
     provider = str(data.get("provider") or "custom").strip().lower()
     if provider not in PROVIDERS:
         raise ValueError(f"the provider is one of {', '.join(PROVIDERS)}")
@@ -56,7 +73,91 @@ def parse(data: dict) -> dict:
         raise ValueError("workers is a number") from None
     if not 1 <= workers <= MAX_WORKERS:
         raise ValueError(f"a bot runs 1 to {MAX_WORKERS} sub-agents at a time")
-    return {"provider": provider, "url": url, "model": model, "takes": takes, "workers": workers}
+    return {"provider": provider, "url": url, "model": model, "takes": takes, "workers": workers,
+            "about": parse_about(data.get("about")), "lean": data.get("lean") not in (False, "0", "false", "off"),
+            "context": parse_context(data.get("context"))}
+
+
+def parse_about(text) -> str:
+    """What a bot is good for, in one short line (it is shown to every Claude that may send it work)."""
+    about = " ".join("".join(c for c in str(text or "") if c.isprintable()).split())
+    if len(about) > ABOUT_MAX:
+        raise ValueError(f"say what it is good for in at most {ABOUT_MAX} characters")
+    return about
+
+
+def parse_context(value) -> int:
+    """A context window in tokens: 0 (unknown), a number, or one written like 32k."""
+    text = str(value if value is not None else "").strip().lower()
+    if text in ("", "0", "auto"):
+        return 0
+    m = re.fullmatch(r"(\d+)(k?)", text)
+    n = int(m.group(1)) * (1024 if m.group(2) else 1) if m else -1
+    if not 2048 <= n <= 10_000_000:
+        raise ValueError("the context window is a number of tokens, like 32768 or 32k")
+    return n
+
+
+def parse_tools(text: str) -> list[str]:
+    """The tools a sub-agent sent to a bot asks for (``--tools Read,Grep,Glob``), in the order given."""
+    names = [t for t in re.split(r"[,\s]+", str(text or "").strip()) if t]
+    wrong = [t for t in names if t not in TOOL_CHOICES]
+    if wrong or not names:
+        raise ValueError(f"--tools takes some of {', '.join(TOOL_CHOICES)}"
+                         + (f" (not {', '.join(wrong)})" if wrong else ""))
+    return list(dict.fromkeys(names))
+
+
+def run_tools(asked: list | None) -> list[str]:
+    """The tools a lean bot's run gets: what its sub-agent asked for (of TOOL_CHOICES), or LEAN_TOOLS."""
+    picked = [t for t in (asked or []) if t in TOOL_CHOICES]
+    return list(dict.fromkeys(picked)) or list(LEAN_TOOLS)
+
+
+def context_note(context: int) -> str:
+    """What to tell a person about a bot's context window, or "" when it is fine."""
+    if not context:
+        return ("its context window is unknown: set it with `clodfarm bot set <name> --context <tokens>` so Claude "
+                "Code compacts in time")
+    if context < MIN_CONTEXT:
+        return (f"its context window ({context} tokens) is small: Claude Code's own prompt takes about 5k of it, so give "
+                f"it tiny jobs or a model with at least {MIN_CONTEXT}")
+    return ""
+
+
+def reachable(url: str, timeout: float = 3.0) -> bool:
+    """Whether anything answers at the provider's address (a TCP connection; no request is sent), e.g. whether the
+    computer that runs a local Ollama is on."""
+    u = urllib.parse.urlsplit(url)
+    port = u.port or (443 if u.scheme == "https" else 80)
+    try:
+        with socket.create_connection((u.hostname, port), timeout=timeout):
+            return True
+    except (OSError, ValueError):
+        return False
+
+
+def detect_context(bot: dict, timeout: float = 10) -> int:
+    """The context window its provider runs the model with, when the provider says (Ollama's ``num_ctx``, from the
+    model's parameters or from the loaded model); 0 when it doesn't."""
+    if bot.get("provider") == "openrouter":
+        return 0
+    base = bot["url"]
+    try:
+        req = urllib.request.Request(base + "/api/show", data=json.dumps({"model": bot["model"]}).encode(),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            info = json.loads(r.read(1 << 22) or b"{}")
+        m = re.search(r"(?m)^\s*num_ctx\s+(\d+)\s*$", str(info.get("parameters") or ""))
+        if m:
+            return int(m.group(1))
+        with urllib.request.urlopen(base + "/api/ps", timeout=timeout) as r:
+            loaded = json.loads(r.read(1 << 20) or b"{}").get("models") or []
+        want = {bot["model"], bot["model"] + ":latest"}
+        return next((int(x.get("context_length") or 0) for x in loaded if x.get("name") in want
+                     or x.get("model") in want), 0)
+    except (OSError, ValueError, AttributeError, TypeError):
+        return 0
 
 
 def check_key(provider: str, key: str) -> str:
@@ -144,6 +245,10 @@ def env(agent: dict) -> dict:
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": m, "ANTHROPIC_SMALL_FAST_MODEL": m, "CLAUDE_CODE_SUBAGENT_MODEL": m,
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         "FARM_BOT": m, "FARM_BOT_VIA": label(bot), "FARM_BOT_TAKES": bot.get("takes") or "sent",
+        "FARM_BOT_ABOUT": bot.get("about") or "", "FARM_BOT_LEAN": "0" if bot.get("lean") is False else "1",
+        "FARM_BOT_CONTEXT": str(int(bot.get("context") or 0)),
+        # the model's real window: Claude Code compacts within it instead of assuming a Claude model's
+        **({"CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(int(bot["context"]))} if bot.get("context") else {}),
         "FARM_MODEL": m, "FARM_EFFORT": "", "FARM_REMOTE_CONTROL": "0", "FARM_USAGE_REFRESH": "0",
         "FARM_MAX_WORKERS": str(bot.get("workers") or 1), "FARM_SEAT": f"bot-{agent['id']}",
         # Claude Code prices every run as if it were a Claude model: that is no bot's real cost

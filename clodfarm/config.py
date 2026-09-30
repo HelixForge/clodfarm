@@ -66,6 +66,10 @@ class Config:
     bot: str  # FARM_BOT: this Claude is a bot, Claude Code on this model through another provider (see bots.py)
     bot_via: str  # the bot's provider, as people call it (OpenRouter)
     bot_takes: str  # a bot takes only the sub-agents sent to it ("sent"), or any ("any")
+    bot_about: str  # what the bot is good for, as its person put it (shown to the Claudes that send it work)
+    bot_lean: bool  # its runs get only the tools a bot needs and a short guide, so a small context has room to work
+    bot_context: int  # its model's context window in tokens (0: unknown)
+    bot_url: str  # its provider's base URL (ANTHROPIC_BASE_URL in a bot's environment)
     policy: Policy
 
     @property
@@ -161,6 +165,10 @@ def load() -> Config:
         bot=_env("FARM_BOT", ""),
         bot_via=_env("FARM_BOT_VIA", ""),
         bot_takes="any" if _env("FARM_BOT_TAKES", "sent") == "any" else "sent",
+        bot_about=_env("FARM_BOT_ABOUT", ""),
+        bot_lean=bool(os.environ.get("FARM_BOT")) and _bool("FARM_BOT_LEAN", True),
+        bot_context=int(_env("FARM_BOT_CONTEXT", "0")),
+        bot_url=_env("ANTHROPIC_BASE_URL", "") if os.environ.get("FARM_BOT") else "",
         policy=Policy(
             max_workers=int(_env("FARM_MAX_WORKERS", "3")),
             min_workers=int(_env("FARM_MIN_WORKERS", "1")),

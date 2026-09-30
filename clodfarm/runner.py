@@ -49,7 +49,9 @@ def session_name(cfg, what: str = "") -> str:
 
 
 def build_cmd(cfg, system_prompt: str, resume_session: str | None = None, name: str = "", live: bool = False,
-              disallowed: list[str] | None = None) -> list[str]:
+              disallowed: list[str] | None = None, tools: list[str] | None = None) -> list[str]:
+    """``tools`` makes a lean run (a bot's, see bots.py): only those built-in tools, no MCP servers and no skills, so
+    Claude Code's own prompt is a fraction of its usual size."""
     cmd = [cfg.claude_bin, "-p", "--output-format", "stream-json", "--verbose", "--name", name or session_name(cfg),
            "--model", cfg.model, "--permission-mode", cfg.permission_mode,
            "--append-system-prompt", system_prompt]
@@ -59,6 +61,8 @@ def build_cmd(cfg, system_prompt: str, resume_session: str | None = None, name: 
         cmd += ["--max-budget-usd", str(cfg.task_budget_usd)]
     if getattr(cfg, "effort", ""):
         cmd += ["--effort", cfg.effort]
+    if tools:
+        cmd += ["--tools", ",".join(tools), "--strict-mcp-config", "--disable-slash-commands"]
     if disallowed:  # the tools its person turned off (the PreToolUse hook enforces them too)
         cmd += ["--disallowedTools", ",".join(disallowed)]
     if resume_session:
