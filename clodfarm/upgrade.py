@@ -21,7 +21,8 @@ import time
 
 from . import __version__, boot, procs
 
-REPO = "https://github.com/matank001/clodfarm"
+# where `clodfarm upgrade` gets a release (a fork sets CLODFARM_REPO to its own)
+REPO = os.environ.get("CLODFARM_REPO") or "https://github.com/matank001/clodfarm"
 KEEP = 3
 
 
