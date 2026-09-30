@@ -15,7 +15,8 @@ tools. Only the model differs.
   guide instead of the farm's. That is about 5k tokens of Claude Code's prompt instead of about 20k, so a small local
   model has room to work. A sub-agent can narrow its tools further (``clodfarm spawn --tools``).
 - It knows its model's context window (asked from Ollama, or set by hand), and Claude Code is told it
-  (``CLAUDE_CODE_MAX_CONTEXT_TOKENS``), so it compacts in time instead of the provider cutting the prompt.
+  (``CLAUDE_CODE_MAX_CONTEXT_TOKENS``, with a reply cap small enough to leave room: see ``context_env``), so it
+  compacts in time instead of the provider cutting the prompt.
 - Its person says what it is good for (``about``); the Claudes that send it work see that in ``clodfarm agents``.
 - Its API key is kept in its own config dir (``bot.json``, readable by the farm's user only) and never shown again.
 """
@@ -45,8 +46,14 @@ ABOUT_MAX = 160
 LEAN_TOOLS = ("Bash", "Read", "Edit", "Write", "Glob", "Grep")
 # what a sub-agent sent to a bot may ask for instead (`clodfarm spawn --tools`)
 TOOL_CHOICES = LEAN_TOOLS + ("WebFetch", "WebSearch", "NotebookEdit", "TodoWrite")
-# below this, Claude Code's own prompt (about 5k tokens lean) leaves too little room for a job
-MIN_CONTEXT = 16384
+# Claude Code compacts when a conversation comes within its auto-compact buffer of the window: its reply cap (at most
+# 20k) plus a fixed 13k (as Claude Code 2.1 reports in /context). A small window needs a small reply cap, or the buffer
+# is bigger than the window and it compacts on every turn until it gives up ("Autocompact is thrashing").
+COMPACT_BUFFER = 13000
+REPLY_CAP_MAX = 20000
+# what a job needs before Claude Code compacts, on top of its own prompt (about 5k to 8k tokens, lean)
+ROOM_MIN = 12000
+SMALL_OUTPUT_CHARS = "12000"  # a small window's cap on one command's output (BASH_MAX_OUTPUT_LENGTH; default 30000)
 
 
 def parse(data: dict) -> dict:
@@ -114,14 +121,39 @@ def run_tools(asked: list | None) -> list[str]:
     return list(dict.fromkeys(picked)) or list(LEAN_TOOLS)
 
 
+def reply_cap(context: int) -> int:
+    """The reply cap (CLAUDE_CODE_MAX_OUTPUT_TOKENS) for a window: small for a small one, Claude Code's own (0) for a
+    big one."""
+    return 4096 if context <= 49152 else 8192 if context <= 98304 else 0
+
+
+def compacts_at(context: int) -> int:
+    """How full a conversation gets before Claude Code compacts it, in a window of ``context`` tokens."""
+    return context - min(reply_cap(context) or REPLY_CAP_MAX, REPLY_CAP_MAX) - COMPACT_BUFFER
+
+
+def context_env(context: int) -> dict:
+    """What Claude Code is told about a bot's window: its size, so it compacts in time instead of the provider cutting
+    the prompt, and for a small one a reply cap and a cap on command output. Nothing when the window is unknown, or so
+    small that compacting would leave no room for a job (it then runs as it did before)."""
+    if not context or compacts_at(context) < ROOM_MIN:
+        return {}
+    env = {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(context)}
+    if reply_cap(context):
+        env.update(CLAUDE_CODE_MAX_OUTPUT_TOKENS=str(reply_cap(context)), BASH_MAX_OUTPUT_LENGTH=SMALL_OUTPUT_CHARS)
+    return env
+
+
 def context_note(context: int) -> str:
     """What to tell a person about a bot's context window, or "" when it is fine."""
     if not context:
         return ("its context window is unknown: set it with `clodfarm bot set <name> --context <tokens>` so Claude "
                 "Code compacts in time")
-    if context < MIN_CONTEXT:
-        return (f"its context window ({context} tokens) is small: Claude Code's own prompt takes about 5k of it, so give "
-                f"it tiny jobs or a model with at least {MIN_CONTEXT}")
+    if not context_env(context):
+        need = ROOM_MIN + COMPACT_BUFFER + reply_cap(context)
+        return (f"its context window ({context} tokens) is too small for Claude Code to compact in (it keeps "
+                f"{COMPACT_BUFFER + reply_cap(context)} free for that): it runs without a window, like before, so give "
+                f"it tiny jobs, or use a model with at least {need} tokens")
     return ""
 
 
@@ -248,7 +280,7 @@ def env(agent: dict) -> dict:
         "FARM_BOT_ABOUT": bot.get("about") or "", "FARM_BOT_LEAN": "0" if bot.get("lean") is False else "1",
         "FARM_BOT_CONTEXT": str(int(bot.get("context") or 0)),
         # the model's real window: Claude Code compacts within it instead of assuming a Claude model's
-        **({"CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(int(bot["context"]))} if bot.get("context") else {}),
+        **context_env(int(bot.get("context") or 0)),
         "FARM_MODEL": m, "FARM_EFFORT": "", "FARM_REMOTE_CONTROL": "0", "FARM_USAGE_REFRESH": "0",
         "FARM_MAX_WORKERS": str(bot.get("workers") or 1), "FARM_SEAT": f"bot-{agent['id']}",
         # Claude Code prices every run as if it were a Claude model: that is no bot's real cost
