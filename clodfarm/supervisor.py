@@ -891,6 +891,18 @@ class Farm:
                          cfg.max_resumes)
             return
 
+        if not res.ok and cfg.bot and bots.outgrew_context(res.error_text or res.text):
+            # the job doesn't fit this bot's context window: a retry won't fit it either, and nothing is broken, so it
+            # fails now, says why (its parent or sender reroutes it) and doesn't count toward the circuit breaker
+            store.update_task(tid, attempts=int(task.get("max_attempts", cfg.max_attempts)))
+            size = f"its {cfg.bot_context // 1024}k context window" if cfg.bot_context >= 1024 else "its context window"
+            text = (f"Too big for bot {cfg.name}: the job outgrew {size}. Split it into smaller jobs, hand it the lines "
+                    f"that matter instead of whole files, or send it to a bigger bot or a Claude.\n\n"
+                    f"{(res.error_text or res.text)[-1500:]}")
+            final = store.finish(tid, holder, False, text, cfg.max_resumes)
+            self.after_run(task, final, res, text, cwd, branch, counts=False)
+            return
+
         if res.timed_out and res.session_id and int(task.get("timeout_resumes_used", 0)) < cfg.timeout_resumes:
             # a timeout is often a big task mid-way: keep the work and the session, continue
             if store.requeue_resume(tid, holder, "timeout", "", "timeout_resumes_used"):
@@ -918,9 +930,10 @@ class Farm:
         except Exception as e:  # noqa: BLE001 - bookkeeping after a finished run must never re-open the task
             print(f"after-run bookkeeping for {tid} failed: {e!r}", flush=True)
 
-    def after_run(self, task: dict, final: str, res, text: str, cwd: str, branch: str | None):
+    def after_run(self, task: dict, final: str, res, text: str, cwd: str, branch: str | None, counts: bool = True):
+        """``counts``: the run's outcome counts toward the circuit breaker (not for a job too big for a bot)."""
         cfg, store, tid = self.cfg, self.store, task["id"]
-        failures = store.record_health(final != "failed" and res.ok)
+        failures = store.record_health(final != "failed" and res.ok) if counts else 0
         if final == "failed":
             self.notify(f"task failed: {task['title'][:80]}", f"{tid}: {text[-600:]}")
         if cfg.stall_threshold and failures >= cfg.stall_threshold and not store.control().get("paused"):

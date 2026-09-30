@@ -251,6 +251,11 @@ def test_a_bot_takes_only_what_is_sent_to_it_and_keeps_its_own_sub_agents(env, m
         wait_for(lambda: farm.store.get_task(ro)["status"] == "done", timeout=60)
         argv = next(c["argv"] for c in calls(env) if c["cmd"] == "print" and c["task"] == ro)
         assert argv[argv.index("--tools") + 1] == "Read,Grep", "a sub-agent narrows a bot's tools"
+        big = json.loads(cli("spawn", "too big", "--prompt", "THRASH", "--on", "qwen", "--json").stdout)["id"]
+        wait_for(lambda: farm.store.get_task(big)["status"] == "failed", timeout=60)
+        assert len([c for c in calls(env) if c["cmd"] == "print" and c["task"] == big]) == 1, "no retry: it won't fit"
+        assert farm.store.get_task(big)["result"].startswith("Too big for bot qwen: the job outgrew its 32k context")
+        assert int((farm.store.b.get("CONTROL", "HEALTH") or {}).get("failures", 0)) == 0, "not a broken farm"
         assert not [c for c in calls(env) if c["cmd"] == "remote-control"], "a bot has no Claude login to talk through"
         assert "child0.txt" in repo_files(env)
         out = cli("agents").stdout

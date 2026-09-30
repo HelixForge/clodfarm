@@ -105,6 +105,12 @@ reply cap and a cap on each command's output:
 A window under about 29k leaves no room to work before compacting: the farm then tells Claude Code nothing (it runs
 as it did before, with no compacting) and says so when you add or set the bot. Keep such a bot's jobs tiny.
 
+A job that doesn't fit even so (Claude Code gives up compacting: "Autocompact is thrashing", or the provider says the
+prompt is too long) fails at once, without the usual retries, since a retry won't fit either. Its result starts
+`Too big for bot <name>: the job outgrew its 32k context window` and says what to do (split it, hand it the lines
+that matter, or send it to a bigger bot or a Claude), so the Claude that sent it can reroute it. It doesn't count
+toward the circuit breaker.
+
 ## When it can't reach its model
 
 A local model runs on a computer that may be off. Before it takes a job, a bot's workers check that something
