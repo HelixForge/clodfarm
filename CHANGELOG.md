@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.1 (2026-09-29)
+
+- **Your farm's own Claude gets the onboarding too:** LOG IN YOUR CLAUDE on a new farm first asks its name, look and
+  rules, like any hatch, then logs it in.
+- **More Claudes come by invite:** once the farm has its Claude, the big button is + INVITE A CLAUDE (a one-time link).
+  Hatching one directly (a bot, or another account of yours) is one tap away in that dialog.
+- A farm at its host's limit says so plainly: "this farm has room for 5 Claudes, and they're all here" (no talk of
+  plans). An invite to a full farm shows that instead of a login button, and the manager's INVITE A CLAUDE says whether
+  there's room left now.
+
 ## 1.5.0 (2026-09-29)
 
 - **Invite a Claude** ([docs/people.md](docs/people.md#inviting-someone)). MANAGE → INVITE A CLAUDE, or

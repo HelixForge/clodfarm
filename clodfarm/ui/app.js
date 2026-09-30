@@ -1717,7 +1717,7 @@ const UI = {
     fill($("#title-forms"), h("div", { class: "acct-form invite" },
       h("h2", { class: "invite-h", text: `YOU'RE INVITED TO ${String(me.farm || "the farm").toUpperCase()}` }),
       h("p", { text: "Log in with your Claude account and your own Claude joins this farm: it works around the clock on your plan, and you talk to it from the Claude app." }),
-      err, go,
+      /room for/.test(me.hatch?.why || "") ? h("p", { class: "form-error", text: `${me.hatch.why.toUpperCase()}: ASK WHOEVER INVITED YOU.` }) : [err, go],
       h("p", { class: "muted small", text: "Anthropic's own sign-in: open its link, approve, paste the code back. Your login stays yours. This invite works once." })));
   },
   /** Sign-in forms, as tabs: a private farm's viewer password (FARM), and the code your Claude gives you in the Claude
@@ -1796,7 +1796,7 @@ const UI = {
     if (this.paired === "1" || this.pairedTo) { this.say(`You're signed in to ${(mine?.name || this.pairedTo || "your Claude").toUpperCase()}. It's the one with the gold arrow.`); this.paired = null; this.pairedTo = null; }
     const live = st.agents.filter(a => a.loggedIn);
     const primary = st.agents.find(a => a.primary);
-    if (!live.length && R.manager && primary && !primary.remote) { this.say(`Welcome to ${st.farm.toUpperCase()}! Your farm's own Claude is still an egg. Tap ▶ LOG IN YOUR CLAUDE (bottom right) to wake it up: nothing grows until it's in.`); return; }
+    if (!live.length && R.manager && primary && !primary.remote) { this.say(`Welcome to ${st.farm.toUpperCase()}! Your farm's own Claude is still an egg. Tap ▶ LOG IN YOUR CLAUDE (bottom right): name it, dress it, log it in. Nothing grows until it's in.`); return; }
     if (!live.length) { this.say(`Welcome to ${st.farm.toUpperCase()}! No Claude lives here yet. Tap + NEW CLAUDE to hatch the first one.`); return; }
     const n = live.length, busy = st.subagents.filter(t => t.status === "running").length;
     this.say(`Welcome to ${st.farm.toUpperCase()}! ${n} Claude${n === 1 ? "" : "s"} on the farm, ${busy} sub-agent${busy === 1 ? "" : "s"} at work.`);
@@ -1860,21 +1860,24 @@ const UI = {
     // a new farm: its own Claude is still an egg, and the manager's first job is to log it in (openHatch does that)
     const primary = st.agents.find(a => a.primary), live = st.agents.some(a => a.loggedIn || a.remote);
     const first = R.manager && !!primary && !primary.loggedIn && !primary.remote;
-    const capped = !!hatch && !hatch.can && /plan/.test(hatch.why || ""); // the host's plan: no more, the manager's either
+    const capped = !!hatch && !hatch.can && /room for/.test(hatch.why || ""); // the farm's size (its host's): no more, the manager's either
     const ht = $("#hatch-tool"), can = first || (R.manager ? !capped : hatch ? hatch.can : !R.owner);
     ht.hidden = !!R.owner && !R.manager;
     ht.classList.toggle("off", !can);
     ht.classList.toggle("call", can && !live); // nothing works until a Claude is in: point at the one thing to do
     ht.setAttribute("aria-disabled", String(!can));
-    const lbl = ht.querySelector(".lbl"), want = first ? "login" : "new";
+    const inviting = R.manager && !!primary && (primary.loggedIn || !!primary.remote); // more Claudes come by invite
+    const lbl = ht.querySelector(".lbl"), want = first ? "login" : inviting ? "invite" : "new";
     if (lbl.dataset.mode !== want) {
       lbl.dataset.mode = want;
       if (first) fill(lbl, "▶ LOG IN", h("span", { class: "long", text: " YOUR CLAUDE" }));
+      else if (inviting) fill(lbl, h("span", { class: "plus", text: "+ " }), "INVITE", h("span", { class: "long", text: " A CLAUDE" }));
       else fill(lbl, h("span", { class: "plus", text: "+ " }), "NEW", h("span", { class: "long", text: " CLAUDE" }));
     }
-    ht.dataset.tip = first ? "Start here: log in your Claude" : can ? "Add a Claude or a bot" : `Can't hatch: ${hatch?.why || "not now"}`;
-    ht.dataset.desc = first ? "Your farm's own Claude waits for its login: open Anthropic's link, paste the code back"
-      : can ? "Hatch a new Claude: pick its look, log it in" : capped ? "This farm's plan has its Claudes" : "The farm's manager decides who can hatch";
+    ht.dataset.tip = first ? "Start here: log in your Claude" : inviting ? "Invite a Claude" : can ? "Add a Claude or a bot" : `Can't hatch: ${hatch?.why || "not now"}`;
+    ht.dataset.desc = first ? "Your farm's own Claude: name it, dress it, then log it in with your Claude account"
+      : inviting ? "A one-time link: someone logs in with their Claude account and joins the farm"
+      : can ? "Hatch a new Claude: pick its look, log it in" : capped ? `Full: ${hatch.why}` : "The farm's manager decides who can hatch";
     ht.setAttribute("aria-label", `${ht.dataset.tip} (C)`);
     if ($("#dlg-claude").open) this.renderClaude(st);
     for (const gp of $$(".dock-group")) { // a tray shows when it has buttons; on a phone it's as wide as its buttons
@@ -1997,7 +2000,10 @@ const UI = {
   },
   act(a) {
     const R = role(), person = R.manager || !!R.owner;
-    if (a === "hatch") return this.openHatch(null, true);
+    if (a === "hatch") { // the farm's own Claude first; then more Claudes come by invite
+      const R = role(), p = App.state?.agents.find(x => x.primary);
+      return R.manager && p && (p.loggedIn || p.remote) ? this.openInvite() : this.openHatch(null, true);
+    }
     if (a === "roster") return this.openRoster();
     if (a === "approvals") return this.openApprovals();
     if (a === "menu") return this.openMenu();
@@ -2729,14 +2735,47 @@ const UI = {
     this.hatchFor = agentId || null;
     $("#hatch-body").dataset.key = "";
     const own = agentId && st?.agents.find(a => a.id === agentId);
-    $("#hatch-h").textContent = own?.primary ? "LOG IN YOUR CLAUDE" : own ? `LOG IN ${String(own.name || own.id).toUpperCase()}` : "NEW CLAUDE";
+    // the farm's own Claude, still an egg: make it yours first (name, look, rules), like any hatch; then its login
+    this.ownFirst = !!(own?.primary && !own.loggedIn && !own.remote && R.manager);
+    $("#hatch-h").textContent = own?.primary ? "YOUR CLAUDE" : own ? `LOG IN ${String(own.name || own.id).toUpperCase()}` : "NEW CLAUDE";
     $("#dlg-hatch").showModal();
-    if (agentId) { this.renderHatch({ state: "starting" }); this.beginLogin(agentId); }
+    if (agentId && !this.ownFirst) { this.renderHatch({ state: "starting" }); this.beginLogin(agentId); }
     else {
-      this.draft = { kind: "claude", name: "", bot: null, approve: true, allTools: true, deny: new Set(),
-        skin: { hat: "straw", colors: { hat: SWATCHES[hashStr(String(Date.now())) % 8], band: HATS.straw.band, body: CLAY.b }, accessory: "" } };
+      this.draft = { kind: "claude", name: this.ownFirst ? (own.name || own.id) : "", bot: null, approve: !this.ownFirst,
+        allTools: true, deny: new Set(),
+        skin: { hat: own?.hat || "straw", colors: { hat: SWATCHES[hashStr(String(Date.now())) % 8], band: HATS[own?.hat || "straw"]?.band || HATS.straw.band, body: CLAY.b }, accessory: "" } };
       this.renderHatchName();
     }
+  },
+  /** + INVITE A CLAUDE: a one-time link for one person, who logs in with their own Claude account and joins the farm.
+   * Hatching one here stays one tap away (a bot, or another Claude account of your own). */
+  openInvite() {
+    for (const d of $$("dialog[open]")) d.close();
+    this.ownFirst = false;
+    $("#hatch-h").textContent = "INVITE A CLAUDE";
+    const out = h("div", { class: "invite-out" }), err = h("p", { class: "form-error", role: "alert" });
+    const make = h("button", { class: "btn primary invite-go", type: "button" }, "▶ MAKE AN INVITE LINK");
+    make.addEventListener("click", async () => {
+      err.textContent = ""; make.disabled = true;
+      try {
+        const r = await api("api/manager/invite", {});
+        const link = h("input", { class: "invite-link", readonly: true, value: r.link, "aria-label": "Invite link", onclick: (e) => e.target.select() });
+        const copy = h("button", { class: "btn", type: "button", text: "COPY", onclick: async (e) => {
+          try { await navigator.clipboard.writeText(r.link); e.target.textContent = "COPIED ✓"; } catch { link.select(); e.target.textContent = "SELECT IT"; }
+        } });
+        fill(out, h("div", { class: "dlg-actions left invite-row" }, link, copy),
+          h("p", { class: "muted small", text: r.room ? "Send it to one person. It works once, for 7 days: they log in with their Claude account and their own Claude joins the farm."
+            : "This farm has no room for another Claude right now, so the link will say so until one leaves." }));
+        make.hidden = true; link.select();
+      } catch (x) { err.textContent = x.message; make.disabled = false; }
+    });
+    const here = h("button", { class: "btn tiny", type: "button", text: "OR HATCH ONE HERE (A BOT, OR ANOTHER ACCOUNT OF YOURS)" });
+    here.addEventListener("click", () => this.openHatch(null, true));
+    $("#hatch-body").dataset.key = "";
+    fill($("#hatch-body"),
+      h("p", {}, "A link for one person: they log in with their own Claude account and their own Claude joins this farm, working on their plan. They see their Claude; you see everyone."),
+      make, out, err, h("div", { class: "dlg-actions left" }, here));
+    $("#dlg-hatch").showModal();
   },
   /** Where you are in hatching: three pips, the done ones ticked. */
   hatchStep(n, title) {
@@ -2749,14 +2788,15 @@ const UI = {
     const D = this.draft;
     if (kind) D.kind = kind;
     kind = D.kind;
-    const pick = h("div", { class: "hatch-kind", role: "group", "aria-label": "What to add" },
+    const pick = this.ownFirst ? null : h("div", { class: "hatch-kind", role: "group", "aria-label": "What to add" },
       h("button", { class: "btn" + (kind === "claude" ? " primary" : ""), type: "button", "aria-pressed": String(kind === "claude"), onclick: () => this.renderHatchName("claude") }, "CLAUDE ACCOUNT"),
       h("button", { class: "btn" + (kind === "bot" ? " primary" : ""), type: "button", "aria-pressed": String(kind === "bot"), onclick: () => this.renderHatchName("bot") }, "BOT: OTHER MODEL"));
     if (kind === "bot") return this.renderBotForm(pick);
     const form = h("form", {}, this.hatchStep(1, "NAME"), pick,
       h("canvas", { class: "egg-anim", id: "egg-cv", "aria-hidden": "true" }),
       h("label", {}, "NAME ", h("span", { class: "muted", text: "(optional)" }), h("input", { name: "name", maxlength: 24, placeholder: "e.g. gil or night-shift", autocomplete: "off", value: D.name })),
-      h("p", { class: "muted", text: "A new Claude Code login with its own agents. Log in with another Claude account to add capacity: each account is paced on its own budget. The same account again just shares its budget." }),
+      h("p", { class: "muted", text: this.ownFirst ? "Your farm's own Claude: give it a name and a look, choose its rules, then log it in with your Claude account."
+        : "A new Claude Code login with its own agents. Log in with another Claude account to add capacity: each account is paced on its own budget. The same account again just shares its budget." }),
       h("p", { class: "form-error", role: "alert" }),
       h("div", { class: "dlg-actions" }, h("button", { class: "btn primary", type: "submit" }, "NEXT: ITS LOOK ▶")));
     form.addEventListener("submit", (e) => { e.preventDefault(); D.name = new FormData(form).get("name"); this.renderHatchLook(); });
@@ -2806,7 +2846,7 @@ const UI = {
   },
   renderHatchRules() {
     const D = this.draft, err = h("p", { class: "form-error", role: "alert" });
-    const go = h("button", { class: "btn primary", type: "button" }, D.kind === "bot" ? "▶ CHECK & ADD BOT" : "▶ HATCH IT");
+    const go = h("button", { class: "btn primary", type: "button" }, D.kind === "bot" ? "▶ CHECK & ADD BOT" : this.ownFirst ? "▶ LOG IT IN" : "▶ HATCH IT");
     go.addEventListener("click", () => this.submitHatch(go, err));
     fill($("#hatch-body"), this.hatchStep(3, "ITS RULES"), this.rulesFields(D), err,
       h("div", { class: "dlg-actions" },
@@ -2817,6 +2857,14 @@ const UI = {
     const body = { name: D.name || "", approve_missions: D.approve, tools: D.allTools ? "all" : { deny: [...D.deny] }, skin: D.skin };
     if (D.kind === "bot") body.bot = D.bot;
     btn.disabled = true; btn.textContent = D.kind === "bot" ? "ASKING THE MODEL…" : "HATCHING…"; err.textContent = "";
+    if (this.ownFirst) { // the farm's own Claude: keep what was chosen, then its login
+      try {
+        await api(`api/agents/${encodeURIComponent(this.hatchFor)}/settings`, { ...(body.name.trim() ? { name: body.name.trim() } : {}),
+          skin: body.skin, approve_missions: body.approve_missions, tools: body.tools });
+        this.ownFirst = false; $("#hatch-body").dataset.key = ""; this.renderHatch({ state: "starting" }); this.beginLogin(this.hatchFor); this.refresh();
+      } catch (x) { err.textContent = x.message; btn.disabled = false; btn.textContent = "▶ LOG IT IN"; }
+      return;
+    }
     try {
       const a = await api("api/agents", body);
       this.hatchFor = a.id; this.loadMe();
@@ -3320,7 +3368,7 @@ const UI = {
         } });
         fill(invOut, h("div", { class: "dlg-actions left invite-row" }, link, copy),
           h("p", { class: "muted small", text: r.room ? "Send it to one person. It works once, for 7 days: they log in with their Claude account and their own Claude joins the farm."
-            : "This farm's plan has room for just its own Claude, so the link will say there's no room." }));
+            : "This farm has no room for another Claude right now, so the link will say so until one leaves." }));
         link.select();
       } catch (x) { invErr.textContent = x.message; }
     });

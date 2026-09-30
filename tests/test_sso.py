@@ -104,10 +104,10 @@ def test_plan_caps_claudes_even_for_the_manager(ui, hosted, monkeypatch):
     code, a, _ = api(base + "/api/agents", {"name": "Second"})
     assert code == 200, a
     code, body, _ = api(base + "/api/agents", {"name": "Third"})
-    assert code == 409 and "plan" in body["error"]  # 409: the manager has a Claude here already
+    assert code == 409 and "room for 2 Claudes" in body["error"]  # 409: the manager has a Claude here already
     me = api(base + "/api/me")[1]
-    assert me["hatch"] == {"can": False, "why": "this farm's plan has no room for another Claude", "claudes": 1, "max": 1}
-    with pytest.raises(ValueError, match="plan"):
+    assert me["hatch"] == {"can": False, "why": "this farm has room for 2 Claudes, and they're all here", "claudes": 1, "max": 1}
+    with pytest.raises(ValueError, match="room for 2 Claudes"):
         farm_ui.manager.create("Fourth", start=False)  # the CLI and MCP paths go through the same check
 
 
@@ -115,4 +115,4 @@ def test_plan_of_zero_means_the_farms_own_claude_only(ui, monkeypatch):
     base, farm_ui = ui
     monkeypatch.setenv("FARM_MAX_CLAUDES", "0")
     code, body, _ = client()(base + "/api/agents", {"name": "Anyone"})
-    assert code == 403 and "plan" in body["error"]
+    assert code == 403 and "room for 1 Claude," in body["error"]

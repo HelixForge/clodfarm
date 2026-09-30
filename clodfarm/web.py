@@ -48,7 +48,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import __version__, boot, bots, browser, connectors, dashboards, policy, sso
 from . import mcp
-from .agents import AgentManager
+from .agents import AgentManager, room_note
 from .slack import SlackBridge
 from .store import Store, now
 
@@ -1155,7 +1155,7 @@ def make_handler(ui: FarmUI):
             n = len([a for a in ui.manager.all() if not a.get("primary")])
             cap = ui.manager.max_claudes()  # the host's plan: a ceiling for everyone, the manager too
             most = int(st.get("max_claudes") or 100) if cap is None else min(int(st.get("max_claudes") or 100), cap)
-            why = "this farm's plan has no room for another Claude" if cap is not None and n >= cap else \
+            why = room_note(cap) if cap is not None and n >= cap else \
                 "" if who.manager else "you have a Claude on this farm already" if who.owner else \
                 "hatching is closed on this farm" if not st.get("hatch_open") else \
                 "this farm is full" if n >= most else \
@@ -1513,8 +1513,10 @@ def make_handler(ui: FarmUI):
                 token = secrets.token_urlsafe(24)
                 store.add_invite(hashlib.sha256(token.encode()).hexdigest(), by="manager")
                 store.event("farm.invite", "the manager made an invite link (works once, for 7 days)", by="ui")
+                cap = ui.manager.max_claudes()
+                added = len([a for a in ui.manager.all() if not a.get("primary")])
                 return self._json({"link": f"{self._public_base()}/invite/{token}", "expires_in": 7 * 86400,
-                                   "room": ui.manager.max_claudes() != 0})
+                                   "room": cap is None or added < cap})
             if path == "/api/manager/roll-ui":
                 from . import procs
                 os.makedirs(procs.pids_dir(ui.cfg.workspace), exist_ok=True)

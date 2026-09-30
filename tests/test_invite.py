@@ -70,7 +70,7 @@ def test_the_plan_still_counts(ui, monkeypatch):
     call, friend = browser()
     call(base + "/invite/" + r["link"].rsplit("/", 1)[1])
     code, body, _ = friend(base + "/api/agents", {"invite": True})
-    assert code == 400 and "plan" in body["error"]
+    assert code == 400 and "room for 1 Claude" in body["error"]
     assert friend(base + "/api/me")[1]["invite"] is True, "the invite isn't spent by a refusal"
 
 

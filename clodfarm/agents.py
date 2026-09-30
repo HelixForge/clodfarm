@@ -41,6 +41,12 @@ _CRED_ENV = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOK
 HATS = ["straw", "beanie", "cap", "flower", "headphones", "bow", "crown", "leaf"]
 
 
+def room_note(cap: int) -> str:
+    """Why a farm at its host's cap (FARM_MAX_CLAUDES added agents) takes no more: its size, plainly."""
+    total = cap + 1  # its own Claude, and the ones added
+    return f"this farm has room for {total} Claude{'s' if total != 1 else ''}, and they're all here"
+
+
 def slug(name: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:24].strip("-")
     return s or "claude-" + secrets.token_hex(2)
@@ -207,7 +213,7 @@ class AgentManager:
             agents = self._load()
             cap = self.max_claudes()
             if cap is not None and len(agents) >= cap:
-                raise ValueError("this farm's plan has no room for another Claude")
+                raise ValueError(room_note(cap))
             taken = {a["id"] for a in self.all()}
             aid = slug(name)
             while aid in taken:
