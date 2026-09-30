@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.2 (2026-09-30)
+
+- The sign-in link and the code your Claude gives you ("farm login") each work once, on their own: tapping the link
+  (in the Claude app's own browser, or a link preview opening it) no longer uses up the code you type on the farm's page.
+
 ## 1.6.1 (2026-09-29)
 
 - The sign-in screen says where your Claude is: open the Claude app (or claude.ai/code), go to Code, open the session

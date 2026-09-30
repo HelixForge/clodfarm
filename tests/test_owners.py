@@ -144,9 +144,8 @@ def test_pairing_from_the_phone_signs_in_once(ui, env):
         opener.open(base + f"/pair/{token}")
     except urllib.error.HTTPError as e:
         assert "paired=0" in e.headers["Location"] and not e.headers.get("Set-Cookie"), "a link works once"
-    # the code, on another device
-    r = subprocess.run([sys.executable, "-m", "clodfarm", "pair", "--json"], capture_output=True, text=True)
-    code = json.loads(r.stdout)["code"]
+    # the code, on another device: the link having been tapped (the Claude app's own browser) doesn't use it up
+    code = out["code"]
     phone = client()
     assert phone(base + "/api/pair", {"code": "WRONG1"})[0] == 401
     c, body, headers = phone(base + "/api/pair", {"code": code.lower()})

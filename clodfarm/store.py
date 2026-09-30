@@ -888,9 +888,12 @@ class Store:
 
     # ---------------------------------------------------------------- pairing
     def add_pairing(self, claude: str, token_hash: str, code: str, ttl: float = 600):
+        """The link and the code are each good once, apart: tapping the link in the Claude app (its own browser) or a
+        link preview must not use up the code the person then types on the farm's page."""
         t = now()
-        self.b.put({"PK": "PAIR", "SK": token_hash, "ver": 1, "claude": claude, "code": code, "at": t,
-                    "until": t + ttl, "expires_at": int(t + ttl + 3600)})
+        for sk, extra in ((token_hash, {}), (f"{token_hash}#code", {"code": code})):
+            self.b.put({"PK": "PAIR", "SK": sk, "ver": 1, "claude": claude, "at": t, "until": t + ttl,
+                        "expires_at": int(t + ttl + 3600), **extra})
 
     # ---------------------------------------------------------------- invites
     def add_invite(self, token_hash: str, by: str, ttl: float = 7 * 86400):
