@@ -1,4 +1,5 @@
 import os
+import shlex
 import socket
 import stat
 import subprocess
@@ -45,10 +46,10 @@ def env(tmp_path, backend, request, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     fake = bin_dir / "claude"
-    fake.write_text(f"#!/bin/sh\nexec {sys.executable} {HERE}/fake_claude.py \"$@\"\n")
+    fake.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(os.path.join(HERE, 'fake_claude.py'))} \"$@\"\n")
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
     shim = bin_dir / "clodfarm"  # the hooks the farm installs call `clodfarm`
-    shim.write_text(f"#!/bin/sh\nexec {sys.executable} -m clodfarm \"$@\"\n")
+    shim.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} -m clodfarm \"$@\"\n")
     shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
     values = {
         "FARM_TABLE": table,

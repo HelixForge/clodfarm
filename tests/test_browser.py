@@ -3,6 +3,7 @@ the `browser` MCP server every Claude gets. Chromium itself runs in the image (d
 import base64
 import json
 import os
+import shlex
 import socket
 import sys
 import threading
@@ -486,7 +487,7 @@ def test_a_chromium_behind_a_wrapper_script_is_one_chromium(tmp_path, monkeypatc
     """Debian's /usr/bin/chromium execs the real one with its own flags before ours. It is still the Chromium we
     started: not a crash to start again at every sync (that filled a farm's memory with Chromiums), and stopped."""
     wrapper = tmp_path / "chromium"
-    wrapper.write_text(f"#!/bin/sh\nexec {sys.executable} -c 'import time; time.sleep(60)' "
+    wrapper.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} -c 'import time; time.sleep(60)' "
                        "--show-component-extension-options --enable-gpu-rasterization \"$@\"\n")
     wrapper.chmod(0o755)
     monkeypatch.setenv("FARM_BROWSER_BIN", str(wrapper))
@@ -648,7 +649,7 @@ def test_a_wrapper_that_execs_the_real_browser_never_starts_a_second_one(tmp_pat
     monkeypatch.setattr(browser.Browser, "_wait", staticmethod(lambda *a: None))
     b = browser.Browser("work", 1, str(tmp_path / "profile"), str(tmp_path / "browser.log"), str(tmp_path))
     wrapper = tmp_path / "chromium"
-    wrapper.write_text(f"#!/bin/sh\nexec {sys.executable} -c 'import time; time.sleep(60)' \"$@\"\n")
+    wrapper.write_text(f"#!/bin/sh\nexec {shlex.quote(sys.executable)} -c 'import time; time.sleep(60)' \"$@\"\n")
     wrapper.chmod(0o755)
     started = []
 
