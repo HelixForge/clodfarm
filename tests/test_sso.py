@@ -64,7 +64,7 @@ def test_sso_link_signs_in_the_manager_once(ui, hosted):
     base, farm_ui = ui
     call, api = browser()
     code, me, _ = api(base + "/api/me")
-    assert code == 401 and me["private"] and me["password"] is False, "no password: you sign in with your Claude"
+    assert code == 401 and me["private"] and "password" not in me, "no password: you sign in with your Claude"
     assert api(base + "/api/state")[0] == 401, "a hosted farm is private whatever its settings say"
     t = sso.make(KEY, farm_ui.cfg.farm, sub="a@example.com")
     code, _, headers = call(base + "/sso?t=" + t)

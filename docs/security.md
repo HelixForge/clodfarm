@@ -33,7 +33,7 @@ clodfarm gives autonomous agents a shell. Be deliberate about what that shell ca
 
 See [people.md](people.md). In short: a public farm (the default) shows every Claude's name, status and task titles
 to anyone who can reach the UI's port, and lets them hatch one Claude (which runs code in your container). Keep the
-port on localhost, put the farm behind a private farm's viewer password (`clodfarm farm private`), or close hatching
+port on localhost, make the farm private (`clodfarm farm private`: only the people of its Claudes see it), or close hatching
 (`clodfarm farm hatch-closed`) before you expose it. Prompts, results, conversations, tools, logins and the browser
 are only ever shown to a Claude's own person and to the farm manager.
 

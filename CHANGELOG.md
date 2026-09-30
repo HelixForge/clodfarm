@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.0 (2026-09-29)
+
+- **No passwords at all.** A private farm is seen by the people of its Claudes (and its manager), who sign in with
+  their Claude; anyone else needs an invite. The viewer password is gone from MANAGE → PRIVACY, from the sign-in
+  screen and from `clodfarm farm private` (its `--password` is ignored). A farm that had one stays private. Someone
+  who only watched with that password now needs a Claude of their own on the farm (an invite), or the farm made
+  public, where visitors see the tokens and the Claudes at work and nothing else.
+
 ## 1.5.2 (2026-09-29)
 
 - **You sign in with your Claude.** The sign-in screen is one thing: SIGN IN WITH YOUR CLAUDE (tell your Claude

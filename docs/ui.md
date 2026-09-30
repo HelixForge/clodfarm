@@ -93,14 +93,9 @@ phone ("farm login"), approvals, tool choices, private farms.
 panel, or `clodfarm farm manager set <claude>` from the box's shell). There's no admin password: they sign in to their
 Claude like everyone else.
 
-**A private farm** needs a viewer password to watch: the manager panel (the gear), or
-`clodfarm farm private --password ...`. People who own a Claude on it get in with their owner cookie.
-
-A private farm's viewer password is stored in the store as a PBKDF2-SHA256 hash (600,000 rounds). Viewer sessions
-are HMAC-signed, `HttpOnly`, `SameSite=Strict` cookies that last 7 days; owner cookies last a year and are
-`SameSite=Lax`, so the pairing link from the Claude app signs you in. Every write needs a JSON body and an `X-Clodfarm: 1` header, five wrong passwords (or pairing codes)
-lock that address out for five minutes, and pages are served with a strict Content-Security-Policy and
-`frame-ancestors 'none'`.
+**A private farm** is seen only by the people of its Claudes and its manager: the manager panel (the gear), or
+`clodfarm farm private`. There are no passwords: people sign in with their Claude ("farm login" in the Claude app gives
+a link or a code), or come in with an invite link.
 
 Whoever signs in to a manager Claude can run agents on every Claude account on the farm and read your repo: a pairing
 code is as good as a key while it lasts (10 minutes, once).

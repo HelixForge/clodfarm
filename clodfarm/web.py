@@ -3,7 +3,7 @@
     clodfarm ui            serve it on its own (the farm daemon also serves it when FARM_UI=1, the default)
 
 Who sees what:
-  * the public (a public farm, the default) and viewers (a private farm's viewer password) watch: the farm, every
+  * the public (a public farm, the default) watch: the farm, every
     Claude, the tasks' titles, schedules, tokens burned and the planner's goal; never prompts, results, conversations,
     tools, logins or the browser. They can hatch a Claude of their own (once per browser).
   * an owner (the `clodfarm_owner` cookie, set when they hatched their Claude, or by the pairing link their Claude
@@ -23,7 +23,7 @@ Hosted for someone else: FARM_UI_PRIVATE=1 keeps the farm private whatever its s
 host sign its customer in with a one-time /sso link (sso.py), and FARM_MAX_CLAUDES caps the Claudes the farm hatches
 (agents.py), the manager's included.
 
-Standard library only. No admin password. A private farm's viewer password is stored as a PBKDF2 hash; cookies are
+Standard library only. No passwords: people sign in with their Claude (a pairing link or code), and cookies are
 HMAC-signed and HttpOnly; every write needs a JSON body and the X-Clodfarm header, so another site can't drive the
 farm through your browser.
 """
@@ -56,7 +56,7 @@ BASE = "/" + os.environ.get("FARM_UI_BASE", "").strip("/") if os.environ.get("FA
 UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
 COOKIE = "clodfarm_session"  # the farm manager
 OWNER_COOKIE = "clodfarm_owner"  # the person a Claude belongs to
-VIEWER_COOKIE = "clodfarm_viewer"  # someone with a private farm's viewer password
+VIEWER_COOKIE = "clodfarm_viewer"  # an old viewer-password session (logout clears it; nothing reads it now)
 INVITE_COOKIE = "clodfarm_invite"  # an invite this device holds (until its login spends it)
 SESSION_DAYS = 7
 OWNER_DAYS = 365
@@ -652,10 +652,7 @@ def make_handler(ui: FarmUI):
             st = ui.store.settings()
             manager = bool(owner) and owner in ui.managers(st)  # the person of a manager Claude runs the farm
             viewer = False
-            private = ui.private(st)
-            if private:
-                v = ui.keys.read(c[VIEWER_COOKIE].value if VIEWER_COOKIE in c else None, "viewer")
-                viewer = bool(v) and v[0] == str(st.get("viewer_ver", 1))
+            private = ui.private(st)  # only the people of its Claudes (and its manager) see it: no passwords
             self._who_cache = Who(manager, owner, viewer, public=not private)
             return self._who_cache
 
@@ -953,7 +950,6 @@ def make_handler(ui: FarmUI):
                     st = ui.store.settings()
                     return self._json({**who.view(), "user": "farmer" if who.manager else None, "farm": ui.cfg.farm,
                                        "version": __version__, "private": ui.private(st),
-                                       "password": bool(ui.private(st) and st.get("viewer_hash")),
                                        "invite": bool(self._invited()),
                                        "hatch": self._hatch_view(who)}, 200 if who.can_view else 401)
                 if not who.can_view:
@@ -1181,7 +1177,7 @@ def make_handler(ui: FarmUI):
             owners = [{"id": c["id"], "owned": bool(c.get("owned")), "approve_missions": bool(c.get("approve_missions"))}
                       for c in ui.store.claudes()]
             return {"settings": {k: st.get(k) for k in ("private", "hatch_open", "max_claudes", "hatch_per_ip_hour")}
-                    | {"viewer_password": bool(st.get("viewer_hash")), "private": ui.private(st),
+                    | {"private": ui.private(st),
                        "private_by_host": os.environ.get("FARM_UI_PRIVATE") == "1", "plan_claudes": ui.manager.max_claudes()},
                     "planner": ui.store.planner(), "claudes": owners, "release": boot.running(),
                     "managers": ui.managers(st),
@@ -1197,20 +1193,8 @@ def make_handler(ui: FarmUI):
                         not (self.headers.get("Content-Type") or "").startswith("application/json"):
                     return self._err(403, "missing X-Clodfarm header or JSON body")
                 data = self._body()
-                if path == "/api/login":  # a private farm's viewer password (the manager is a Claude's person)
-                    if ui.lock.locked_out(self._ip()):
-                        return self._err(429, "too many tries: wait five minutes")
-                    pw = str(data.get("password", ""))[:1000]
-                    st = ui.store.settings()
-                    if not (st.get("private") and st.get("viewer_hash")):
-                        return self._err(400, "this farm has no password: sign in to your Claude (MY CLAUDE)")
-                    if hmac.compare_digest(_pw_hash(pw, st.get("viewer_salt"))[1], st["viewer_hash"]):
-                        ui.lock.clear(self._ip())
-                        tok = ui.keys.make("viewer", [str(st.get("viewer_ver", 1))], SESSION_DAYS)
-                        return self._json({"role": "viewer"}, extra={
-                            "Set-Cookie": self._named_cookie(VIEWER_COOKIE, tok, SESSION_DAYS * 86400)})
-                    ui.lock.fail(self._ip())
-                    return self._err(401, "wrong password")
+                if path == "/api/login":  # there are no passwords: people sign in with their Claude
+                    return self._err(410, "this farm has no password: sign in with your Claude (\"farm login\" in the Claude app)")
                 if path == "/api/logout":
                     self.send_response(200)
                     for c in (self._cookie("", 0), self._named_cookie(VIEWER_COOKIE, "", 0)):  # old manager cookies too
@@ -1447,16 +1431,7 @@ def make_handler(ui: FarmUI):
                 ch = {}
                 if "private" in data:
                     ch["private"] = bool(data["private"])
-                if data.get("viewer_password"):
-                    pw = str(data["viewer_password"])[:200]
-                    if len(pw) < 6:
-                        raise ValueError("a viewer password has at least 6 characters")
-                    salt, h = _pw_hash(pw)
-                    ch.update(viewer_salt=salt, viewer_hash=h)
-                if "private" in ch or "viewer_salt" in ch:  # everyone with the old viewer password signs in again
-                    ch["viewer_ver"] = int(store.settings().get("viewer_ver", 1)) + 1
-                if ch.get("private") and not (ch.get("viewer_hash") or store.settings().get("viewer_hash")):
-                    raise ValueError("set a viewer password to make the farm private")
+                # there are no viewer passwords: a private farm is its Claudes' people (and its manager) only
                 for k in ("hatch_open",):
                     if k in data:
                         ch[k] = bool(data[k])

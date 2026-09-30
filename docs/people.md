@@ -5,7 +5,6 @@ A farm is watched by many and worked by a few. The farm UI knows who is looking:
 | Who | How | What they can do |
 |---|---|---|
 | **The public** | Nothing: a farm is public by default | Watch: every Claude and what it's doing, the tasks' titles and status, schedules, tokens burned, the planner's goal. Never prompts, results, conversations, tools, logins or the browser. **Hatch** a Claude of their own. |
-| **A viewer** | The viewer password, when the manager made the farm private | Same as the public. |
 | **An owner** | The browser that hatched a Claude (a cookie), or the pairing link that Claude gives them | Everything about **their** Claude: its conversations, results and tools, its skin and settings, the missions waiting for their OK, their browser profiles. |
 | **The farm manager** | The person of a manager Claude: the farm's first Claude, until a manager hands it on (no password) | Everything: the planner, a private farm, hatching limits, every Claude and profile. |
 
@@ -61,12 +60,12 @@ hand the role over; the farm always keeps at least one. From the box's shell, `c
 
 The gear on the farm (or G) opens the manager panel:
 - **the planner:** on/off, its goal, which Claude it runs on, how often (see [planner.md](planner.md));
-- **privacy:** public, or private with a viewer password (a new viewer password signs every viewer out);
+- **privacy:** public (anyone watches the tokens and the Claudes at work), or private (only the people of its Claudes);
 - **hatching:** open or closed, the most Claudes, hatches per address and hour;
 - **owners:** sign a Claude's person out on every device;
 - **the release,** and ROLL UI (see [upgrades.md](upgrades.md)).
 
-From a shell: `clodfarm farm private --password ... | public | hatch-open | hatch-closed`, `clodfarm planner ...`.
+From a shell: `clodfarm farm private | public | hatch-open | hatch-closed`, `clodfarm planner ...`.
 
 ## Inviting someone
 

@@ -1691,8 +1691,8 @@ const UI = {
     for (const d of $$("dialog[open]")) d.close();
     $("#hud").hidden = true; $("#title").hidden = false;
     const priv = App.me ? App.me.private && !App.me.can_view : true;
-    // you sign in with your Claude (it gives you a link or a code); a farm with a viewer password takes that too
-    this.accountForms($("#title-forms"), { tabs: priv && App.me?.password ? ["mine", "viewer"] : ["mine"], note: this.titleNote,
+    // you sign in with your Claude: it gives you a link, or a code to type here (or an invite link lets you in)
+    this.accountForms($("#title-forms"), { tabs: ["mine"], note: this.titleNote,
       onDone: async () => { const me = await this.loadMe(); if (me?.can_view) { if (!this.goNext()) this.showFarm(); } else this.showTitle(); } });
     Scene.farm = false; Scene.layout = { clearOf: ".title-card" }; Scene.cam.auto = true; Scene.resize(); // the demo Claudes keep off the title and the form
     Scene.demo = true; fill(Scene.labels, null); Scene.crowEl = null; Scene.critters.clear(); Scene.plotTasks = []; Scene.plotMore = []; Scene.boardCount = 3;
@@ -1720,7 +1720,7 @@ const UI = {
       /room for/.test(me.hatch?.why || "") ? h("p", { class: "form-error", text: `${me.hatch.why.toUpperCase()}: ASK WHOEVER INVITED YOU.` }) : [err, go],
       h("p", { class: "muted small", text: "Anthropic's own sign-in: open its link, approve, paste the code back. Your login stays yours. This invite works once." })));
   },
-  /** Sign-in forms, as tabs: a private farm's viewer password (FARM), and the code your Claude gives you in the Claude
+  /** Sign-in: the code (or link) your Claude gives you in the Claude
    * app (MY CLAUDE). The farm's manager is the person of a manager Claude: they sign in to it like anyone. */
   accountForms(box, { tabs, tab, note, onDone }) {
     const NAMES = { viewer: "FARM PASSWORD", mine: "WITH YOUR CLAUDE" };
@@ -1743,18 +1743,6 @@ const UI = {
         form.addEventListener("submit", async (e) => {
           e.preventDefault(); const btn = form.querySelector("button[type=submit]"); btn.disabled = true; err.textContent = "";
           try { const r = await api("api/pair", { code: code.value.trim() }); this.pairedTo = r.claude; await onDone("owner", r); }
-          catch (x) { err.textContent = x.message.toUpperCase(); btn.disabled = false; }
-        });
-      } else {
-        const pw = h("input", { name: "password", type: "password", autocomplete: "current-password", required: true });
-        form = h("form", { class: "acct-form", autocomplete: "on" },
-          h("input", { name: "user", autocomplete: "username", value: "clodfarm", hidden: true }),
-          h("label", {}, "FARM PASSWORD", pw),
-          h("p", { class: "muted small", text: "This farm is private: its manager gives you the password to watch it. To use your own Claude here, sign in WITH YOUR CLAUDE." }),
-          err, h("button", { class: "btn primary", type: "submit" }, "▶ ENTER THE FARM"));
-        form.addEventListener("submit", async (e) => {
-          e.preventDefault(); const btn = form.querySelector("button[type=submit]"); btn.disabled = true; err.textContent = "";
-          try { const r = await api("api/login", { password: pw.value }); App.user = r.user; await onDone(r.role, r); }
           catch (x) { err.textContent = x.message.toUpperCase(); btn.disabled = false; }
         });
       }
@@ -3309,10 +3297,8 @@ const UI = {
     const privBox = h("input", { type: "checkbox", name: "private", checked: !!S.private });
     const privacy = section("PRIVACY", [
       h("label", { class: "check toggle" }, privBox, "PRIVATE FARM"),
-      h("p", { class: "muted small", text: S.private ? "Only people with the viewer password (or their own Claude) see it." : "Public: anyone with the link watches (no messages, no logins). Private needs a viewer password." }),
-      h("label", {}, "VIEWER PASSWORD ", h("span", { class: "muted", text: S.viewer_password ? "(set: type a new one to change it)" : "(not set)" }),
-        h("input", { name: "viewer_password", type: "password", autocomplete: "new-password", minlength: 6, placeholder: "at least 6 characters" }))],
-      async (f) => { const d = new FormData(f), body = { private: privBox.checked }; if (d.get("viewer_password")) body.viewer_password = d.get("viewer_password"); await api("api/manager/settings", body); f.reset(); privBox.checked = body.private; });
+      h("p", { class: "muted small", text: S.private ? "Only the people of its Claudes (and you) see it: they sign in with their Claude." : "Public: anyone with the address watches the tokens and the Claudes at work (no prompts, no results, no logins)." })],
+      async () => { await api("api/manager/settings", { private: privBox.checked }); });
     // hatching
     const openBox = h("input", { type: "checkbox", name: "hatch_open", checked: !!S.hatch_open });
     const hatching = section("HATCHING", [

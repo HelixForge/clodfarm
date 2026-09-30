@@ -74,27 +74,21 @@ def test_login_required_and_wrong_password(ui):
     assert code == 200 and st["farm"] == "test" and st["me"]["role"] == "viewer"
     assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
     assert call(base + "/api/manager")[0] == 403
-    assert call(base + "/api/login", {"password": "correct horse"})[0] == 400, "no manager password any more"
+    assert call(base + "/api/login", {"password": "correct horse"})[0] == 410, "no passwords at all"
     login(call, base)  # the person of the farm's own Claude
     assert call(base + "/api/manager")[0] == 200
 
 
-def test_a_private_farm_needs_its_viewer_password(ui):
+def test_a_private_farm_is_its_claudes_people_only(ui):
+    """No passwords: a private farm is seen by the people of its Claudes (and its manager), who sign in with them."""
     base, _ = ui
-    manager, viewer, stranger = client(), client(), client()
+    manager, visitor = client(), client()
     login(manager, base)
-    assert manager(base + "/api/manager/settings", {"private": True})[0] == 400  # a viewer password first
-    assert manager(base + "/api/manager/settings", {"private": True, "viewer_password": "letmein"})[0] == 200
-    assert stranger(base + "/api/state")[0] == 401
-    assert stranger(base + "/api/me")[1]["private"] is True
-    assert viewer(base + "/api/login", {"password": "letmein", "as": "viewer"})[0] == 200
-    code, st, _ = viewer(base + "/api/state")
-    assert code == 200 and st["me"]["role"] == "viewer"
-    assert viewer(base + "/api/manager")[0] == 403 and viewer(base + "/api/pause", {})[0] == 403
-    assert manager(base + "/api/manager/settings", {"viewer_password": "another"})[0] == 200
-    assert viewer(base + "/api/state")[0] == 401, "a new viewer password signs viewers out"
+    assert manager(base + "/api/manager/settings", {"private": True})[0] == 200, "no password needed"
+    assert visitor(base + "/api/state")[0] == 401
+    assert visitor(base + "/api/login", {"password": "anything"})[0] == 410
     assert manager(base + "/api/state")[0] == 200
-
+    assert "viewer_password" not in manager(base + "/api/manager")[1]["settings"]
 
 def test_session_cookie_flags_and_logout(ui):
     base, farm_ui = ui

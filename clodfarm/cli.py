@@ -14,7 +14,7 @@
     clodfarm events [-n 30] [-f]      the farm's event log
     clodfarm pause [REASON] | resume  stop or restart new sub-agents on every box
     clodfarm ui                       serve the farm UI on its own
-    clodfarm farm [manager [set|add|remove CLAUDE] | private --password P | public | hatch-open | hatch-closed]
+    clodfarm farm [manager [set|add|remove CLAUDE] | private | public | hatch-open | hatch-closed]
     clodfarm slack                    Slack: connected or not, and how to connect it (the UI's SLACK button is easier)
     clodfarm browser [status] | start|stop [PROFILE] | open URL [--profile P] | add|remove NAME   the farm's browser
     clodfarm browser proxy on|off [PROFILE] [--country us]   through the farm's proxy (set in the UI), or direct
@@ -951,7 +951,8 @@ def cmd_ui_passwd(cfg, a):
           "own Claude, until a manager changes it in the manager panel). From this shell:\n"
           "  clodfarm farm manager                  who runs the farm\n"
           "  clodfarm farm manager set <claude>     hand it to another Claude's person (add / remove work too)\n"
-          "A private farm's viewer password: clodfarm farm private --password ...", file=sys.stderr)
+          "There are no passwords at all: people sign in with their Claude (\"farm login\" in the Claude app).",
+          file=sys.stderr)
     return 1
 
 
@@ -1114,8 +1115,7 @@ def cmd_planner(cfg, a):
 
 
 def cmd_farm(cfg, a):
-    """The farm manager's switches from a shell: private (a viewer password) or public, hatching."""
-    from .web import _pw_hash
+    """The farm manager's switches from a shell: private (only the people of its Claudes see it) or public, hatching."""
     store = _store(cfg)
     if a.action == "manager":  # a person at the box's shell: who runs the farm (the persons of these Claudes)
         from .agents import AgentManager
@@ -1143,21 +1143,17 @@ def cmd_farm(cfg, a):
              + "\n(they sign in to their Claude on the farm: MY CLAUDE, with a code from `clodfarm pair`)")
         return 0
     if a.action == "private":
-        pw = a.password or sys.stdin.readline().strip()
-        if len(pw) < 6:
-            print("clodfarm farm private: a viewer password of at least 6 characters (--password or stdin)",
-                  file=sys.stderr)
-            return 2
-        salt, h = _pw_hash(pw)
-        store.set_settings(private=True, viewer_salt=salt, viewer_hash=h,
-                           viewer_ver=int(store.settings().get("viewer_ver", 1)) + 1)
+        if a.password:
+            print("clodfarm farm private: there are no viewer passwords any more (people sign in with their Claude);"
+                  " --password is ignored", file=sys.stderr)
+        store.set_settings(private=True)
     elif a.action == "public":
-        store.set_settings(private=False, viewer_ver=int(store.settings().get("viewer_ver", 1)) + 1)
+        store.set_settings(private=False)
     elif a.action in ("hatch-open", "hatch-closed"):
         store.set_settings(hatch_open=a.action == "hatch-open")
     st = store.settings()
     _out({k: v for k, v in st.items() if not k.startswith("viewer_")}, a.json,
-         f"farm {'PRIVATE (viewer password)' if st.get('private') else 'public: anyone with the address watches'}; "
+         f"farm {'PRIVATE: only the people of its Claudes see it' if st.get('private') else 'public: anyone with the address watches'}; "
          f"hatching {'open' if st.get('hatch_open') else 'closed'}, at most {st.get('max_claudes')} Claudes")
     return 0
 
@@ -1482,11 +1478,11 @@ def main(argv=None):
     pl.add_argument("action", nargs="?", default="status",
                     choices=["on", "off", "status", "goal", "every", "host", "idle", "notes"])
     pl.add_argument("rest", nargs="*")
-    fm = add("farm", cmd_farm, "who runs the farm (manager), private (viewer password) or public, hatching")
+    fm = add("farm", cmd_farm, "who runs the farm (manager), private (its Claudes' people only) or public, hatching")
     fm.add_argument("action", nargs="?", default="status",
                     choices=["status", "private", "public", "hatch-open", "hatch-closed", "manager"])
     fm.add_argument("rest", nargs="*", help="for manager: [add|remove|set] CLAUDE...")
-    fm.add_argument("--password", help="the viewer password for a private farm (or on stdin)")
+    fm.add_argument("--password", help=argparse.SUPPRESS)  # gone: people sign in with their Claude
     add("manager-passwd", cmd_ui_passwd, argparse.SUPPRESS)
     up = add("upgrade", cmd_upgrade, "install a new clodfarm and hand over to it: running agents keep running")
     up.add_argument("--from", dest="src", help="a source dir, wheel, or pip/git URL (default: the GitHub repo)")

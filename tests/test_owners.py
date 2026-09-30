@@ -186,7 +186,7 @@ def test_private_farm_owner_still_sees_it(ui):
     alice, manager, stranger = client(), client(), client()
     a = alice(base + "/api/agents", {"name": "Alice"})[1]
     login(manager, base)
-    manager(base + "/api/manager/settings", {"private": True, "viewer_password": "letmein"})
+    manager(base + "/api/manager/settings", {"private": True})
     assert stranger(base + "/api/state")[0] == 401
     assert stranger(base + "/api/agents", {"name": "x"})[0] == 401
     assert alice(base + "/api/state")[0] == 200 and alice(base + "/api/me")[1]["owner"] == a["id"]
