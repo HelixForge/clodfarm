@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1 (2026-09-30)
+
+- **MANAGE → COMPUTERS (MCP).** The farm's manager sees the computers connected to the farm over MCP (Claude Code on
+  someone's laptop) and can DISCONNECT one, or turn MCP off for the whole farm: every computer is then refused and none
+  can connect, until it's on again (the connections come back). The Blender connector is separate and keeps working.
+
 ## 1.7.0 (2026-09-30)
 
 - **A Blender connector.** The farm manager connects a Blender MCP server that runs on another machine (CONNECTORS →

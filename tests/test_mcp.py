@@ -258,3 +258,39 @@ def test_open_registration_cannot_fill_up(farm, monkeypatch):
     for _ in range(5):
         register(base)
     assert len(ui.oauth.data["clients"]) == 3 and call(base, tok["access_token"], "ping")[0] == 200
+
+
+def manage(base, path, data=None):
+    hdrs = {"Cookie": SIGNED_IN["cookie"], "X-Clodfarm": "1"}  # the person of the farm's own Claude: its manager
+    code, body, _ = req(base + path, data, hdrs) if data is not None else req(base + path, headers=hdrs)
+    assert code == 200, body
+    return json.loads(body)
+
+
+def test_the_manager_sees_disconnects_and_turns_mcp_off(farm):
+    base, ui = farm
+    _, tok = connect(base, name="gil-laptop")
+    m = manage(base, "/api/manager")
+    assert m["settings"]["mcp"] is True and [c["name"] for c in m["connections"]] == ["gil-laptop"]
+    assert all("refresh" not in c for c in m["connections"]), "never a token"
+    # off: every computer is refused, and none can connect
+    assert manage(base, "/api/manager/settings", {"mcp": False})["settings"]["mcp"] is False
+    assert manage(base, "/api/state")["mcp"] is False
+    code, out, _ = call(base, tok["access_token"], "tools/list")
+    assert code == 403 and "turned MCP off" in out["error"]
+    assert req(base + "/oauth/register", {"client_name": "x", "redirect_uris": [REDIRECT]})[0] == 403
+    assert req(base + "/.well-known/oauth-protected-resource")[0] == 404
+    assert req(base + "/oauth/authorize?client_id=x")[0] == 403
+    code, body, _ = req(base + "/oauth/token", {"grant_type": "refresh_token", "refresh_token": tok["refresh_token"],
+                                                "client_id": "x"}, form=True)
+    assert code == 403
+    # on again: the connection is back
+    manage(base, "/api/manager/settings", {"mcp": True})
+    assert call(base, tok["access_token"], "tools/list")[0] == 200
+    # disconnect: its tokens stop working now
+    gid = manage(base, "/api/manager")["connections"][0]["id"]
+    assert manage(base, f"/api/manager/connections/{gid}/disconnect", {})["connections"] == []
+    assert call(base, tok["access_token"], "tools/list")[0] == 401
+    assert req(base + f"/api/manager/connections/{gid}/disconnect", {},
+               {"Cookie": SIGNED_IN["cookie"], "X-Clodfarm": "1"})[0] == 404
+    assert any(e["type"] == "mcp.disconnected" for e in ui.store.events(limit=20))

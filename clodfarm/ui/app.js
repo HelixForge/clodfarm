@@ -2027,7 +2027,7 @@ const UI = {
     const R = role();
     const me = st.agents.find(a => a.mine) || (R.manager ? st.agents.find(a => a.primary) || st.agents.find(a => a.loggedIn) : null), name = me?.name || st.farm;
     const none = !me || !me.loggedIn;
-    const link = me?.remote_control, body = $("#claude-body"), key = JSON.stringify([name, link, none, R.manager]);
+    const link = me?.remote_control, body = $("#claude-body"), key = JSON.stringify([name, link, none, R.manager, st.mcp]);
     if (body.dataset.key === key) return;
     body.dataset.key = key;
     const mcp = `claude mcp add --transport http --scope user ${st.farm} ${location.origin}${location.pathname.replace(/\/$/, "")}/mcp`;
@@ -2049,7 +2049,7 @@ const UI = {
         h("li", { text: "“Split the migration into 3 sub-agents.”" }),
         h("li", { text: "“Every weekday at 9, check the errors and keep a dashboard of them.”" })),
       h("p", { class: "muted small", text: "It starts sub-agents (you see them here as mini Claudes), asks the other Claudes for help, schedules work and builds dashboards, and it watches its budget." }),
-      R.manager ? [h("h3", { class: "kicker", text: "OR FROM CLAUDE CODE ON YOUR COMPUTER" }),
+      R.manager && st.mcp !== false ? [h("h3", { class: "kicker", text: "OR FROM CLAUDE CODE ON YOUR COMPUTER" }),
         h("div", { class: "copy-row" }, h("code", { class: "pre", text: mcp }), copy),
         h("p", { class: "muted small", text: "Then run /mcp in Claude Code: it opens this farm, where you're signed in to your Claude, to connect." })] : null);
     fill($("#claude-actions"), none && !me
@@ -3430,6 +3430,27 @@ const UI = {
       !rows.length ? h("li", { class: "muted small", text: "No Claude has a person signed in." }) : null);
     };
     q.addEventListener("input", drawOwners); drawOwners();
+    // computers connected over MCP (Claude Code on someone's laptop), and the switch that lets them in at all
+    const mcpBox = h("input", { type: "checkbox", name: "mcp", checked: S.mcp !== false });
+    const conns = m.connections || [], connErr = h("p", { class: "form-error", role: "alert" });
+    const connList = h("ul", { class: "owners" }, conns.map(c => {
+      const out = h("button", { class: "btn tiny danger", type: "button" }, "DISCONNECT");
+      out.addEventListener("click", async () => {
+        if (out.dataset.sure !== "1") { out.dataset.sure = "1"; out.textContent = "SURE?"; return; }
+        out.disabled = true; connErr.textContent = "";
+        try { this.renderManager(await api(`api/manager/connections/${encodeURIComponent(c.id)}/disconnect`, {})); this.say(`${c.name.toUpperCase()} is disconnected.`); }
+        catch (x) { connErr.textContent = x.message; out.disabled = false; }
+      });
+      return h("li", {}, h("span", { class: "o-name", text: c.name.toUpperCase() }),
+        h("span", { class: "muted small", text: `${c.scope === "farm:read" ? "sees" : "sees and works"} · ${c.client_name || "?"} · ${c.last_used ? "used " + ago(c.last_used) : "never used"}` }), out);
+    }), !conns.length ? h("li", { class: "muted small", text: "No computer is connected." }) : null);
+    const computers = section("COMPUTERS (MCP)", [
+      h("label", { class: "check toggle" }, mcpBox, "LET COMPUTERS CONNECT OVER MCP"),
+      h("p", { class: "muted small", text: S.mcp !== false
+        ? "People signed in to their Claude here can connect Claude Code on their computer to the farm (see the chat bubble). Turning it off refuses every computer at once; they come back when you turn it on again."
+        : "Off: no computer can connect, and the ones below are refused until you turn it on again. Disconnect one to end it for good." }),
+      connList, connErr],
+      async () => { this.renderManager(await api("api/manager/settings", { mcp: mcpBox.checked })); });
     const owners = section("PEOPLE", [h("p", { class: "muted small", text: "Signing a person out forgets every device they signed in on; their Claude stays. They sign in again with a code from their Claude." }), q, ul], null);
     // release
     const roll = h("button", { class: "btn", type: "button" }, "↻ ROLL UI");
@@ -3465,7 +3486,7 @@ const UI = {
     const invite = h("div", { class: "mgr-sec" }, h("h3", { text: "INVITE A CLAUDE" }),
       h("p", { class: "muted small", text: "A link for one person: they log in with their Claude account and get their own Claude here, even when the farm is private or hatching is closed." }),
       h("div", { class: "dlg-actions left" }, invBtn), invOut, invErr);
-    fill($("#mgr-body"), managers, invite, planner, privacy, hatching, owners, release);
+    fill($("#mgr-body"), managers, invite, planner, privacy, hatching, computers, owners, release);
   },
 
   // ---------------------------------------------------------------- settings

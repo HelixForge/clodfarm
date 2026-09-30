@@ -57,7 +57,9 @@ Your computer is a **guest** on the farm, not a Claude, so it adds no budget and
   - all of them are stored only as SHA-256 hashes, in `/workspace/.farm/mcp-auth.json` (mode 600).
 - **The MCP endpoint** refuses browser requests from other origins (DNS rebinding) and answers `401` with a `WWW-Authenticate` challenge that points clients to the metadata.
 
-`clodfarm connections` lists what's connected (name, scope, client, last use). `clodfarm disconnect ID` ends one at once. Signing in and ending a connection are both in `clodfarm events` (`mcp.connected`, `mcp.disconnected`).
+The farm's manager sees what's connected in **MANAGE → COMPUTERS (MCP)** and can **DISCONNECT** one, or turn MCP off for
+the whole farm: every computer is then refused (and none can connect) until it's on again. From a shell,
+`clodfarm connections` lists what's connected (name, scope, client, last use) and `clodfarm disconnect ID` ends one at once. Signing in and ending a connection are both in `clodfarm events` (`mcp.connected`, `mcp.disconnected`).
 
 ## Behind a proxy
 

@@ -62,6 +62,7 @@ SESSION_DAYS = 7
 OWNER_DAYS = 365
 PBKDF2_ROUNDS = 600_000
 MAX_BODY = 256 * 1024
+MCP_OFF = "the farm's manager turned MCP off: no computer can connect to this farm right now"
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self'; font-src 'self'; script-src 'self'; "
        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
@@ -376,6 +377,7 @@ class FarmUI:
             "tokens": store.tokens(), "tokens_today_by": store.tokens_today_by(),
             "pending": [{"id": p.get("id"), "to": p.get("to")} for p in store.pending()],
             "private": self.private(settings), "hatch_open": bool(settings.get("hatch_open")),
+            "mcp": settings.get("mcp") is not False,
             "planner": {k: pl.get(k) for k in ("on", "goal", "host", "state", "last_at", "next_at", "cycles",
                                                 "every_s", "idle_until", "task")},
             "slack": {"state": self.slack.state, "team": (self.slack.info or {}).get("team")},
@@ -735,10 +737,21 @@ def make_handler(ui: FarmUI):
             return (f"default-src 'none'; style-src 'nonce-{nonce}'; font-src 'self'; img-src 'self' data:; "
                     f"form-action 'self'{to}; frame-ancestors 'none'; base-uri 'none'")
 
+        def _mcp_off(self) -> bool:
+            """The farm's manager turned MCP off (MANAGE): no computer connects, and connected ones are refused."""
+            return ui.store.settings().get("mcp") is False
+
         def _oauth_get(self, raw: str) -> bool:
             """Discovery documents (also at the root, path-inserted as RFC 8414 and 9728 say) and the consent page."""
-            prm, asm = mcp.metadata(self._pub())
             rel = raw[len(BASE):] if BASE and raw.startswith(BASE + "/") else raw if not BASE else None
+            if (raw.startswith("/.well-known/oauth-") or rel in ("/mcp", "/oauth/authorize")) and self._mcp_off():
+                if rel == "/oauth/authorize":
+                    nonce = secrets.token_urlsafe(12)
+                    self._html(403, mcp.error_page(MCP_OFF, nonce, BASE), self._page_csp(nonce))
+                else:
+                    self._json({"error": MCP_OFF}, 404 if raw.startswith("/.well-known/") else 403)
+                return True
+            prm, asm = mcp.metadata(self._pub())
             if raw in (f"/.well-known/oauth-protected-resource{BASE}/mcp", f"/.well-known/oauth-protected-resource{BASE}") \
                     or rel in ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"):
                 self._json(prm)
@@ -783,6 +796,12 @@ def make_handler(ui: FarmUI):
         def _oauth_post(self, path: str):
             oa, pub = ui.oauth, self._pub()
             nostore = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+            if path != "/oauth/revoke" and self._mcp_off():
+                if path == "/oauth/authorize":
+                    nonce = secrets.token_urlsafe(12)
+                    return self._html(403, mcp.error_page(MCP_OFF, nonce, BASE), self._page_csp(nonce))
+                return self._json({"error": "access_denied" if path.startswith("/oauth/") else MCP_OFF,
+                                   "error_description": MCP_OFF}, 403, nostore)
             try:
                 if path == "/oauth/register":
                     try:
@@ -1181,11 +1200,12 @@ def make_handler(ui: FarmUI):
             st = ui.store.settings()
             owners = [{"id": c["id"], "owned": bool(c.get("owned")), "approve_missions": bool(c.get("approve_missions"))}
                       for c in ui.store.claudes()]
+            ui.oauth.reload()  # `clodfarm disconnect` may have ended one from the shell
             return {"settings": {k: st.get(k) for k in ("private", "hatch_open", "max_claudes", "hatch_per_ip_hour")}
-                    | {"private": ui.private(st),
+                    | {"private": ui.private(st), "mcp": st.get("mcp") is not False,
                        "private_by_host": os.environ.get("FARM_UI_PRIVATE") == "1", "plan_claudes": ui.manager.max_claudes()},
                     "planner": ui.store.planner(), "claudes": owners, "release": boot.running(),
-                    "managers": ui.managers(st),
+                    "managers": ui.managers(st), "connections": ui.oauth.connections(),
                     "version": __version__, "hosts": [a["id"] for a in ui.manager.all()]}
 
         # ---------------------------------------------------------- POST
@@ -1437,7 +1457,7 @@ def make_handler(ui: FarmUI):
                 if "private" in data:
                     ch["private"] = bool(data["private"])
                 # there are no viewer passwords: a private farm is its Claudes' people (and its manager) only
-                for k in ("hatch_open",):
+                for k in ("hatch_open", "mcp"):
                     if k in data:
                         ch[k] = bool(data[k])
                 for k, lo, hi in (("max_claudes", 1, 1000), ("hatch_per_ip_hour", 1, 100)):
@@ -1488,6 +1508,13 @@ def make_handler(ui: FarmUI):
                 rec = store.claude(m.group(1))
                 store.put_claude(m.group(1), owner_ver=int(rec.get("owner_ver", 1)) + 1, owned=False)
                 store.event("owner.signout", f"{m.group(1)}'s person signed out everywhere by the manager", by="ui")
+                return self._json(self._manager_view())
+            m = re.fullmatch(r"/api/manager/connections/([a-z0-9-]+)/disconnect", path)
+            if m:  # a computer connected over MCP: its tokens stop working now
+                g = next((c for c in ui.oauth.connections() if c["id"] == m.group(1)), None)
+                if not g or not ui.oauth.disconnect(m.group(1)):
+                    return self._err(404, "no such connection (it may have ended already)")
+                store.event("mcp.disconnected", f"{g['name']} ({g['id']}) disconnected by the manager", by="ui")
                 return self._json(self._manager_view())
             if path == "/api/manager/invite":  # a link that lets one person hatch their own Claude here, once
                 token = secrets.token_urlsafe(24)
