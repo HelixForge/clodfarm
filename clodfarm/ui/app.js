@@ -3401,17 +3401,23 @@ const UI = {
       async (f) => { const d = new FormData(f), body = { on: onBox.checked, goal: d.get("goal"), host: d.get("host") }; if (d.get("every")) body.every = d.get("every"); await api("api/manager/planner", body); });
     // bots first: the Claudes hand the code-writing to the bots, to save their persons' usage
     const botsBox = h("input", { type: "checkbox", name: "bots_first", checked: !!S.bots_first }), B = m.bots || [];
+    const styleOf = S.bots_first_style === "draft" ? "draft" : "plan";
+    const style = (v, text) => h("label", { class: "check" },
+      h("input", { type: "radio", name: "bots_first_style", value: v, checked: styleOf === v }), text);
     const botsFirst = section("BOTS FIRST", [
-      h("label", { class: "check toggle" }, botsBox, "SAVE CLAUDE USAGE: HAND THE CODE-WRITING TO THE BOTS"),
+      h("label", { class: "check toggle" }, botsBox, "SAVE CLAUDE USAGE: HAND THE WORK TO THE BOTS"),
+      style("draft", "THE BOTS DRAFT, YOUR CLAUDES REVIEW (a bot does the first full pass; your Claude only checks it and fills the gaps)"),
+      style("plan", "YOUR CLAUDES PLAN, THE BOTS TYPE (your Claude works it all out, then hands the code-writing over)"),
       h("p", { class: "muted small", text: S.bots_first
-        ? "On: your Claudes plan, review and merge; the bots write the code. Slower, but it spends far less of your usage."
+        ? "On: slower, and it spends less of your usage. Your Claudes say which parts the bots did."
         : "Off: your Claudes send the bots a well-defined piece when that saves time as well as usage." }),
       B.length ? h("ul", { class: "owners" }, B.map(b => h("li", {},
         h("span", { class: "o-name", text: b.id.toUpperCase() }),
         h("span", { class: "muted small", text: `${b.model}${b.context ? ` · ${Math.round(b.context / 1024)}k context` : ""}` }),
         b.reachable ? null : h("span", { class: "badge", text: "CAN'T REACH ITS MODEL" }))))
         : h("p", { class: "form-error", text: "No bots on this farm yet: add one first (+ NEW CLAUDE → BOT: OTHER MODEL)." })],
-      async () => { await api("api/manager/settings", { bots_first: botsBox.checked }); });
+      async (f) => { await api("api/manager/settings", { bots_first: botsBox.checked,
+        bots_first_style: new FormData(f).get("bots_first_style") || "plan" }); });
     // privacy
     const privBox = h("input", { type: "checkbox", name: "private", checked: !!S.private });
     const privacy = section("PRIVACY", [

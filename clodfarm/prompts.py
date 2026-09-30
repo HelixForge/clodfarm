@@ -157,6 +157,26 @@ If you have none, you have no browser: ask your person to add one for you on the
 """
 
 
+BOTS_FIRST_DRAFT = """
+## BOTS FIRST is on (the bots draft, you review): save your person's usage
+Your person turned on BOTS FIRST: they would rather wait than spend their Claude usage, and it is your thinking that
+spends it (reading the specs and the code, working out the bugs), far more than your typing. So a bot does the first
+full pass, reading and reasoning included, and you review. Time doesn't matter here; an hour on the bots is fine.
+1. Don't study the specs or the code first. Send the whole job to the bot with the biggest context window (`clodfarm
+   agents`): its prompt is the task as you were given it (what to read, what to do, how to test it), plus: "Commit on
+   your branch. Finish with a report: for each requirement, done / not done / unsure; the tests you added; what you
+   are not sure about." Parts that clearly touch different files may go to different bots at the same time. Then end
+   your run with a short note: you are resumed in this same session with its result.
+2. When you are resumed: merge its branch into yours (`git merge farm/<id>`), run the full test suite and the checks
+   the task asks for (a performance limit, a command's output), and read its report and `git diff --stat`. Read the
+   spec only to check what it reports as not done or unsure, and look closely only where something fails or looks
+   wrong. Don't re-review what the tests already prove.
+3. For each gap, send a short fix-up job card to a bot (a small, located one to the bot with the smaller context), or
+   fix it yourself when it is a few lines. End your run again; repeat until the task is done.
+4. If no bot can reach its model (`clodfarm agents` says so), tell your person and do the work yourself.
+Finish with which parts the bots wrote and which you did.
+"""
+
 BOTS_FIRST_GUIDE = """
 ## BOTS FIRST is on: save your person's usage
 Your person turned on BOTS FIRST on this farm: they would rather wait than spend their Claude usage. Time doesn't
@@ -176,6 +196,9 @@ matter here; a job that takes an hour on the bots is fine. Work as the lead, not
    If no bot can reach its model (`clodfarm agents` says so), tell your person and do the work yourself.
 Finish with which parts the bots wrote and which you did.
 """
+
+
+BOTS_FIRST_GUIDES = {"plan": BOTS_FIRST_GUIDE, "draft": BOTS_FIRST_DRAFT}
 
 
 BOT_GUIDE = """\
@@ -206,17 +229,19 @@ def bot_guide(cfg) -> str:
     return BOT_GUIDE.format(model=cfg.bot, context=size)
 
 
-def farm_guide(bots_first: bool = False) -> str:
+def farm_guide(bots_first: str | bool = "") -> str:
     """The guide every Claude on this farm reads: FARM_GUIDE plus the sections for the features this farm has on
-    (``bots_first``: its manager turned on BOTS FIRST)."""
+    (``bots_first``: its manager turned on BOTS FIRST, in this style: "plan" or "draft"; True means "plan")."""
     import os
     from . import connectors
     return FARM_GUIDE + (BROWSER_GUIDE if browser.mcp_servers() else "") + awsapps.guide_section() + \
         connectors.guide_section(os.environ.get("FARM_WORKSPACE") or "/workspace") + \
-        (BOTS_FIRST_GUIDE if bots_first else "")
+        (BOTS_FIRST_GUIDES.get(bots_first if isinstance(bots_first, str) else "plan", BOTS_FIRST_GUIDE)
+         if bots_first else "")
 
 
-def task_system_prompt(cfg, task: dict, cwd: str, branch: str | None, name: str = "", bots_first: bool = False) -> str:
+def task_system_prompt(cfg, task: dict, cwd: str, branch: str | None, name: str = "",
+                       bots_first: str | bool = "") -> str:
     """A sub-agent's guide. ``bots_first`` (the farm's BOTS FIRST switch) reaches Claudes only: a bot is the one it
     sends the work to."""
     where = f"Your worktree is {cwd} on branch {branch}." if branch else f"Your working directory is {cwd}."
@@ -227,7 +252,8 @@ def task_system_prompt(cfg, task: dict, cwd: str, branch: str | None, name: str 
                 f"{task.get('owner') or 'the farm'}: sub-agent {task['id']}. FARM_TASK_ID={task['id']}. {where}\n")
     bot = (f" You run on {cfg.bot}, not on Claude: you are the farm's bot {cfg.name}. Your own sub-agents stay on you."
            if cfg.bot else "")
-    return (farm_guide(bots_first and not cfg.bot) + f"\n## This run\nYou are a sub-agent of {task.get('owner') or cfg.name}: sub-agent "
+    return (farm_guide("" if cfg.bot else bots_first) + f"\n## This run\nYou are a sub-agent of "
+            f"{task.get('owner') or cfg.name}: sub-agent "
             f"{task['id']} (depth {task.get('depth', 0)}, max depth {cfg.max_depth}). FARM_TASK_ID={task['id']}. {where}"
             f"{reach}{bot}\n")
 

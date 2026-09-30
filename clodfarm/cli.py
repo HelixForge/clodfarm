@@ -233,9 +233,11 @@ def _claude_line(c) -> str:
 def cmd_agents(cfg, a):
     store = _store(cfg)
     rows = _claudes(cfg, store)
-    first = bool(store.settings().get("bots_first")) and any(c.get("bot") for c in rows)
-    _out(rows, a.json, ("BOTS FIRST is on: plan, review and merge yourself; hand the code-writing to the bots below "
-                        "(job cards, sized to their context).\n" if first else "")
+    style = store.bots_first() if any(c.get("bot") for c in rows) else ""
+    _out(rows, a.json, {"plan": "BOTS FIRST is on: plan, review and merge yourself; hand the code-writing to the bots "
+                                "below (job cards, sized to their context).\n",
+                        "draft": "BOTS FIRST is on: send the whole job to a bot below first and review what it drafts; "
+                                 "fix the gaps with job cards.\n"}.get(style, "")
          + "CLAUDES on this farm (each is its own Claude account and budget)\n"
          + ("\n".join(_claude_line(c) for c in rows) or "  (none up: is `clodfarm run` running?)")
          + "\n\nStart a sub-agent: clodfarm spawn \"<title>\" --prompt \"...\"  (any Claude with budget runs it; "
@@ -1247,17 +1249,25 @@ def cmd_farm(cfg, a):
     elif a.action in ("hatch-open", "hatch-closed"):
         store.set_settings(hatch_open=a.action == "hatch-open")
     elif a.action in ("bots-first", "bots-first-off"):
-        on = a.action == "bots-first"
-        if bool(store.settings().get("bots_first")) != on:
-            store.set_settings(bots_first=on)
-            store.event("farm.settings", f"farm settings changed from a shell: bots_first={on}", by="cli")
+        from .store import BOTS_FIRST_STYLES
+        on, style = a.action == "bots-first", (a.rest or [None])[0]
+        if style and style not in BOTS_FIRST_STYLES:
+            print(f"clodfarm farm bots-first [{'|'.join(BOTS_FIRST_STYLES)}]: plan (the Claudes plan, the bots type) or "
+                  "draft (the bots draft, the Claudes review)", file=sys.stderr)
+            return 2
+        was = store.bots_first()
+        store.set_settings(bots_first=on, **({"bots_first_style": style} if style else {}))
+        if store.bots_first() != was:
+            store.event("farm.settings", f"farm settings changed from a shell: bots_first={on}"
+                        + (f", bots_first_style={style}" if style else ""), by="cli")
             from .agents import AgentManager
-            AgentManager(cfg).share_guides(on)  # conversations read it from their farm guide
+            AgentManager(cfg).share_guides(store.bots_first())  # conversations read it from their farm guide
     st = store.settings()
     _out({k: v for k, v in st.items() if not k.startswith("viewer_")}, a.json,
          f"farm {'PRIVATE: only the people of its Claudes see it' if st.get('private') else 'public: anyone with the address watches'}; "
          f"hatching {'open' if st.get('hatch_open') else 'closed'}, at most {st.get('max_claudes')} Claudes; "
-         f"bots first {'ON: the Claudes hand the code-writing to the bots' if st.get('bots_first') else 'off'}")
+         "bots first " + ({"plan": "ON (plan): the Claudes plan, the bots write the code",
+                           "draft": "ON (draft): the bots draft, the Claudes review"}.get(store.bots_first()) or "off"))
     return 0
 
 
@@ -1638,7 +1648,7 @@ def main(argv=None):
     fm.add_argument("action", nargs="?", default="status",
                     choices=["status", "private", "public", "hatch-open", "hatch-closed", "bots-first", "bots-first-off",
                              "manager"])
-    fm.add_argument("rest", nargs="*", help="for manager: [add|remove|set] CLAUDE...")
+    fm.add_argument("rest", nargs="*", help="for manager: [add|remove|set] CLAUDE...; for bots-first: plan or draft")
     fm.add_argument("--password", help=argparse.SUPPRESS)  # gone: people sign in with their Claude
     add("manager-passwd", cmd_ui_passwd, argparse.SUPPRESS)
     up = add("upgrade", cmd_upgrade, "install a new clodfarm and hand over to it: running agents keep running")

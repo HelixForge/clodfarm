@@ -50,7 +50,7 @@ from . import __version__, boot, bots, browser, connectors, dashboards, policy, 
 from . import mcp
 from .agents import AgentManager, room_note
 from .slack import SlackBridge
-from .store import Store, now
+from .store import BOTS_FIRST_STYLES, Store, now
 
 BASE = "/" + os.environ.get("FARM_UI_BASE", "").strip("/") if os.environ.get("FARM_UI_BASE", "").strip("/") else ""
 UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
@@ -1212,7 +1212,7 @@ def make_handler(ui: FarmUI):
                                           if w["SK"].split("@")[0] == a["id"])}
                     for a in ui.manager.all() if a.get("bot")]
             return {"settings": {k: st.get(k) for k in ("private", "hatch_open", "max_claudes", "hatch_per_ip_hour",
-                                                           "bots_first")}
+                                                           "bots_first", "bots_first_style")}
                     | {"private": ui.private(st), "mcp": st.get("mcp") is not False,
                        "private_by_host": os.environ.get("FARM_UI_PRIVATE") == "1", "plan_claudes": ui.manager.max_claudes()},
                     "planner": ui.store.planner(), "claudes": owners, "release": boot.running(),
@@ -1475,13 +1475,17 @@ def make_handler(ui: FarmUI):
                 for k, lo, hi in (("max_claudes", 1, 1000), ("hatch_per_ip_hour", 1, 100)):
                     if k in data:
                         ch[k] = max(lo, min(hi, int(data[k])))
-                was = bool(store.settings().get("bots_first"))
+                if "bots_first_style" in data:
+                    if data["bots_first_style"] not in BOTS_FIRST_STYLES:
+                        raise ValueError(f"bots first is one of: {', '.join(BOTS_FIRST_STYLES)}")
+                    ch["bots_first_style"] = data["bots_first_style"]
+                was = store.bots_first()
                 store.set_settings(**ch)
                 store.event("farm.settings", "farm settings changed by the manager: " +
                             ", ".join(f"{k}={v}" for k, v in ch.items() if "viewer_" not in k), by="ui")
-                if "bots_first" in ch and ch["bots_first"] != was:
+                if store.bots_first() != was:
                     # its sub-agents read it at their next run; conversations read it from their farm guide
-                    ui.manager.share_guides(ch["bots_first"])
+                    ui.manager.share_guides(store.bots_first())
                 return self._json(self._manager_view())
             if path == "/api/manager/planner":
                 ch = {}
