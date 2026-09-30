@@ -89,6 +89,27 @@ they check `clodfarm agents` for a bot that can reach its model and fits the job
 judgment work (the bug, the design, review, merging), and review the bot's branch before merging it. A Claude Code
 session connected [over MCP](mcp.md) learns of the bots from `farm_spawn`, which takes `on` and `tools` too.
 
+## Bots first
+
+By default a Claude weighs time and usage: it hands a bot a piece when that saves both, and on a job it can finish in
+two minutes it usually does all of it itself. When you would rather wait than spend your usage, the farm manager turns
+on **BOTS FIRST** (MANAGE → BOTS FIRST, or `clodfarm farm bots-first` / `bots-first-off`). Every Claude on the farm
+then works as the lead, not the typist:
+
+1. it reads the job and plans it, keeping the thinking (where a bug comes from, the design) for itself;
+2. it splits the code-writing into job cards sized to each bot's context window, and sends them with `--on <bot>`,
+   in parallel when they touch different files;
+3. it ends its run and is resumed with their results (in a conversation, it waits for them in the background);
+4. it reviews every branch (the diff, the tests), merges what is right and sends a fix-up card for what isn't;
+5. it writes code itself only for glue of a few lines, merges, or a piece a bot has failed twice, and says which parts
+   the bots wrote.
+
+A sub-agent reads the switch when its run starts, so a change applies to the next run; conversations get it through
+their farm guide (`CLAUDE.md`), which the farm rewrites when the switch changes. `clodfarm agents` says it's on, and
+the MANAGE panel lists the bots it would send work to, their context and whether they can reach their model. A bot
+never gets it: it is the one the work goes to. It is guidance, not a lock: measure how much of the code the bots
+wrote (their runs and tokens in `clodfarm result`) and tell your Claude if it strays.
+
 ## Its context window
 
 For a model Claude Code doesn't know, it assumes a 200k window, and the provider cuts the prompt when a long job

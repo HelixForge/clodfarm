@@ -153,6 +153,43 @@ def test_a_lean_bot_keeps_the_farm_guide_out_of_its_context(tmp_path):
     assert "## Dashboards" in task_system_prompt(cfg, {"id": "t1", "owner": "gil"}, "/w/t1", "farm/t1")
 
 
+def test_bots_first_reaches_the_claudes_and_never_a_bot(tmp_path):
+    from clodfarm.auth import install_guide
+    from clodfarm.prompts import farm_guide, task_system_prompt
+    assert "BOTS FIRST is on" in farm_guide(True) and "BOTS FIRST is on" not in farm_guide()
+    new = lambda **kw: type("C", (), {"bot": "", "bot_lean": False, "bot_context": 0, "name": "gil",  # noqa: E731
+                                      "max_depth": 3, **kw})()
+    t = {"id": "t1", "owner": "gil"}
+    assert "BOTS FIRST is on" in task_system_prompt(new(), t, "/w/t1", "farm/t1", bots_first=True)
+    assert "BOTS FIRST is on" not in task_system_prompt(new(), t, "/w/t1", "farm/t1")
+    for bot in (new(bot="qwen3-coder", bot_lean=True, bot_context=32768), new(bot="big-model", bot_lean=False)):
+        assert "BOTS FIRST" not in task_system_prompt(bot, t, "/w/t1", "farm/t1", bots_first=True), "it gets the work"
+    md = tmp_path / "claude" / "CLAUDE.md"
+    install_guide(str(md.parent), bots_first=True)
+    assert "BOTS FIRST is on" in md.read_text()
+    install_guide(str(md.parent))
+    assert "BOTS FIRST is on" not in md.read_text(), "turned off, it leaves the guide"
+
+
+def test_the_bots_first_switch_reaches_the_next_claude_run(env):
+    farm, t = start_farm()
+    try:
+        assert "bots first ON" in cli("farm", "bots-first").stdout and farm.store.settings()["bots_first"]
+        on = json.loads(cli("spawn", "with it on", "--prompt", "COMMIT on", "--json").stdout)["id"]
+        wait_for(lambda: farm.store.get_task(on)["status"] == "done", timeout=60)
+        assert "bots first off" in cli("farm", "bots-first-off").stdout
+        off = json.loads(cli("spawn", "with it off", "--prompt", "COMMIT off", "--json").stdout)["id"]
+        wait_for(lambda: farm.store.get_task(off)["status"] == "done", timeout=60)
+
+        def guide(tid):
+            argv = next(c["argv"] for c in calls(env) if c["cmd"] == "print" and c["task"] == tid)
+            return argv[argv.index("--append-system-prompt") + 1]
+        assert "BOTS FIRST is on" in guide(on) and "BOTS FIRST is on" not in guide(off), "read at each new run"
+        assert [e for e in farm.store.events(time.time() - 60) if e["type"] == "farm.settings"]
+    finally:
+        stop_farm(farm, t)
+
+
 def test_a_bot_is_kept_only_once_its_model_answers(provider):
     url, seen = provider
     bot = bots.parse({"provider": "custom", "url": url, "model": "qwen/qwen3-coder:free"})
@@ -253,6 +290,13 @@ def test_a_bot_takes_only_what_is_sent_to_it_and_keeps_its_own_sub_agents(env, m
         wait_for(lambda: farm.store.get_task(ro)["status"] == "done", timeout=60)
         argv = next(c["argv"] for c in calls(env) if c["cmd"] == "print" and c["task"] == ro)
         assert argv[argv.index("--tools") + 1] == "Read,Grep", "a sub-agent narrows a bot's tools"
+        assert "bots first ON" in cli("farm", "bots-first").stdout
+        assert "BOTS FIRST is on" in cli("agents").stdout, "the Claudes see it where they look for the bots"
+        lean = json.loads(cli("spawn", "still lean", "--prompt", "COMMIT lean", "--on", "qwen", "--json").stdout)["id"]
+        wait_for(lambda: farm.store.get_task(lean)["status"] == "done", timeout=60)
+        argv = next(c["argv"] for c in calls(env) if c["cmd"] == "print" and c["task"] == lean)
+        assert "BOTS FIRST" not in argv[argv.index("--append-system-prompt") + 1], "a bot is who the work goes to"
+        cli("farm", "bots-first-off")
         big = json.loads(cli("spawn", "too big", "--prompt", "THRASH", "--on", "qwen", "--json").stdout)["id"]
         wait_for(lambda: farm.store.get_task(big)["status"] == "failed", timeout=60)
         assert len([c for c in calls(env) if c["cmd"] == "print" and c["task"] == big]) == 1, "no retry: it won't fit"

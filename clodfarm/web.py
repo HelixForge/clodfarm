@@ -1205,11 +1205,18 @@ def make_handler(ui: FarmUI):
             owners = [{"id": c["id"], "owned": bool(c.get("owned")), "approve_missions": bool(c.get("approve_missions"))}
                       for c in ui.store.claudes()]
             ui.oauth.reload()  # `clodfarm disconnect` may have ended one from the shell
-            return {"settings": {k: st.get(k) for k in ("private", "hatch_open", "max_claudes", "hatch_per_ip_hour")}
+            beats = [w for w in ui.store.workers() if w.get("bot")]
+            bots = [{"id": a["id"], "model": a["bot"]["model"], "context": int(a["bot"].get("context") or 0),
+                     "about": a["bot"].get("about") or "",
+                     "reachable": not any(str(w.get("state") or "").startswith("unreachable") for w in beats
+                                          if w["SK"].split("@")[0] == a["id"])}
+                    for a in ui.manager.all() if a.get("bot")]
+            return {"settings": {k: st.get(k) for k in ("private", "hatch_open", "max_claudes", "hatch_per_ip_hour",
+                                                           "bots_first")}
                     | {"private": ui.private(st), "mcp": st.get("mcp") is not False,
                        "private_by_host": os.environ.get("FARM_UI_PRIVATE") == "1", "plan_claudes": ui.manager.max_claudes()},
                     "planner": ui.store.planner(), "claudes": owners, "release": boot.running(),
-                    "managers": ui.managers(st), "connections": ui.oauth.connections(),
+                    "managers": ui.managers(st), "connections": ui.oauth.connections(), "bots": bots,
                     "version": __version__, "hosts": [a["id"] for a in ui.manager.all()]}
 
         # ---------------------------------------------------------- POST
@@ -1462,15 +1469,19 @@ def make_handler(ui: FarmUI):
                 if "private" in data:
                     ch["private"] = bool(data["private"])
                 # there are no viewer passwords: a private farm is its Claudes' people (and its manager) only
-                for k in ("hatch_open", "mcp"):
+                for k in ("hatch_open", "mcp", "bots_first"):
                     if k in data:
                         ch[k] = bool(data[k])
                 for k, lo, hi in (("max_claudes", 1, 1000), ("hatch_per_ip_hour", 1, 100)):
                     if k in data:
                         ch[k] = max(lo, min(hi, int(data[k])))
+                was = bool(store.settings().get("bots_first"))
                 store.set_settings(**ch)
                 store.event("farm.settings", "farm settings changed by the manager: " +
                             ", ".join(f"{k}={v}" for k, v in ch.items() if "viewer_" not in k), by="ui")
+                if "bots_first" in ch and ch["bots_first"] != was:
+                    # its sub-agents read it at their next run; conversations read it from their farm guide
+                    ui.manager.share_guides(ch["bots_first"])
                 return self._json(self._manager_view())
             if path == "/api/manager/planner":
                 ch = {}
