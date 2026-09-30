@@ -157,6 +157,30 @@ If you have none, you have no browser: ask your person to add one for you on the
 """
 
 
+BOTS_FIRST_SPLIT = """
+## BOTS FIRST is on (split by the spec): save your person's usage
+Your person turned on BOTS FIRST: they would rather wait than spend their Claude usage. Your thinking (reading all the
+code, working out every bug) is what spends it, but a whole project is too big and too hard for a bot in one go. So cut
+the work where the task already cuts it, and let the bots do the pieces. Time doesn't matter here.
+1. Read only the task's own documents (its spec, bug reports, README), not the code. List the pieces they already
+   name: each bug report, each section (a feature, a performance limit, a clean-up). For each, find the files it
+   touches with `ls` and `grep -l`; don't read the code.
+2. Send each piece as its own job card (`clodfarm spawn "<title>" --on <bot> --prompt "..."`): the piece's text,
+   quoted from the docs; the project and the command that runs its tests; "read the code you need yourself"; what not
+   to touch; "add a test that encodes the rule as the docs state it, and never change a test just to make it pass";
+   "commit, and report done / not done / unsure". Give the bot with the smaller context window (`clodfarm agents`)
+   the small, self-contained pieces (one bug with a clear example, a new function or file, a clean-up across a few
+   files) and the bigger one the rest (a core algorithm, performance, a feature that crosses modules).
+3. Pieces that touch different files go out at the same time; pieces that touch the same file go one after the other
+   (send the next when you are resumed with the one before). Then end your run.
+4. When you are resumed: merge each finished branch (`git merge farm/<id>`), run the full test suite and the checks
+   the task asks for, and read that piece's report and diff. Check every new test against the docs: a test bent to
+   fit the code proves nothing. Send a fix-up card for what isn't right (or fix a few lines yourself) and the next
+   pieces, and end your run again until the task is done.
+5. If no bot can reach its model (`clodfarm agents` says so), tell your person and do the work yourself.
+Finish with which pieces the bots did and which you did.
+"""
+
 BOTS_FIRST_DRAFT = """
 ## BOTS FIRST is on (the bots draft, you review): save your person's usage
 Your person turned on BOTS FIRST: they would rather wait than spend their Claude usage, and it is your thinking that
@@ -198,7 +222,7 @@ Finish with which parts the bots wrote and which you did.
 """
 
 
-BOTS_FIRST_GUIDES = {"plan": BOTS_FIRST_GUIDE, "draft": BOTS_FIRST_DRAFT}
+BOTS_FIRST_GUIDES = {"split": BOTS_FIRST_SPLIT, "draft": BOTS_FIRST_DRAFT, "plan": BOTS_FIRST_GUIDE}
 
 
 BOT_GUIDE = """\
@@ -231,7 +255,7 @@ def bot_guide(cfg) -> str:
 
 def farm_guide(bots_first: str | bool = "") -> str:
     """The guide every Claude on this farm reads: FARM_GUIDE plus the sections for the features this farm has on
-    (``bots_first``: its manager turned on BOTS FIRST, in this style: "plan" or "draft"; True means "plan")."""
+    (``bots_first``: its manager turned on BOTS FIRST, in this style: "split", "draft" or "plan"; True means "plan")."""
     import os
     from . import connectors
     return FARM_GUIDE + (BROWSER_GUIDE if browser.mcp_servers() else "") + awsapps.guide_section() + \

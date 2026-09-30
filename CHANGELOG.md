@@ -10,7 +10,9 @@
   any bot job 8+ minutes), which is what the switch is for. Two styles: **draft** (a bot does the first full pass,
   reading and reasoning included; the Claude merges, runs the checks and fixes the gaps with job cards) and **plan**
   (the Claude works it all out and hands over the typing). Measured on that benchmark, `plan`'s planning alone cost
-  as much Opus usage as solving it outright, since the thinking, not the typing, is what spends it.
+  as much Opus usage as solving it outright, since the thinking, not the typing, is what spends it. A third style,
+  **split**, has the Claude read only the task's own docs and send each piece they name (a bug, a feature, a
+  clean-up) to the bot it fits, since a whole project in one pass (draft) was too big for a 35B local model.
 - **Lean bot runs.** A bot's runs get only the tools it needs (Bash, Read, Edit, Write, Glob, Grep), no MCP servers
   or skills, and a short guide of its own instead of the farm's (read once, not twice). Claude Code's prompt drops
   from about 20k tokens to about 5k, so a local model with a 32k context has room to work, and starts faster.

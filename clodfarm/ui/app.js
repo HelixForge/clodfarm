@@ -3299,11 +3299,12 @@ const UI = {
       async (f) => { const d = new FormData(f), body = { on: onBox.checked, goal: d.get("goal"), host: d.get("host") }; if (d.get("every")) body.every = d.get("every"); await api("api/manager/planner", body); });
     // bots first: the Claudes hand the code-writing to the bots, to save their persons' usage
     const botsBox = h("input", { type: "checkbox", name: "bots_first", checked: !!S.bots_first }), B = m.bots || [];
-    const styleOf = S.bots_first_style === "draft" ? "draft" : "plan";
+    const styleOf = ["split", "draft"].includes(S.bots_first_style) ? S.bots_first_style : "plan";
     const style = (v, text) => h("label", { class: "check" },
       h("input", { type: "radio", name: "bots_first_style", value: v, checked: styleOf === v }), text);
     const botsFirst = section("BOTS FIRST", [
       h("label", { class: "check toggle" }, botsBox, "SAVE CLAUDE USAGE: HAND THE WORK TO THE BOTS"),
+      style("split", "SPLIT BY THE SPEC (your Claude reads only the task's docs and sends each piece to the bot it fits; the bots read the code; your Claude reviews)"),
       style("draft", "THE BOTS DRAFT, YOUR CLAUDES REVIEW (a bot does the first full pass; your Claude only checks it and fills the gaps)"),
       style("plan", "YOUR CLAUDES PLAN, THE BOTS TYPE (your Claude works it all out, then hands the code-writing over)"),
       h("p", { class: "muted small", text: S.bots_first

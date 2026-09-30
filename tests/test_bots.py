@@ -159,6 +159,8 @@ def test_bots_first_reaches_the_claudes_and_never_a_bot(tmp_path):
     assert "BOTS FIRST is on" in farm_guide(True) and "BOTS FIRST is on" not in farm_guide()
     assert "the bots draft, you review" in farm_guide("draft") and "the bots draft" not in farm_guide("plan")
     assert "Don't study the specs or the code first" in farm_guide("draft"), "its thinking is what costs usage"
+    split = farm_guide("split")
+    assert "split by the spec" in split and "not the code" in split and "never change a test just to make it pass" in split
     new = lambda **kw: type("C", (), {"bot": "", "bot_lean": False, "bot_context": 0, "name": "gil",  # noqa: E731
                                       "max_depth": 3, **kw})()
     t = {"id": "t1", "owner": "gil"}
@@ -192,6 +194,10 @@ def test_the_bots_first_switch_reaches_the_next_claude_run(env):
         drafted = json.loads(cli("spawn", "draft style", "--prompt", "COMMIT draft", "--json").stdout)["id"]
         wait_for(lambda: farm.store.get_task(drafted)["status"] == "done", timeout=60)
         assert "the bots draft, you review" in guide(drafted)
+        assert "ON (split)" in cli("farm", "bots-first", "split").stdout and farm.store.bots_first() == "split"
+        split = json.loads(cli("spawn", "split style", "--prompt", "COMMIT split", "--json").stdout)["id"]
+        wait_for(lambda: farm.store.get_task(split)["status"] == "done", timeout=60)
+        assert "split by the spec" in guide(split)
         assert cli("farm", "bots-first", "loud", check=False).returncode == 2
         assert [e for e in farm.store.events(time.time() - 60) if e["type"] == "farm.settings"]
     finally:
