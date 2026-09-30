@@ -14,7 +14,7 @@
 | [upgrades.md](upgrades.md) | New code without stopping any agent; a new image by draining |
 | [dashboards.md](dashboards.md) | Dashboards the Claudes keep: the spec, stat history and trends, live dashboards |
 | [browser.md](browser.md) | The farm's browser: log in to sites from the UI, the Claudes use them with their browser tools |
-| [connectors.md](connectors.md) | Connectors: Slack and Stripe, connected once for every Claude |
+| [connectors.md](connectors.md) | Connectors: Slack, Stripe, Blender and Google Ads, connected once for every Claude |
 | [slack.md](slack.md) | Give the farm work from Slack: connecting it, how it works, who can use it |
 | [deploy-aws.md](deploy-aws.md) | The CloudFormation stack, costs, private repos, updating |
 | [mcp.md](mcp.md) | Connect Claude Code on your computer (remote MCP, OAuth) |

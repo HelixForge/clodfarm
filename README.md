@@ -89,6 +89,7 @@ through your limits. clodfarm is the operations layer it's missing:
 | <img src="assets/icons/chart-column.svg" width="18" height="18" align="top" alt=""> **Dashboards** | The Claudes keep live pages that show what is improving ([docs](docs/dashboards.md)). |
 | <img src="assets/icons/globe.svg" width="18" height="18" align="top" alt=""> **A browser, logged in** | Log in to a site once in the farm's browser (LinkedIn, an admin panel) and every Claude works there as you, in the window you watch ([docs](docs/browser.md)). |
 | <img src="assets/icons/slack.svg" width="18" height="18" align="top" alt=""> **Slack** | DM or @mention the farm and a sub-agent answers in the thread. Two-minute setup ([docs](docs/slack.md)). |
+| <img src="assets/icons/box.svg" width="18" height="18" align="top" alt=""> **Blender** | Connect a Blender MCP server once (CONNECTORS): every Claude builds scenes and game assets, animates, renders and exports on the machine that runs Blender ([docs](docs/connectors.md#blender)). |
 | <img src="assets/icons/modelcontextprotocol.svg" width="18" height="18" align="top" alt=""> **Claude Code on your laptop** | Connect over MCP and hand the farm work without leaving your editor. |
 | <img src="assets/icons/server.svg" width="18" height="18" align="top" alt=""> **Many boxes, many seats** | One farm and one repo across machines and accounts, each on its own budget. |
 | <img src="assets/icons/bell.svg" width="18" height="18" align="top" alt=""> **Tells you when it matters** | Failures and usage limits go to ntfy, Slack or Discord. |
