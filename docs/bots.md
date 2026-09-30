@@ -93,8 +93,21 @@ session connected [over MCP](mcp.md) learns of the bots from `farm_spawn`, which
 
 By default a Claude weighs time and usage: it hands a bot a piece when that saves both, and on a job it can finish in
 two minutes it usually does all of it itself. When you would rather wait than spend your usage, the farm manager turns
-on **BOTS FIRST** (MANAGE → BOTS FIRST, or `clodfarm farm bots-first [draft|plan]` / `bots-first-off`), in one of
-two styles.
+on **BOTS FIRST** (MANAGE → BOTS FIRST, or `clodfarm farm bots-first [split|draft|plan]` / `bots-first-off`), in one of
+three styles.
+
+**Split by the spec** (`split`). A whole project is too big and too hard for a small local model in one pass, and a
+Claude that reads all the code to cut it well spends what it was meant to save. So the Claude cuts the work where the
+task already cuts it:
+
+1. it reads only the task's own documents (the spec, the bug reports), not the code, and lists the pieces they name:
+   each bug, each section (a feature, a performance limit, a clean-up), and the files each touches (`grep -l`);
+2. it sends each piece as its own job card (the piece's text quoted from the docs, how to test it, "read the code you
+   need yourself", "never change a test just to make it pass"), small self-contained pieces to the bot with the small
+   context and the rest to the big one; pieces on different files at the same time, on the same file one after the
+   other;
+3. resumed, it merges each piece, runs the tests and the task's checks, checks every new test against the docs (a
+   test bent to fit the code proves nothing), and sends fix-up cards or the next pieces.
 
 **The bots draft, your Claudes review** (`draft`). A Claude's usage goes on its thinking (reading the specs and the
 code, working out the bugs) far more than on its typing, so a bot does the first full pass, reading and reasoning
@@ -118,8 +131,10 @@ included, and the Claude only checks it:
 
 On a benchmark of three small projects whose work is mostly understanding bugs and specs, `plan` spent more of the
 Claude's usage than doing the work itself: the planning alone, the thinking included, cost as much as a whole solve,
-because the code left to type once it is understood is short. `plan` pays off on jobs with a lot of typing per idea
-(boilerplate, many similar tests, mechanical changes); `draft` is the one that moves the thinking to the bots.
+because the code left to type once it is understood is short. `draft` moved the thinking to the bots, but a 35B local
+model spent 55 minutes on a single project's bug section (and bent its own test to pass). `plan` pays off on jobs with
+a lot of typing per idea (boilerplate, many similar tests, mechanical changes); `split` is for tasks whose docs already
+divide them into pieces a bot can manage.
 
 A sub-agent reads the switch when its run starts, so a change applies to the next run; conversations get it through
 their farm guide (`CLAUDE.md`), which the farm rewrites when the switch changes. `clodfarm agents` says it's on, and

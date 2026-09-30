@@ -74,7 +74,7 @@ def _prio_key(priority: int, created: float, tid: str) -> str:
     return f"{9 - max(0, min(9, int(priority)))}#{created:017.6f}#{tid}"  # higher priority first; then oldest first
 
 
-BOTS_FIRST_STYLES = ("plan", "draft")  # how BOTS FIRST splits the work: see prompts.BOTS_FIRST_GUIDES
+BOTS_FIRST_STYLES = ("split", "draft", "plan")  # how BOTS FIRST splits the work: see prompts.BOTS_FIRST_GUIDES
 
 class Store:
     def __init__(self, backend: Backend):
@@ -831,8 +831,8 @@ class Store:
         return {**self.SETTINGS, **{k: v for k, v in it.items() if k not in ("PK", "SK", "ver")}}
 
     def bots_first(self) -> str:
-        """The BOTS FIRST style the farm runs with: "" (off), "plan" (the Claudes plan, the bots type) or "draft" (the
-        bots draft, the Claudes review)."""
+        """The BOTS FIRST style the farm runs with: "" (off), "split" (split by the task's own docs, a bot per piece),
+        "draft" (the bots draft, the Claudes review) or "plan" (the Claudes plan, the bots type)."""
         st = self.settings()
         return (st.get("bots_first_style") if st.get("bots_first_style") in BOTS_FIRST_STYLES else "plan") \
             if st.get("bots_first") else ""
