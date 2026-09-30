@@ -85,11 +85,25 @@ A bot that has everything in its prompt finishes in a few turns.
 
 ## Its context window
 
-For a model Claude Code doesn't know, it can't tell how big the context is, and the provider cuts the prompt when a
-long job outgrows it. The farm reads the window from Ollama (the model's `num_ctx`, or the loaded model's context)
+For a model Claude Code doesn't know, it assumes a 200k window, and the provider cuts the prompt when a long job
+outgrows the real one. The farm reads the window from Ollama (the model's `num_ctx`, or the loaded model's context)
 when the bot is added, or takes `--context`, and gives it to Claude Code as `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, so
 Claude Code compacts in time. The bot's guide tells it the size too, and `clodfarm agents` shows it to your Claudes
-so they size its jobs. Below about 16k, Claude Code's own prompt leaves too little room: the farm says so.
+so they size its jobs.
+
+Claude Code compacts once a conversation comes within its auto-compact buffer of the window: its reply cap (at most
+20k) plus 13k (`/context` shows it). Told a 32k window with Claude's reply cap, that buffer is bigger than the window,
+and Claude Code compacts on every turn until it gives up ("Autocompact is thrashing"). So a small window gets a small
+reply cap and a cap on each command's output:
+
+| Window | Reply cap (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`) | Compacts at | Command output (`BASH_MAX_OUTPUT_LENGTH`) |
+|---|---|---|---|
+| up to 48k (e.g. 32k) | 4096 | window − 17k (15.7k for 32k) | 12000 characters |
+| up to 96k | 8192 | window − 21k | 12000 characters |
+| bigger | Claude Code's own | window − 33k | Claude Code's own |
+
+A window under about 29k leaves no room to work before compacting: the farm then tells Claude Code nothing (it runs
+as it did before, with no compacting) and says so when you add or set the bot. Keep such a bot's jobs tiny.
 
 ## When it can't reach its model
 

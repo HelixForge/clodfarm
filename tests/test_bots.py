@@ -131,7 +131,7 @@ def test_a_bots_context_window_comes_from_ollama():
         assert bots.detect_context({"provider": "ollama", "url": "http://127.0.0.1:9", "model": "small"}) == 0
     finally:
         srv.shutdown()
-    assert "unknown" in bots.context_note(0) and "small" in bots.context_note(8192) and bots.context_note(32768) == ""
+    assert "unknown" in bots.context_note(0) and "too small" in bots.context_note(8192) and bots.context_note(32768) == ""
 
 
 def test_a_lean_bot_keeps_the_farm_guide_out_of_its_context(tmp_path):
@@ -191,12 +191,29 @@ def test_a_bot_runs_on_its_provider_never_on_a_claude_login(env, monkeypatch):
     assert e["FARM_MAX_WORKERS"] == "2" and e["FARM_DAILY_BUDGET_USD"] == "0"
     assert e["FARM_BOT_ABOUT"] == "first drafts" and e["FARM_BOT_LEAN"] == "1" and e["FARM_BOT_CONTEXT"] == "131072"
     assert e["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "131072", "Claude Code compacts within the model's real window"
+    assert "CLAUDE_CODE_MAX_OUTPUT_TOKENS" not in e, "a big window keeps Claude Code's own reply cap"
     assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in bots.env({**a, "bot": {**bot, "context": 0}}), "unknown: not set"
     assert mgr.auth(mgr.get("qwen"))["loggedIn"], "no `claude auth status`: its provider answered when it was added"
     with pytest.raises(ValueError, match="no Claude login"):
         mgr.start_login("qwen")
     mgr.remove("qwen")
     assert not os.path.exists(a["config_dir"]), "its key goes with it"
+
+
+def test_a_small_window_leaves_claude_code_room_to_work_before_it_compacts():
+    # Claude Code compacts once a conversation is within (reply cap, at most 20k) + 13k of the window: told only a 32k
+    # window, it compacts on every turn and gives up ("Autocompact is thrashing"), as a real 32k Qwen did
+    small = bots.context_env(32768)
+    assert small == {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "32768", "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "4096",
+                     "BASH_MAX_OUTPUT_LENGTH": "12000"}
+    assert bots.compacts_at(32768) == 32768 - 4096 - 13000
+    assert bots.context_env(65536)["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "8192"
+    for window in (29096, 32768, 49152, 65536, 98304, 131072, 1048576):
+        e = bots.context_env(window)
+        cap = int(e.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS") or bots.REPLY_CAP_MAX)
+        assert window - min(cap, bots.REPLY_CAP_MAX) - bots.COMPACT_BUFFER >= bots.ROOM_MIN, window
+    assert bots.context_env(24576) == {} and "too small" in bots.context_note(24576), "it runs as before, and says so"
+    assert bots.context_note(32768) == ""
 
 
 def test_a_bot_takes_only_what_is_sent_to_it_and_keeps_its_own_sub_agents(env, monkeypatch, provider):
@@ -314,7 +331,7 @@ def test_bot_set_says_what_a_bot_is_good_for_and_how_big_its_context_is(env, pro
     assert b["about"] == "tiny jobs: one function" and b["context"] == 32768 and b["lean"] is True
     assert cli("bot", "set", "qwen", "--full").returncode == 0
     assert AgentManager(load()).get("qwen")["bot"]["lean"] is False
-    assert "small" in cli("bot", "set", "qwen", "--context", "8k").stdout, "a context too small for Claude Code"
+    assert "too small" in cli("bot", "set", "qwen", "--context", "8k").stdout, "a context too small for Claude Code"
     assert cli("bot", "set", "qwen", "--context", "12", check=False).returncode == 1
     assert cli("bot", "set", "nobody", "--about", "x", check=False).returncode == 1
     assert [e for e in store.events(time.time() - 60) if e["type"] == "agent.changed"]

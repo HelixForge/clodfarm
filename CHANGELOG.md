@@ -12,7 +12,9 @@
   which used to pause the whole farm after a few such failures.
 - **Its context window.** The farm reads it from Ollama (or `--context`), tells Claude Code
   (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, so it compacts in time instead of the provider cutting the prompt), tells the bot,
-  and shows it in `clodfarm agents`.
+  and shows it in `clodfarm agents`. A small window also gets a small reply cap (and command-output cap), because
+  Claude Code keeps its reply cap plus 13k free before compacting: a 32k window with the default cap compacted on
+  every turn. A window too small to compact in (under about 29k) is left as before, with a warning.
 - **What each bot is good for.** `clodfarm bot add --about "..."`; the Claudes see it in `clodfarm agents`.
 - **Job cards.** The farm guide tells the Claudes to hand a bot the goal, the files and lines that matter, the
   signature and the command that proves it works. `clodfarm spawn --tools Read,Grep,Glob` narrows a bot's tools for
