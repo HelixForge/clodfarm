@@ -30,7 +30,7 @@ import threading
 import time
 from urllib.parse import urlencode, urlsplit
 
-from . import __version__
+from . import __version__, bots
 
 SCOPES = {"farm:read": "see the farm: its Claudes, their usage, sub-agents, results, sessions and events",
           "farm:work": "start, cancel and retry sub-agents, message the Claudes and manage schedules"}
@@ -283,8 +283,11 @@ TOOLS = [
     ("farm_schedules", "farm:read", "The scheduled sub-agents (cron, every, at).", _schema({})),
     ("farm_spawn", "farm:work", "Start a sub-agent on the farm: a headless Claude Code run in its own git worktree. "
      "The prompt must be self-contained. Without `on`, whichever Claude has budget runs it; `on` picks one by name "
-     "(see farm_status). Its work lands on main only when the farm's check passes. Returns its id: follow it with "
-     "farm_result.", _schema({"title": S, "prompt": S, "on": S}, ["title", "prompt"])),
+     "(see farm_status). A bot (BOT in farm_status: Claude Code on a local or free model) uses no Claude usage but is "
+     "slower and weaker, and takes only jobs sent to it with `on`: give it a job card (the goal, the files and lines "
+     "that matter, the signature, the command that proves it works). `tools` narrows a bot's tools for this job "
+     "(e.g. Read,Grep,Glob). Its work lands on main only when the farm's check passes. Returns its id: follow it with "
+     "farm_result.", _schema({"title": S, "prompt": S, "on": S, "tools": S}, ["title", "prompt"])),
     ("farm_msg", "farm:work", "Send a message to a Claude on the farm by name. It lands in that Claude's next "
      "conversation turn; it can answer you with `clodfarm msg <your name>`, which you read with farm_inbox.",
      _schema({"to": S, "text": S}, ["to", "text"])),
@@ -361,10 +364,14 @@ def run_tool(ui, grant: dict, name: str, args: dict):
             raise ToolError("title and prompt are required")
         if on and on not in names():
             raise ToolError(f"no Claude named '{on}' is on the farm ({', '.join(sorted(names())) or 'none'})")
+        try:
+            tools = bots.parse_tools(s("tools", 300)) if s("tools", 300) else None
+        except ValueError as e:
+            raise ToolError(str(e)) from None
         if store.count("queued") >= cfg.max_queue:
             raise ToolError(f"{cfg.max_queue} sub-agents are already waiting; try again later")
         t = store.add_task(title, prompt, created_by=me, to=on, owner=me, max_depth=cfg.max_depth,
-                           max_attempts=cfg.max_attempts)
+                           max_attempts=cfg.max_attempts, tools=tools)
         store.event("mcp.spawn", f"{me} started sub-agent {t['id']} over MCP: {title[:80]}", task=t["id"], by=me)
         return {"started": t["id"], "title": t["title"], "on": on or "whichever Claude has budget",
                 "next": f"farm_result id={t['id']} (wait_seconds up to 45)"}
@@ -445,7 +452,9 @@ def rpc(ui, grant: dict, msg: dict):
                        "Claude Code agents around the clock, each Claude on one person's account, paced on its real "
                        "5-hour and weekly usage. Use farm_status first. farm_spawn hands work to the farm (a "
                        "self-contained prompt; it lands on main only when the farm's tests pass) and farm_result "
-                       "follows it. farm_msg talks to a Claude by name; answers arrive in farm_inbox.")})
+                       "follows it. The farm's bots (local or free models, BOT in farm_status) cost no Claude usage: "
+                       "send them well-specified jobs with `on`. farm_msg talks to a Claude by name; answers arrive "
+                       "in farm_inbox.")})
     if method == "ping":
         return ok({})
     if method == "tools/list":

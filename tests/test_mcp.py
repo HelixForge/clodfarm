@@ -164,6 +164,12 @@ def test_full_flow_tools_and_messages(farm):
     err, text = tool(base, tok["access_token"], "farm_msg", to="nobody", text="hi")
     assert err and "no Claude named" in text
     assert tool(base, tok["access_token"], "farm_spawn", title="x", prompt="y", on="ghost")[0]
+    err, ro = tool(base, tok["access_token"], "farm_spawn", title="look", prompt="find it", tools="Read, Grep")
+    assert not err and ui.store.get_task(ro["started"])["tools"] == ["Read", "Grep"], "a bot's tools for one job"
+    err, text = tool(base, tok["access_token"], "farm_spawn", title="x", prompt="y", tools="Rm")
+    assert err and "the tools are some of" in text
+    spawn = next(t for t in call(base, tok["access_token"], "tools/list")[1]["result"]["tools"] if t["name"] == "farm_spawn")
+    assert "bot" in spawn["description"] and "tools" in spawn["inputSchema"]["properties"], "callers learn of the bots"
     assert any(e["type"] == "mcp.connected" for e in ui.store.events(None, 50))
 
 

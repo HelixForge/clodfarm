@@ -20,6 +20,9 @@
 - **Job cards.** The farm guide tells the Claudes to hand a bot the goal, the files and lines that matter, the
   signature and the command that proves it works. `clodfarm spawn --tools Read,Grep,Glob` narrows a bot's tools for
   one job.
+- **The Claudes use the bots to save usage.** The farm guide tells them to hand well-defined pieces (a function they
+  can specify, tests, boilerplate, docs) to a bot that can reach its model, keep the judgment work, and review the
+  bot's branch before merging. `farm_spawn` over MCP describes the bots and takes `tools`.
 - `clodfarm bot set <name> [--about] [--context N|auto] [--lean|--full]` changes a bot.
 - `CLODFARM_REPO` points `clodfarm upgrade` at a fork.
 - Tests pass from a path with a space in it.
