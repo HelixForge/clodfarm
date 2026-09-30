@@ -212,7 +212,13 @@ def test_the_manager_turns_bots_first_on_and_every_claude_hears_it(ui):
     assert not os.path.exists(bot_md) or "BOTS FIRST" not in open(bot_md).read(), "never a bot's"
     assert alice(base + "/api/manager/settings", {"bots_first": False})[0] in (401, 403), "only the manager"
     assert farm_ui.store.settings()["bots_first"]
+    assert view["settings"]["bots_first_style"] == "plan", "the Claudes plan, the bots type, until the manager says"
+    assert "the bots draft, you review" not in open(md).read()
+    code, view, _ = manager(base + "/api/manager/settings", {"bots_first_style": "draft"})
+    assert code == 200 and farm_ui.store.bots_first() == "draft"
+    assert "the bots draft, you review" in open(md).read(), "a new style reaches the conversations too"
+    assert manager(base + "/api/manager/settings", {"bots_first_style": "loud"})[0] == 400
     manager(base + "/api/manager/settings", {"bots_first": False})
-    assert "BOTS FIRST is on" not in open(md).read()
+    assert "BOTS FIRST is on" not in open(md).read() and farm_ui.store.bots_first() == ""
     assert [e for e in farm_ui.store.events(time.time() - 60)
             if e["type"] == "farm.settings" and "bots_first=True" in e["msg"]]
