@@ -8,6 +8,7 @@ Behaviour is driven by words in the prompt, so tests can script agents:
   SLOW <s>      sleep s seconds before answering
   CACHE         leave an uncommitted __pycache__/cache.cpython-311.pyc behind, like a test run does
   FAIL          end with an error result whose text mentions a rate limit (it is not one); after SLOW's sleep, if any
+  THRASH        end the way Claude Code does when a job outgrows the context window (autocompact thrashing)
   WAITMAIL <s>  work in batches of tool calls for up to s seconds, running the PostToolBatch hooks after each, until
                 one hands over mail; then run the Stop hooks (as STOPMAIL)
   STOPMAIL      run the Stop hooks before finishing; one that blocks keeps the turn going with its reason
@@ -211,6 +212,12 @@ def turn(prompt: str, session: str, inbox, first: bool = True) -> int:
         out({"type": "result", "subtype": "success", "is_error": False, "session_id": session, "result": text,
              "num_turns": 1, "total_cost_usd": 0.02, "usage": {"output_tokens": 7}, "terminal_reason": "completed"})
         return 0
+    if "THRASH" in prompt:
+        out({"type": "result", "subtype": "success", "is_error": True, "session_id": session, "num_turns": 9,
+             "result": "Autocompact is thrashing: the context refilled to the limit within 3 turns of the previous "
+                       "compact, 3 times in a row. A file being read or a tool output is likely too large for the "
+                       "context window. Try reading in smaller chunks, or use /clear to start fresh."})
+        return 1
     if "FAIL" in prompt and "ran the project's check" not in prompt:
         m = re.search(r"SLOW (\d+)", prompt)
         if m and pause(int(m.group(1)), inbox):

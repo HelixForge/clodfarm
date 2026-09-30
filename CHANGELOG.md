@@ -14,7 +14,8 @@
   (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, so it compacts in time instead of the provider cutting the prompt), tells the bot,
   and shows it in `clodfarm agents`. A small window also gets a small reply cap (and command-output cap), because
   Claude Code keeps its reply cap plus 13k free before compacting: a 32k window with the default cap compacted on
-  every turn. A window too small to compact in (under about 29k) is left as before, with a warning.
+  every turn. A window too small to compact in (under about 29k) is left as before, with a warning. A job that
+  outgrows a bot's window anyway fails at once ("Too big for bot ...", no retries) and doesn't trip the breaker.
 - **What each bot is good for.** `clodfarm bot add --about "..."`; the Claudes see it in `clodfarm agents`.
 - **Job cards.** The farm guide tells the Claudes to hand a bot the goal, the files and lines that matter, the
   signature and the command that proves it works. `clodfarm spawn --tools Read,Grep,Glob` narrows a bot's tools for

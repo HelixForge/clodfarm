@@ -157,6 +157,13 @@ def context_note(context: int) -> str:
     return ""
 
 
+def outgrew_context(error: str) -> bool:
+    """Whether a failed run ended because the job didn't fit the model's context window (Claude Code gave up
+    compacting, or the provider refused a prompt that long): a retry on the same bot won't fit it either."""
+    e = (error or "").lower()
+    return "autocompact is thrashing" in e or "prompt is too long" in e
+
+
 def reachable(url: str, timeout: float = 3.0) -> bool:
     """Whether anything answers at the provider's address (a TCP connection; no request is sent), e.g. whether the
     computer that runs a local Ollama is on."""
