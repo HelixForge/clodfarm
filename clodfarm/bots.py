@@ -110,7 +110,7 @@ def parse_tools(text: str) -> list[str]:
     names = [t for t in re.split(r"[,\s]+", str(text or "").strip()) if t]
     wrong = [t for t in names if t not in TOOL_CHOICES]
     if wrong or not names:
-        raise ValueError(f"--tools takes some of {', '.join(TOOL_CHOICES)}"
+        raise ValueError(f"the tools are some of {', '.join(TOOL_CHOICES)}"
                          + (f" (not {', '.join(wrong)})" if wrong else ""))
     return list(dict.fromkeys(names))
 

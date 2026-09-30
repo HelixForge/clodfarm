@@ -90,7 +90,7 @@ def test_a_lean_bots_runs_get_only_the_tools_it_needs():
     assert bots.parse_tools("Read, Grep Glob,Read") == ["Read", "Grep", "Glob"]
     assert bots.run_tools(["Read", "Rm"]) == ["Read"], "only built-in tools a bot may be given"
     for bad in ("Read,Rm", ""):
-        with pytest.raises(ValueError, match="--tools takes"):
+        with pytest.raises(ValueError, match="the tools are some of"):
             bots.parse_tools(bad)
     cfg = type("C", (), {"claude_bin": "claude", "model": "m", "permission_mode": "bypassPermissions", "effort": "",
                          "task_budget_usd": 0})()

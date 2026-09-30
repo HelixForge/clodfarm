@@ -83,6 +83,12 @@ Claudes to hand a bot a job card instead of a task:
 
 A bot that has everything in its prompt finishes in a few turns.
 
+The guide also tells them to **use the bots to save your usage**: before writing a well-defined piece themselves (a
+function whose behaviour they can state, the tests for a spec, boilerplate, docs, a mechanical change across files),
+they check `clodfarm agents` for a bot that can reach its model and fits the job, send it a job card, keep the
+judgment work (the bug, the design, review, merging), and review the bot's branch before merging it. A Claude Code
+session connected [over MCP](mcp.md) learns of the bots from `farm_spawn`, which takes `on` and `tools` too.
+
 ## Its context window
 
 For a model Claude Code doesn't know, it assumes a 200k window, and the provider cuts the prompt when a long job

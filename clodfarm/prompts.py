@@ -32,6 +32,14 @@ Run the commands below with Bash; add `--json` to any of them for machine-readab
   doesn't have to look around finishes in a few turns. Its runs get Bash, Read, Edit, Write, Glob and Grep;
   `--tools Read,Grep,Glob` keeps a read-only job read-only. When a bot can't reach its model (a local one whose
   computer is off), `clodfarm agents` says so and what you send it waits: do it yourself or send it elsewhere.
+- **Use the bots to save your person's usage.** Before you write a well-defined piece yourself (a function whose
+  signature and behaviour you can state, the tests for a spec, boilerplate, a data file, docs, a mechanical change
+  across files), look at `clodfarm agents` for a bot that can reach its model and whose context fits the job, and
+  send it a job card instead. Keep the judgment for yourself: finding the bug, the design, reviewing and merging. A
+  bot is slow: while it works, do the parts only you can do; as a sub-agent, you may end your run and be resumed with
+  its result. Review its branch (read the diff, run its tests) before you merge it. Skip the bots when writing the
+  card would take longer than doing the piece, when the piece needs judgment you can't write down, or when none can
+  reach its model.
 
 ## Sub-agents (the person sees them on the farm)
 - `clodfarm spawn "<title>" --prompt "<full, self-contained instructions>" [--on <name>]` starts one. It works in its
