@@ -2,6 +2,7 @@
 settings (skin, tools, approvals) only its person changes."""
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -190,3 +191,29 @@ def test_private_farm_owner_still_sees_it(ui):
     assert stranger(base + "/api/state")[0] == 401
     assert stranger(base + "/api/agents", {"name": "x"})[0] == 401
     assert alice(base + "/api/state")[0] == 200 and alice(base + "/api/me")[1]["owner"] == a["id"]
+
+
+def test_the_manager_turns_bots_first_on_and_every_claude_hears_it(ui):
+    from clodfarm import bots
+    base, farm_ui = ui
+    manager, alice = client(), client()
+    alice(base + "/api/agents", {"name": "Alice"})  # a Claude's person, not the farm's manager
+    farm_ui.manager.create("qwen", bot=bots.parse({"provider": "ollama", "model": "qwen3-coder", "context": "32k",
+                                                    "about": "one function"}), start=False)
+    login(manager, base)
+    view = manager(base + "/api/manager")[1]
+    assert view["settings"]["bots_first"] is False
+    assert view["bots"] == [{"id": "qwen", "model": "qwen3-coder", "context": 32768, "about": "one function",
+                             "reachable": True}], "the panel shows who the work would go to"
+    code, view, _ = manager(base + "/api/manager/settings", {"bots_first": True})
+    assert code == 200 and view["settings"]["bots_first"] is True and farm_ui.store.settings()["bots_first"]
+    md = os.path.join(farm_ui.manager.primary_dir, "CLAUDE.md")
+    assert "BOTS FIRST is on" in open(md).read(), "conversations read it from their farm guide"
+    bot_md = os.path.join(farm_ui.manager.get("qwen")["config_dir"], "CLAUDE.md")
+    assert not os.path.exists(bot_md) or "BOTS FIRST" not in open(bot_md).read(), "never a bot's"
+    assert alice(base + "/api/manager/settings", {"bots_first": False})[0] in (401, 403), "only the manager"
+    assert farm_ui.store.settings()["bots_first"]
+    manager(base + "/api/manager/settings", {"bots_first": False})
+    assert "BOTS FIRST is on" not in open(md).read()
+    assert [e for e in farm_ui.store.events(time.time() - 60)
+            if e["type"] == "farm.settings" and "bots_first=True" in e["msg"]]

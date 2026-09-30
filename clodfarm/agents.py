@@ -177,13 +177,25 @@ class AgentManager:
 
     def share_connectors(self):
         """A connector changed (Stripe): every Claude's tools and farm guide follow (their new sessions see it)."""
-        from .auth import install_guide
         self.share_browser_tools()
+        self.share_guides()
+
+    def share_guides(self, bots_first: bool | None = None):
+        """Every Claude's farm guide (its CLAUDE.md) follows the farm: its connectors and the manager's BOTS FIRST
+        switch (read from the store unless given). Conversations started from now on see it."""
+        from .auth import install_guide
+        if bots_first is None:
+            from .store import Store
+            try:
+                bots_first = bool(Store.from_config(self.cfg).settings().get("bots_first"))
+            except Exception:  # noqa: BLE001 - the store is briefly unreachable: keep BOTS FIRST off in the guide
+                bots_first = False
         for a in self.all():
             try:
-                install_guide(a["config_dir"], lean_bot=bool(a.get("bot")) and a["bot"].get("lean") is not False)
+                install_guide(a["config_dir"], lean_bot=bool(a.get("bot")) and a["bot"].get("lean") is not False,
+                              bots_first=bots_first and not a.get("bot"))
             except (OSError, KeyError) as e:
-                print(f"connectors: guide not updated for {a.get('id')}: {e}", flush=True)
+                print(f"guide not updated for {a.get('id')}: {e}", flush=True)
 
     def share_browser_tools(self):
         """Every Claude on this box gets the MCP tools of its own browser profiles (their new sessions see a change)."""

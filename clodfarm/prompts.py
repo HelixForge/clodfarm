@@ -157,6 +157,27 @@ If you have none, you have no browser: ask your person to add one for you on the
 """
 
 
+BOTS_FIRST_GUIDE = """
+## BOTS FIRST is on: save your person's usage
+Your person turned on BOTS FIRST on this farm: they would rather wait than spend their Claude usage. Time doesn't
+matter here; a job that takes an hour on the bots is fine. Work as the lead, not the typist:
+1. Read what the job needs (the specs, the bug reports, the code) and plan it. Keep the thinking for yourself: where a
+   bug comes from, the design, what "done" means.
+2. Split the code-writing into bot jobs and send each one a job card (`clodfarm spawn "<title>" --on <bot> --prompt
+   "..."`): the goal; the exact files, with the lines that matter pasted in; the signature and behaviour, or the fix
+   and why; the command that proves it works; what not to touch. Size each job to the bot's context window
+   (`clodfarm agents`): a small one gets one function, one test file or one located fix; a big one a module or a
+   feature. Send jobs that touch different files at the same time.
+3. Then end your run with a short note of what you sent out. As a sub-agent you are resumed in this same session with
+   their results; in a conversation, wait for them in the background.
+4. Review every branch a bot sends back: read the diff and run its tests. Merge what is right (`git merge farm/<id>`)
+   and send a fix-up job card for what isn't.
+5. Write code yourself only for glue of a few lines, for merges and conflicts, or for a piece a bot has failed twice.
+   If no bot can reach its model (`clodfarm agents` says so), tell your person and do the work yourself.
+Finish with which parts the bots wrote and which you did.
+"""
+
+
 BOT_GUIDE = """\
 # You are a bot on a clodfarm farm
 You are Claude Code running on {model}, a smaller model than Claude. A Claude on the farm sent you one job: it is your
@@ -185,15 +206,19 @@ def bot_guide(cfg) -> str:
     return BOT_GUIDE.format(model=cfg.bot, context=size)
 
 
-def farm_guide() -> str:
-    """The guide every Claude on this farm reads: FARM_GUIDE plus the sections for the features this farm has on."""
+def farm_guide(bots_first: bool = False) -> str:
+    """The guide every Claude on this farm reads: FARM_GUIDE plus the sections for the features this farm has on
+    (``bots_first``: its manager turned on BOTS FIRST)."""
     import os
     from . import connectors
     return FARM_GUIDE + (BROWSER_GUIDE if browser.mcp_servers() else "") + awsapps.guide_section() + \
-        connectors.guide_section(os.environ.get("FARM_WORKSPACE") or "/workspace")
+        connectors.guide_section(os.environ.get("FARM_WORKSPACE") or "/workspace") + \
+        (BOTS_FIRST_GUIDE if bots_first else "")
 
 
-def task_system_prompt(cfg, task: dict, cwd: str, branch: str | None, name: str = "") -> str:
+def task_system_prompt(cfg, task: dict, cwd: str, branch: str | None, name: str = "", bots_first: bool = False) -> str:
+    """A sub-agent's guide. ``bots_first`` (the farm's BOTS FIRST switch) reaches Claudes only: a bot is the one it
+    sends the work to."""
     where = f"Your worktree is {cwd} on branch {branch}." if branch else f"Your working directory is {cwd}."
     reach = (f" Other Claudes reach you with `clodfarm msg {task['id']}`" +
              (f" or with SendMessage to the session '{name}'." if name else "."))
@@ -202,7 +227,7 @@ def task_system_prompt(cfg, task: dict, cwd: str, branch: str | None, name: str 
                 f"{task.get('owner') or 'the farm'}: sub-agent {task['id']}. FARM_TASK_ID={task['id']}. {where}\n")
     bot = (f" You run on {cfg.bot}, not on Claude: you are the farm's bot {cfg.name}. Your own sub-agents stay on you."
            if cfg.bot else "")
-    return (farm_guide() + f"\n## This run\nYou are a sub-agent of {task.get('owner') or cfg.name}: sub-agent "
+    return (farm_guide(bots_first and not cfg.bot) + f"\n## This run\nYou are a sub-agent of {task.get('owner') or cfg.name}: sub-agent "
             f"{task['id']} (depth {task.get('depth', 0)}, max depth {cfg.max_depth}). FARM_TASK_ID={task['id']}. {where}"
             f"{reach}{bot}\n")
 

@@ -60,12 +60,15 @@ hand the role over; the farm always keeps at least one. From the box's shell, `c
 
 The gear on the farm (or G) opens the manager panel:
 - **the planner:** on/off, its goal, which Claude it runs on, how often (see [planner.md](planner.md));
+- **bots first:** on to have the Claudes hand the code-writing to the bots, saving usage at the cost of time (see
+  [bots.md](bots.md#bots-first)); it lists the bots, their context and whether they can reach their model;
 - **privacy:** public (anyone watches the tokens and the Claudes at work), or private (only the people of its Claudes);
 - **hatching:** open or closed, the most Claudes, hatches per address and hour;
 - **owners:** sign a Claude's person out on every device;
 - **the release,** and ROLL UI (see [upgrades.md](upgrades.md)).
 
-From a shell: `clodfarm farm private | public | hatch-open | hatch-closed`, `clodfarm planner ...`.
+From a shell: `clodfarm farm private | public | hatch-open | hatch-closed | bots-first | bots-first-off`,
+`clodfarm planner ...`.
 
 ## Inviting someone
 

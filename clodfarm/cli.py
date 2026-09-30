@@ -231,8 +231,12 @@ def _claude_line(c) -> str:
 
 
 def cmd_agents(cfg, a):
-    rows = _claudes(cfg, _store(cfg))
-    _out(rows, a.json, "CLAUDES on this farm (each is its own Claude account and budget)\n"
+    store = _store(cfg)
+    rows = _claudes(cfg, store)
+    first = bool(store.settings().get("bots_first")) and any(c.get("bot") for c in rows)
+    _out(rows, a.json, ("BOTS FIRST is on: plan, review and merge yourself; hand the code-writing to the bots below "
+                        "(job cards, sized to their context).\n" if first else "")
+         + "CLAUDES on this farm (each is its own Claude account and budget)\n"
          + ("\n".join(_claude_line(c) for c in rows) or "  (none up: is `clodfarm run` running?)")
          + "\n\nStart a sub-agent: clodfarm spawn \"<title>\" --prompt \"...\"  (any Claude with budget runs it; "
            "--on NAME picks one)\nMessage a Claude:  clodfarm msg NAME \"<text>\""
@@ -1242,10 +1246,18 @@ def cmd_farm(cfg, a):
         store.set_settings(private=False)
     elif a.action in ("hatch-open", "hatch-closed"):
         store.set_settings(hatch_open=a.action == "hatch-open")
+    elif a.action in ("bots-first", "bots-first-off"):
+        on = a.action == "bots-first"
+        if bool(store.settings().get("bots_first")) != on:
+            store.set_settings(bots_first=on)
+            store.event("farm.settings", f"farm settings changed from a shell: bots_first={on}", by="cli")
+            from .agents import AgentManager
+            AgentManager(cfg).share_guides(on)  # conversations read it from their farm guide
     st = store.settings()
     _out({k: v for k, v in st.items() if not k.startswith("viewer_")}, a.json,
          f"farm {'PRIVATE: only the people of its Claudes see it' if st.get('private') else 'public: anyone with the address watches'}; "
-         f"hatching {'open' if st.get('hatch_open') else 'closed'}, at most {st.get('max_claudes')} Claudes")
+         f"hatching {'open' if st.get('hatch_open') else 'closed'}, at most {st.get('max_claudes')} Claudes; "
+         f"bots first {'ON: the Claudes hand the code-writing to the bots' if st.get('bots_first') else 'off'}")
     return 0
 
 
@@ -1582,9 +1594,11 @@ def main(argv=None):
     pl.add_argument("action", nargs="?", default="status",
                     choices=["on", "off", "status", "goal", "every", "host", "idle", "notes"])
     pl.add_argument("rest", nargs="*")
-    fm = add("farm", cmd_farm, "who runs the farm (manager), private (its Claudes' people only) or public, hatching")
+    fm = add("farm", cmd_farm, "who runs the farm (manager), private (its Claudes' people only) or public, hatching, "
+                               "bots first (the Claudes hand the code-writing to the bots)")
     fm.add_argument("action", nargs="?", default="status",
-                    choices=["status", "private", "public", "hatch-open", "hatch-closed", "manager"])
+                    choices=["status", "private", "public", "hatch-open", "hatch-closed", "bots-first", "bots-first-off",
+                             "manager"])
     fm.add_argument("rest", nargs="*", help="for manager: [add|remove|set] CLAUDE...")
     fm.add_argument("--password", help=argparse.SUPPRESS)  # gone: people sign in with their Claude
     add("manager-passwd", cmd_ui_passwd, argparse.SUPPRESS)

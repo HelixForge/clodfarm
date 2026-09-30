@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **BOTS FIRST**, a switch in the manager panel (MANAGE → BOTS FIRST) and `clodfarm farm bots-first` /
+  `bots-first-off`: the Claudes plan, review and merge, and hand the code-writing to the bots as job cards, saving
+  their persons' usage at the cost of time. Sub-agents read it at their next run; conversations get it in their farm
+  guide, rewritten when it changes. The panel lists the bots, their context and whether they can reach their model.
+  On a real farm, Opus did three benchmark projects entirely itself under the usual guidance (each took it ~90 s;
+  any bot job 8+ minutes), which is what the switch is for.
 - **Lean bot runs.** A bot's runs get only the tools it needs (Bash, Read, Edit, Write, Glob, Grep), no MCP servers
   or skills, and a short guide of its own instead of the farm's (read once, not twice). Claude Code's prompt drops
   from about 20k tokens to about 5k, so a local model with a 32k context has room to work, and starts faster.

@@ -113,7 +113,7 @@ class Farm:
         if self.cfg.manage_claude_config:
             if self.cfg.remote_control:
                 accept_remote_control()
-            install_guide(lean_bot=self.cfg.bot_lean)
+            install_guide(lean_bot=self.cfg.bot_lean, bots_first=self.bots_first())
             try:  # the optional apps role (deploy/aws/apps-role.yaml): `aws --profile apps` for the Claudes
                 if awsapps.install_profile():
                     apps = awsapps.settings()
@@ -612,6 +612,16 @@ class Farm:
             if name.startswith(f"{tid}-"):
                 shutil.rmtree(os.path.join(self.runs, name), ignore_errors=True)
 
+    def bots_first(self) -> bool:
+        """The farm manager's BOTS FIRST switch (the Claudes hand the code-writing to the bots); read for every new run,
+        so a change applies to the next one. Never for a bot: it is the one the work goes to."""
+        if self.cfg.bot:
+            return False
+        try:
+            return bool(self.store.settings().get("bots_first"))
+        except Exception:  # noqa: BLE001 - the store is briefly unreachable: run as the farm usually does
+            return False
+
     def provider_up(self, fresh: bool = False) -> bool:
         """Whether a bot's provider answers (a local model's computer is on). Every worker shares one look per
         PROVIDER_CHECK seconds; a change is written to the farm's events once."""
@@ -758,7 +768,7 @@ class Farm:
                "FARM_MAIL_HOPS": str(max([int(m.get("hops") or 0) + 1 for m in mail], default=0))}
         # its session name carries its id, so other Claudes find it in ListAgents and message it with SendMessage
         name = f"[clodfarm] {task.get('owner') or cfg.name} · {task['title'][:50]} · {tid}"
-        sysprompt = prompts.task_system_prompt(cfg, task, cwd, branch, name)
+        sysprompt = prompts.task_system_prompt(cfg, task, cwd, branch, name, bots_first=self.bots_first())
         before = store.get_snapshot(self.seat)
         return {"cwd": cwd, "branch": branch, "parent_branch": parent_branch, "name": name, "sysprompt": sysprompt,
                 # a lean bot runs with only the tools a bot needs (or the ones its sub-agent asked for)

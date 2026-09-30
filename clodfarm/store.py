@@ -818,10 +818,11 @@ class Store:
             self.b.delete("CLAUDE", cid, expect_ver=int(it.get("ver", 0)))
 
     # --------------------------------------------------------------- settings
-    SETTINGS = {"private": False, "hatch_open": True, "max_claudes": 100, "hatch_per_ip_hour": 3}
+    SETTINGS = {"private": False, "hatch_open": True, "max_claudes": 100, "hatch_per_ip_hour": 3, "bots_first": False}
 
     def settings(self) -> dict:
-        """The farm manager's switches: a private farm (its Claudes' people only), hatching open or not, its limits."""
+        """The farm manager's switches: a private farm (its Claudes' people only), hatching open or not, its limits,
+        and bots first (the Claudes hand the code-writing to the bots, to save their persons' usage)."""
         it = self.b.get("CONTROL", "SETTINGS") or {}
         return {**self.SETTINGS, **{k: v for k, v in it.items() if k not in ("PK", "SK", "ver")}}
 
