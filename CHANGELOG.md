@@ -23,6 +23,9 @@
 - **The Claudes use the bots to save usage.** The farm guide tells them to hand well-defined pieces (a function they
   can specify, tests, boilerplate, docs) to a bot that can reach its model, keep the judgment work, and review the
   bot's branch before merging. `farm_spawn` over MCP describes the bots and takes `tools`.
+- **A sub-agent nobody would start is refused, not left waiting forever.** When every Claude up approves every mission
+  (it takes only its own or approved work) and no bot takes any sub-agent, `clodfarm spawn` and `farm_spawn` without
+  `on` say so and how to send it (`on <name>`, approved first, or to a bot); `--force` queues it anyway.
 - `clodfarm bot set <name> [--about] [--context N|auto] [--lean|--full]` changes a bot.
 - `CLODFARM_REPO` points `clodfarm upgrade` at a fork.
 - Tests pass from a path with a space in it.

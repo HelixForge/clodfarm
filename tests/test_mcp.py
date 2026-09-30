@@ -173,6 +173,28 @@ def test_full_flow_tools_and_messages(farm):
     assert any(e["type"] == "mcp.connected" for e in ui.store.events(None, 50))
 
 
+def test_spawn_refuses_work_nobody_would_start(farm):
+    # the farm's only Claude approves every mission, and its bot takes only what is sent to it: a sub-agent sent to
+    # no one in particular would wait forever, so farm_spawn says so and how to send it instead
+    base, ui = farm
+    _, tok = connect(base)
+    ui.store.put_claude(ui.cfg.name, approve_missions=True)
+    ui.store.heartbeat(f"{ui.cfg.name}@box", "w0", "idle")
+    ui.store.bot = {"bot": "qwen3-coder", "bot_takes": "sent"}
+    ui.store.heartbeat("qwen@box", "w0", "idle")
+    ui.store.bot = {}
+    err, text = tool(base, tok["access_token"], "farm_spawn", title="x", prompt="y")
+    assert err and "nobody would start this" in text and f"on={ui.cfg.name}" in text
+    assert not ui.store.list_tasks("queued"), "nothing is left waiting forever"
+    err, sent = tool(base, tok["access_token"], "farm_spawn", title="x", prompt="y", on=ui.cfg.name)
+    assert not err and ui.store.get_task(sent["started"])["status"] == "pending", "its person approves it"
+    err, _ = tool(base, tok["access_token"], "farm_spawn", title="x", prompt="y", on="qwen")
+    assert not err, "a bot takes what is sent to it"
+    ui.store.put_claude(ui.cfg.name, approve_missions=False)
+    err, _ = tool(base, tok["access_token"], "farm_spawn", title="x", prompt="y")
+    assert not err, "a Claude that takes anyone's work is up"
+
+
 def test_read_only_connection_cannot_work(farm):
     base, _ = farm
     _, tok = connect(base, access="read")
