@@ -315,7 +315,7 @@ class ToolError(Exception):
 
 
 def run_tool(ui, grant: dict, name: str, args: dict):
-    from .cli import _claudes, _seats, _seats_json
+    from .cli import _claudes, _seats, _seats_json, unclaimable_note
     from .schedule import describe, parse_at, parse_every
     store, cfg, me = ui.store, ui.cfg, grant["name"]
     names = lambda: {c["name"] for c in _claudes(cfg, store)}  # noqa: E731
@@ -368,6 +368,9 @@ def run_tool(ui, grant: dict, name: str, args: dict):
             tools = bots.parse_tools(s("tools", 300)) if s("tools", 300) else None
         except ValueError as e:
             raise ToolError(str(e)) from None
+        note = "" if on else unclaimable_note(store, _claudes(cfg, store), me)
+        if note:
+            raise ToolError(note.replace("(on ", "(on=").replace("on <name>", "on=<name>"))
         if store.count("queued") >= cfg.max_queue:
             raise ToolError(f"{cfg.max_queue} sub-agents are already waiting; try again later")
         t = store.add_task(title, prompt, created_by=me, to=on, owner=me, max_depth=cfg.max_depth,

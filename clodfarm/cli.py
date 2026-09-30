@@ -264,6 +264,30 @@ def cmd_status(cfg, a):
     return 0
 
 
+def _takers(store, claudes: list[dict], owner: str) -> list[str]:
+    """The Claudes up now that would take a sub-agent sent to no one in particular for ``owner``: a Claude whose person
+    doesn't approve every mission (or the owner itself), and a bot that takes any sub-agent."""
+    out = []
+    for c in claudes:
+        b = c.get("bot")
+        if (b and b.get("takes") == "any") or (not b and (c["name"] == owner or not store.approving(c["name"]))):
+            out.append(c["name"])
+    return out
+
+
+def unclaimable_note(store, claudes: list[dict], owner: str) -> str:
+    """Why a sub-agent sent to no one in particular would never start (every Claude up takes only its own or
+    approved work, and no bot takes any), or "" when someone would take it (or nobody is up yet to say)."""
+    if not claudes or _takers(store, claudes, owner):
+        return ""
+    careful = sorted(c["name"] for c in claudes if not c.get("bot"))
+    return (f"nobody would start this: {', '.join(careful) or 'no Claude'} take{'s' if len(careful) == 1 else ''} only "
+            f"{'its' if len(careful) == 1 else 'their'} own work or work sent to {'it' if len(careful) == 1 else 'them'} "
+            f"and approved by {'its' if len(careful) == 1 else 'their'} person, and the bots take only what is sent to "
+            f"them. Send it to one by name (on {careful[0] if careful else '<name>'}: its person approves it first), or "
+            f"to a bot")
+
+
 def _read_prompt(a) -> str:
     if a.prompt_file:
         return open(a.prompt_file).read() if a.prompt_file != "-" else sys.stdin.read()
@@ -295,6 +319,11 @@ def cmd_spawn(cfg, a):
                   " see `clodfarm agents`, or add --force to wait for it", file=sys.stderr)
             return 2
         tools = bots.parse_tools(a.tools) if a.tools else None
+        note = "" if on or a.force else unclaimable_note(store, list(claudes.values()),
+                                                           os.environ.get("FARM_OWNER") or cfg.name)
+        if note:
+            print(f"{note} (--on NAME), or add --force to queue it anyway", file=sys.stderr)
+            return 2
         if on and (claudes.get(on) or {}).get("unreachable"):
             print(f"note: {on} can't reach its model ({claudes[on]['unreachable']}) right now: this waits until it can. "
                   f"To have it done now, cancel it and do it yourself or send it elsewhere.", file=sys.stderr)

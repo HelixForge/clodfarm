@@ -228,7 +228,9 @@ def test_a_bot_takes_only_what_is_sent_to_it_and_keeps_its_own_sub_agents(env, m
     farm, t = start_farm()
     try:
         assert farm.cfg.bot == "qwen3-coder" and farm.cfg.policy.api_mode and farm.seat == "bot-qwen"
-        free = json.loads(cli("spawn", "anyone's job", "--prompt", "COMMIT free", "--json").stdout)["id"]
+        nobody = cli("spawn", "anyone's job", "--prompt", "COMMIT free", check=False)
+        assert nobody.returncode == 2 and "nobody would start this" in nobody.stderr, "only a bot is up to take it"
+        free = json.loads(cli("spawn", "anyone's job", "--prompt", "COMMIT free", "--force", "--json").stdout)["id"]
         wait_for(lambda: "qwen" in cli("agents").stdout)
         sent = json.loads(cli("spawn", "for the bot", "--prompt", "SPAWN 1", "--on", "qwen", "--json").stdout)["id"]
         wait_for(lambda: farm.store.get_task(sent)["status"] == "done", timeout=60)
