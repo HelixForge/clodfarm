@@ -27,6 +27,24 @@
 - **An MCP connection acts as the Claude of the person who approved it**: its messages come from that Claude, the
   sub-agents, schedules and dashboards it starts are that Claude's, and `farm_inbox` reads that Claude's messages too.
   Connections made before keep acting as guests under their own name.
+- **Lean bot runs.** A bot's runs get only the tools it needs (Bash, Read, Edit, Write, Glob, Grep), no MCP servers
+  or skills, and a short guide of its own instead of the farm's (read once, not twice). Claude Code's prompt drops
+  from about 20k tokens to about 5k, so a local model with a 32k context has room to work, and starts faster.
+  `clodfarm bot add --full` / `clodfarm bot set <name> --full` keeps the old behaviour for a strong model.
+- **A bot that can't reach its model waits.** When nothing answers at its provider's address (a local model's
+  computer is off), it takes no sub-agents, the ones sent to it wait, and `clodfarm agents` says CAN'T REACH ITS MODEL.
+  A run cut off by its model going away is re-queued like a rate limit. Neither counts toward the circuit breaker,
+  which used to pause the whole farm after a few such failures.
+- **Its context window.** The farm reads it from Ollama (or `--context`), tells Claude Code
+  (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`, so it compacts in time instead of the provider cutting the prompt), tells the bot,
+  and shows it in `clodfarm agents`.
+- **What each bot is good for.** `clodfarm bot add --about "..."`; the Claudes see it in `clodfarm agents`.
+- **Job cards.** The farm guide tells the Claudes to hand a bot the goal, the files and lines that matter, the
+  signature and the command that proves it works. `clodfarm spawn --tools Read,Grep,Glob` narrows a bot's tools for
+  one job.
+- `clodfarm bot set <name> [--about] [--context N|auto] [--lean|--full]` changes a bot.
+- `CLODFARM_REPO` points `clodfarm upgrade` at a fork.
+- Tests pass from a path with a space in it.
 
 ## 1.12.0 (2026-10-06)
 

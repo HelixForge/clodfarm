@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import tempfile
 
-from .prompts import farm_guide
+from .prompts import BOT_CLAUDE_MD, farm_guide
 
 GUIDE_START = "<!-- clodfarm:guide:start -->"
 GUIDE_END = "<!-- clodfarm:guide:end -->"
@@ -112,16 +112,17 @@ Checking again every few seconds...
 """
 
 
-def install_guide(config_dir: str | None = None):
+def install_guide(config_dir: str | None = None, lean_bot: bool = False):
     """Put the farm guide in the user-level CLAUDE.md so every session, including the
-    ones you open through Remote Control, knows how the farm works (``config_dir``: another Claude's)."""
+    ones you open through Remote Control, knows how the farm works (``config_dir``: another Claude's). A lean bot gets a
+    stub instead: its short guide comes with each run, and the farm's would fill its small context."""
     path = os.path.join(config_dir or claude_home(), "CLAUDE.md")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     try:
         cur = open(path).read()
     except OSError:
         cur = ""
-    block = f"{GUIDE_START}\n{farm_guide()}\n{GUIDE_END}"
+    block = f"{GUIDE_START}\n{BOT_CLAUDE_MD if lean_bot else farm_guide()}\n{GUIDE_END}"
     if GUIDE_START in cur and GUIDE_END in cur:
         pre, rest = cur.split(GUIDE_START, 1)
         new = pre + block + rest.split(GUIDE_END, 1)[1]

@@ -69,6 +69,10 @@ class Config:
     bot_provider: str  # FARM_BOT_PROVIDER: the bot's provider (openai, xai, gemini...), for its list prices
     bot_dialect: str  # FARM_BOT_DIALECT: "chat" or "responses" for a bot on the relay (relay.py), else ""
     bot_price: dict  # the bot's own list price, from FARM_BOT_OPTS ({"in", "cached", "out"} per million tokens)
+    bot_about: str  # what the bot is good for, as its person put it (shown to the Claudes that send it work)
+    bot_lean: bool  # its runs get only the tools a bot needs and a short guide, so a small context has room to work
+    bot_context: int  # its model's context window in tokens (0: unknown)
+    bot_url: str  # its provider's base URL (FARM_BOT_UPSTREAM on the relay, else ANTHROPIC_BASE_URL)
     policy: Policy
 
     @property
@@ -176,6 +180,10 @@ def load() -> Config:
         bot_provider=_env("FARM_BOT_PROVIDER", ""),
         bot_dialect=_env("FARM_BOT_DIALECT", "") if _env("FARM_BOT_DIALECT", "") in ("chat", "responses") else "",
         bot_price=_bot_price(),
+        bot_about=_env("FARM_BOT_ABOUT", ""),
+        bot_lean=bool(os.environ.get("FARM_BOT")) and _bool("FARM_BOT_LEAN", True),
+        bot_context=int(_env("FARM_BOT_CONTEXT", "0")),
+        bot_url=(_env("FARM_BOT_UPSTREAM", "") or _env("ANTHROPIC_BASE_URL", "")) if os.environ.get("FARM_BOT") else "",
         policy=Policy(
             max_workers=int(_env("FARM_MAX_WORKERS", "3")),
             min_workers=int(_env("FARM_MIN_WORKERS", "1")),

@@ -7,7 +7,7 @@ Behaviour is driven by words in the prompt, so tests can script agents:
   REJECT        report a rejected rate limit and fail
   SLOW <s>      sleep s seconds before answering
   CACHE         leave an uncommitted __pycache__/cache.cpython-311.pyc behind, like a test run does
-  FAIL          end with an error result whose text mentions a rate limit (it is not one)
+  FAIL          end with an error result whose text mentions a rate limit (it is not one); after SLOW's sleep, if any
   WAITMAIL <s>  work in batches of tool calls for up to s seconds, running the PostToolBatch hooks after each, until
                 one hands over mail; then run the Stop hooks (as STOPMAIL)
   STOPMAIL      run the Stop hooks before finishing; one that blocks keeps the turn going with its reason
@@ -103,6 +103,7 @@ def main(argv):
     log({"cmd": "print", "argv": argv, "cwd": os.getcwd(), "prompt": prompt, "task": os.environ.get("FARM_TASK_ID"),
          "resume": "--resume" in argv, "live": live,
          "base_url": os.environ.get("ANTHROPIC_BASE_URL"), "token": os.environ.get("ANTHROPIC_AUTH_TOKEN"),
+         "max_context": os.environ.get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
          "model": argv[argv.index("--model") + 1] if "--model" in argv else None})
     now = time.time()
     u5, u7 = float(os.environ.get("FAKE_UTIL_5H", "0.10")), float(os.environ.get("FAKE_UTIL_7D", "0.10"))
@@ -211,6 +212,9 @@ def turn(prompt: str, session: str, inbox, first: bool = True) -> int:
              "num_turns": 1, "total_cost_usd": 0.02, "usage": {"output_tokens": 7}, "terminal_reason": "completed"})
         return 0
     if "FAIL" in prompt and "ran the project's check" not in prompt:
+        m = re.search(r"SLOW (\d+)", prompt)
+        if m and pause(int(m.group(1)), inbox):
+            return interrupted_result()
         out({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session,
              "result": "3 tests failed: test_rate_limit_backoff expected 429", "num_turns": 1})
         return 1
