@@ -2,6 +2,7 @@
 for Stripe's API)."""
 import json
 import os
+import shlex
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -361,7 +362,7 @@ def test_the_manager_connects_google_ads_from_a_shell_and_a_live_dashboard_uses_
     assert table["rows"][0][:4] == ["Jestr Shop · Search", "enabled", 49.5, 88], "a campaign's rows are added up"
     # and as a live dashboard, the farm runs it
     d = dashboards.push(farm_ui.store, "ads", {"title": "ads", "widgets": []})
-    dashboards.set_refresh(farm_ui.store, "ads", f"{sys.executable} -m clodfarm gads dashboard --customer 2345678901",
+    dashboards.set_refresh(farm_ui.store, "ads", f"{shlex.quote(sys.executable)} -m clodfarm gads dashboard --customer 2345678901",
                            3600)
     out = dashboards.refresh(farm_ui.store, dashboards.get(farm_ui.store, "ads"), farm_ui.cfg.workspace)
     assert out["ok"], out["error"]
