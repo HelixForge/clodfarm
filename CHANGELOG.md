@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.0 (2026-09-30)
+
+- **A Blender connector.** The farm manager connects a Blender MCP server that runs on another machine (CONNECTORS →
+  BLENDER, or `clodfarm blender connect https://host/mcp` with its token on stdin), and every Claude gets its tools
+  as `mcp__blender__*`: scenes, game assets, materials, animation, renders, import and export, Python. The farm checks
+  the server answers before saving it; only the manager sees its URL and the token's last 4 characters. A person can
+  turn it off for their Claude (SETTINGS → RULES, *Blender (3D)*). See docs/connectors.md.
+
 ## 1.6.2 (2026-09-30)
 
 - The sign-in link and the code your Claude gives you ("farm login") each work once, on their own: tapping the link
