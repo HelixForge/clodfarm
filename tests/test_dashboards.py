@@ -1,5 +1,6 @@
 """Dashboards (the spec check, history of stats, live refresh (claimed once across boxes), the pages, the API and MCP) and each Claude's tools."""
 import json
+import shlex
 import sys
 import time
 import urllib.request
@@ -76,7 +77,7 @@ def test_live_dashboard_refreshes_once_and_reports_failures(store, tmp_path):
     dash.push(store, "live", {"widgets": []}, owner="gil")
     with pytest.raises(dash.SpecError, match="at most every"):
         dash.set_refresh(store, "live", "true", 60)
-    dash.set_refresh(store, "live", f"{sys.executable} {script}", 300)
+    dash.set_refresh(store, "live", f"{shlex.quote(sys.executable)} {shlex.quote(str(script))}", 300)
     assert dash.claim_due(store) == []                                         # not due yet
     store._update("DASH", "live", lambda x: {**x, "refresh": {**x["refresh"], "next_at": 1}})
     first, second = dash.claim_due(store), dash.claim_due(store)
