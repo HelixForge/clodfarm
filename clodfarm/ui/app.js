@@ -3541,9 +3541,10 @@ const UI = {
         h("span", { class: "o-name", text: b.id.toUpperCase() }),
         h("span", { class: "muted small", text: `${b.model}${b.context ? ` · ${Math.round(b.context / 1024)}k context` : ""}` }),
         b.reachable ? null : h("span", { class: "badge", text: "CAN'T REACH ITS MODEL" }))))
-        : h("p", { class: "form-error", text: "No bots on this farm yet: add one first (+ NEW CLAUDE → BOT: OTHER MODEL)." })],
+        : h("p", { class: "form-error", text: "No bots on this farm yet: add one first (+ ADD AGENT → ADD AGENT WITH API KEY)." })],
       async (f) => { await api("api/manager/settings", { bots_first: botsBox.checked,
-        bots_first_style: new FormData(f).get("bots_first_style") || "plan" }); });
+        bots_first_style: new FormData(f).get("bots_first_style") || "plan" });
+        this.renderManager(await api("api/manager")); });  // its On/Off line says what was saved
     // privacy
     const privBox = h("input", { type: "checkbox", name: "private", checked: !!S.private });
     const privacy = section("PRIVACY", [
